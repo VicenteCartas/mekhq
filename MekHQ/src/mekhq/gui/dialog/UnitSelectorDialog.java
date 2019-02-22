@@ -720,9 +720,7 @@ public class UnitSelectorDialog extends JDialog {
 
                 return this;
             }
-
         }
-
     }
 
     /**
@@ -760,5 +758,4 @@ public class UnitSelectorDialog extends JDialog {
         filterUnits();
         super.setVisible(visible);
     }
-
 }

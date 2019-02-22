@@ -12,13 +12,7 @@ import javax.swing.*;
 import javax.swing.event.MouseInputAdapter;
 
 import megamek.client.ui.swing.util.MenuScroller;
-import megamek.common.Aero;
-import megamek.common.BattleArmor;
-import megamek.common.Crew;
-import megamek.common.Infantry;
-import megamek.common.Mech;
-import megamek.common.Mounted;
-import megamek.common.Tank;
+import megamek.common.*;
 import megamek.common.logging.LogLevel;
 import megamek.common.options.IOption;
 import megamek.common.options.OptionsConstants;
@@ -2581,5 +2575,22 @@ public class PersonnelTableMouseAdapter extends MouseInputAdapter implements
         result.addActionListener(this);
         result.setEnabled(true);
         return result;
+    }
+
+    private void addUnitsToMenu(JMenu menu, String command, List<Unit> units) {
+        if (units.size() < MAX_POPUP_ITEMS) {
+            for (Unit unit : units) {
+                JCheckBoxMenuItem  cbMenuItem = new JCheckBoxMenuItem(unit.getName());
+                cbMenuItem.setActionCommand(makeCommand(command, unit.getId().toString()));
+                cbMenuItem.addActionListener(this);
+                menu.add(cbMenuItem);
+            }
+        } else {
+            menu.addActionListener(x -> openUnitsDialog(command, units));
+        }
+    }
+
+    private void openUnitsDialog(String command, List<Unit> units) {
+
     }
 }

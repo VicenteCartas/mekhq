@@ -28,68 +28,13 @@ import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import megamek.common.*;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.log.ServiceLogger;
 import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
-import megamek.common.ASFBay;
-import megamek.common.Aero;
-import megamek.common.AmmoType;
-import megamek.common.BattleArmor;
-import megamek.common.BattleArmorBay;
-import megamek.common.Bay;
-import megamek.common.BayType;
-import megamek.common.CargoBay;
-import megamek.common.Compute;
-import megamek.common.ConvFighter;
-import megamek.common.CriticalSlot;
-import megamek.common.Dropship;
-import megamek.common.Engine;
-import megamek.common.Entity;
-import megamek.common.EntityMovementMode;
-import megamek.common.EntityWeightClass;
-import megamek.common.EquipmentType;
-import megamek.common.FighterSquadron;
-import megamek.common.HeavyVehicleBay;
-import megamek.common.IArmorState;
-import megamek.common.ILocationExposureStatus;
-import megamek.common.IPlayer;
-import megamek.common.ITechnology;
-import megamek.common.Infantry;
-import megamek.common.InfantryBay;
-import megamek.common.InsulatedCargoBay;
-import megamek.common.Jumpship;
-import megamek.common.LAMPilot;
-import megamek.common.LandAirMech;
-import megamek.common.LightVehicleBay;
-import megamek.common.LiquidCargoBay;
-import megamek.common.LivestockCargoBay;
-import megamek.common.LocationFullException;
-import megamek.common.Mech;
-import megamek.common.MechBay;
-import megamek.common.MiscType;
-import megamek.common.Mounted;
-import megamek.common.PillionSeatCargoBay;
-import megamek.common.Player;
-import megamek.common.Protomech;
-import megamek.common.ProtomechBay;
-import megamek.common.QuadMech;
-import megamek.common.QuadVee;
-import megamek.common.RefrigeratedCargoBay;
-import megamek.common.SimpleTechLevel;
-import megamek.common.SmallCraft;
-import megamek.common.SmallCraftBay;
-import megamek.common.SpaceStation;
-import megamek.common.StandardSeatCargoBay;
-import megamek.common.SupportTank;
-import megamek.common.Tank;
-import megamek.common.TargetRoll;
-import megamek.common.TechConstants;
-import megamek.common.VTOL;
-import megamek.common.Warship;
-import megamek.common.WeaponType;
 import megamek.common.annotations.Nullable;
 import megamek.common.logging.LogLevel;
 import megamek.common.options.IOption;
@@ -4723,5 +4668,13 @@ public class Unit implements MekHqXmlSerializable, ITechnology {
     @Override
     public int calcYearAvailability(int year, boolean clan, int faction) {
         return getTechProgression(faction).calcYearAvailability(year, clan);
+    }
+
+    public MechSummary toSummary() {
+        MechSummary summary = new MechSummary();
+
+        summary.setName(this.getName());
+
+        return summary;
     }
 }
