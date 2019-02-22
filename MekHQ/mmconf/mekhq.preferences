@@ -1,0 +1,318 @@
+{
+  "preferences" : [ {
+    "class" : "mekhq.gui.dialog.GMToolsDialog",
+    "elements" : [ {
+      "element" : "unitType",
+      "value" : "1"
+    }, {
+      "element" : "unitWeight",
+      "value" : "1"
+    }, {
+      "element" : "dialog",
+      "value" : "856|234|441|83|false"
+    }, {
+      "element" : "year",
+      "value" : "3060"
+    }, {
+      "element" : "faction",
+      "value" : "97"
+    }, {
+      "element" : "numDice",
+      "value" : "3"
+    }, {
+      "element" : "sizeDice",
+      "value" : "12"
+    }, {
+      "element" : "quality",
+      "value" : "2"
+    } ]
+  }, {
+    "class" : "mekhq.gui.dialog.BloodnameDialog",
+    "elements" : [ {
+      "element" : "phenotype",
+      "value" : "3"
+    }, {
+      "element" : "clan",
+      "value" : "2"
+    }, {
+      "element" : "dialog",
+      "value" : "350|300|41|513|false"
+    }, {
+      "element" : "era",
+      "value" : "7"
+    } ]
+  }, {
+    "class" : "mekhq.gui.HangarTab",
+    "elements" : [ {
+      "element" : "unitType",
+      "value" : "0"
+    }, {
+      "element" : "unitView",
+      "value" : "1"
+    }, {
+      "element" : "unitTable",
+      "value" : "1|DESCENDING"
+    } ]
+  }, {
+    "class" : "mekhq.gui.dialog.PersonnelMarketDialog",
+    "elements" : [ {
+      "element" : "dialog",
+      "value" : "582|447|594|327|false"
+    }, {
+      "element" : "normalRoll",
+      "value" : "false"
+    }, {
+      "element" : "personType",
+      "value" : "4"
+    }, {
+      "element" : "paidRecruitment",
+      "value" : "true"
+    }, {
+      "element" : "recruitType",
+      "value" : "5"
+    }, {
+      "element" : "unitsTable",
+      "value" : "5|DESCENDING"
+    } ]
+  }, {
+    "class" : "mekhq.gui.WarehouseTab",
+    "elements" : [ {
+      "element" : "partsTable",
+      "value" : "0|ASCENDING"
+    }, {
+      "element" : "partsType",
+      "value" : "0"
+    }, {
+      "element" : "partsView",
+      "value" : "0"
+    } ]
+  }, {
+    "class" : "mekhq.gui.dialog.HireBulkPersonnelDialog",
+    "elements" : [ {
+      "element" : "dialog",
+      "value" : "292|158|812|255|false"
+    } ]
+  }, {
+    "class" : "mekhq.gui.dialog.AdvanceDaysDialog",
+    "elements" : [ {
+      "element" : "numberDays",
+      "value" : "5"
+    }, {
+      "element" : "dialog",
+      "value" : "500|500|652|49|false"
+    } ]
+  }, {
+    "class" : "mekhq.gui.dialog.UnitSelectorDialog",
+    "elements" : [ {
+      "element" : "unitType",
+      "value" : "2"
+    }, {
+      "element" : "dialog",
+      "value" : "604|618|707|19|false"
+    }, {
+      "element" : "weight",
+      "value" : "3"
+    }, {
+      "element" : "unitsTable",
+      "value" : "1|DESCENDING"
+    } ]
+  }, {
+    "class" : "mekhq.gui.OverviewTab",
+    "elements" : [ {
+      "element" : "partsInUseTable",
+      "value" : "0|ASCENDING"
+    } ]
+  }, {
+    "class" : "mekhq.gui.FinancesTab",
+    "elements" : [ {
+      "element" : "loansTable",
+      "value" : "0|ASCENDING"
+    } ]
+  }, {
+    "class" : "mekhq.MekHQ",
+    "elements" : [ {
+      "element" : "campaignOptionsDirectory",
+      "value" : "C:\\Users\\vicartas\\Documents"
+    }, {
+      "element" : "starMapsDirectory",
+      "value" : "."
+    }, {
+      "element" : "tablesDirectory",
+      "value" : "."
+    }, {
+      "element" : "scenarioTemplatesDirectory",
+      "value" : "."
+    }, {
+      "element" : "partsDirectory",
+      "value" : "."
+    }, {
+      "element" : "unitsDirectory",
+      "value" : "."
+    }, {
+      "element" : "financesDirectory",
+      "value" : "."
+    }, {
+      "element" : "personnelDirectory",
+      "value" : "."
+    }, {
+      "element" : "campaignsDirectory",
+      "value" : "C:\\Users\\vicartas\\Desktop"
+    }, {
+      "element" : "planetsDirectory",
+      "value" : "C:\\Users\\vicartas\\Videos"
+    }, {
+      "element" : "selectedTheme",
+      "value" : "com.sun.java.swing.plaf.windows.WindowsLookAndFeel"
+    } ]
+  }, {
+    "class" : "mekhq.gui.dialog.PartsStoreDialog",
+    "elements" : [ {
+      "element" : "partsTable",
+      "value" : "1|DESCENDING"
+    }, {
+      "element" : "dialog",
+      "value" : "715|379|500|205|false"
+    }, {
+      "element" : "partsType",
+      "value" : "3"
+    } ]
+  }, {
+    "class" : "mekhq.gui.dialog.UnitMarketDialog",
+    "elements" : [ {
+      "element" : "dialog",
+      "value" : "1019|463|157|311|false"
+    }, {
+      "element" : "showVees",
+      "value" : "true"
+    }, {
+      "element" : "showMeks",
+      "value" : "true"
+    }, {
+      "element" : "thresholdValue",
+      "value" : "120"
+    }, {
+      "element" : "showAero",
+      "value" : "true"
+    }, {
+      "element" : "useThreshold",
+      "value" : "false"
+    }, {
+      "element" : "unitsTable",
+      "value" : "4|DESCENDING"
+    } ]
+  }, {
+    "class" : "mekhq.gui.dialog.RetirementDefectionDialog",
+    "elements" : [ {
+      "element" : "dialog",
+      "value" : "593|497|474|124|false"
+    }, {
+      "element" : "modifier",
+      "value" : "6"
+    }, {
+      "element" : "group",
+      "value" : "4"
+    } ]
+  }, {
+    "class" : "mekhq.gui.dialog.DailyReportLogDialog",
+    "elements" : [ {
+      "element" : "dialog",
+      "value" : "0|0|0|0|false"
+    } ]
+  }, {
+    "class" : "mekhq.gui.RepairTab",
+    "elements" : [ {
+      "element" : "serviceUnitsTable",
+      "value" : "1|DESCENDING"
+    } ]
+  }, {
+    "class" : "mekhq.gui.CampaignGUI",
+    "elements" : [ {
+      "element" : "mainWindow",
+      "value" : "1346|861|-6|-6|true"
+    } ]
+  }, {
+    "class" : "mekhq.gui.PersonnelTab",
+    "elements" : [ {
+      "element" : "personnelView",
+      "value" : "3"
+    }, {
+      "element" : "groupByUnit",
+      "value" : "true"
+    }, {
+      "element" : "personnelType",
+      "value" : "2"
+    }, {
+      "element" : "personnelTable",
+      "value" : "6|DESCENDING"
+    } ]
+  }, {
+    "class" : "mekhq.gui.dialog.ContractMarketDialog",
+    "elements" : [ {
+      "element" : "dialog",
+      "value" : "1019|283|157|471|false"
+    }, {
+      "element" : "advancePercentage",
+      "value" : "5"
+    }, {
+      "element" : "contractsTable",
+      "value" : "1|DESCENDING"
+    }, {
+      "element" : "payMRBCFee",
+      "value" : "false"
+    }, {
+      "element" : "signingBonusPercentage",
+      "value" : "5"
+    }, {
+      "element" : "sharePercentage",
+      "value" : "30"
+    } ]
+  }, {
+    "class" : "mekhq.gui.dialog.CampaignOptionsDialog",
+    "elements" : [ {
+      "element" : "dialog",
+      "value" : "695|806|85|24|false"
+    } ]
+  }, {
+    "class" : "mekhq.gui.dialog.BatchXPDialog",
+    "elements" : [ {
+      "element" : "primaryRole",
+      "value" : "2"
+    }, {
+      "element" : "allowPrisoners",
+      "value" : "true"
+    }, {
+      "element" : "dialog",
+      "value" : "528|403|634|193|false"
+    }, {
+      "element" : "experienceLevel",
+      "value" : "2"
+    }, {
+      "element" : "skillLevel",
+      "value" : "3"
+    }, {
+      "element" : "skill",
+      "value" : "3"
+    } ]
+  }, {
+    "class" : "mekhq.gui.dialog.UnitRatingDialog",
+    "elements" : [ {
+      "element" : "dialog",
+      "value" : "800|500|477|176|false"
+    } ]
+  }, {
+    "class" : "mekhq.gui.dialog.ShipSearchDialog",
+    "elements" : [ {
+      "element" : "dialog",
+      "value" : "442|210|600|344|false"
+    }, {
+      "element" : "warship",
+      "value" : "false"
+    }, {
+      "element" : "jumpship",
+      "value" : "true"
+    }, {
+      "element" : "dropship",
+      "value" : "false"
+    } ]
+  } ]
+}
