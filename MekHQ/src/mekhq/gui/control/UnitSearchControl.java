@@ -17,7 +17,7 @@
  * along with MekHQ.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package mekhq.gui.controls;
+package mekhq.gui.control;
 
 import megamek.client.ui.Messages;
 import megamek.client.ui.swing.AdvancedSearchDialog;
@@ -46,29 +46,34 @@ import java.awt.*;
 import java.awt.event.ActionListener;
 import java.io.IOException;
 import java.text.DecimalFormat;
-import java.util.Comparator;
-import java.util.GregorianCalendar;
+import java.util.*;
 import java.util.List;
-import java.util.ResourceBundle;
 
 public class UnitSearchControl extends JPanel {
-    private List<Unit> units;
-    private Campaign campaign;
-
     private static MechTileset unitTileset;
+    private static ResourceBundle resourceMap;
+
+    private final Campaign campaign;
+    private final Optional<List<Unit>> units;
+    private final MechSummary[] unitsSummary;
+    private final Optional<UnitType> unitType;
+    private final Optional<Integer> unitWeightClass;
+
     private Unit selectedUnit;
     private Entity selectedEntity;
+
+    private final AdvancedSearchDialog advancedSearchDialog;
 
     private TableRowSorter<UnitSearchControl.MechTableModel> sorter;
     private UnitSearchControl.MechTableModel unitModel;
     private MechSearchFilter searchFilter;
 
-    AdvancedSearchDialog asd;
-
-    private JComboBox<String> comboWeight;
+    private JLabel lblUnitType;
+    private JComboBox<String> comboUnitType;
+    private JLabel lblUnitWeight;
+    private JComboBox<String> comboUnitWeight;
     private JLabel lblFilter;
     private JLabel lblImage;
-    private JLabel lblWeight;
     private JPanel panelFilterBtns;
     private JPanel panelLeft;
     private JScrollPane scrTableUnits;
@@ -80,42 +85,134 @@ public class UnitSearchControl extends JPanel {
     private JButton btnResetSearch;
     private JPanel panelSearchBtns;
 
-    public UnitSearchControl(Frame parent, Campaign campaign, List<Unit> units) {
+    public UnitSearchControl(
+            Frame parent,
+            Campaign campaign,
+            Optional<List<Unit>> units,
+            Optional<UnitType> unitType,
+            Optional<Integer> unitWeightClass) {
         this.campaign = campaign;
-        unitModel = new UnitSearchControl.MechTableModel();
+        this.units = units;
+        this.unitType = unitType;
+        this.unitWeightClass = unitWeightClass;
 
-        asd = new AdvancedSearchDialog(parent, campaign.getCalendar().get(GregorianCalendar.YEAR));
+        resourceMap = ResourceBundle.getBundle("mekhq.resources.UnitSearchControl", new EncodeControl()); //$NON-NLS-1$
 
-        MechSummary[] allMechs = MechSummaryCache.getInstance().getAllMechs();
-        setMechs(allMechs);
 
         initComponents();
         setUserPreferences();
+
+
+
+
+
+
+        unitModel = new UnitSearchControl.MechTableModel();
+
+        if (units.isPresent()) {
+            // Create summary from units
+            this.unitsSummary = null;
+        } else {
+            this.unitsSummary = MechSummaryCache.getInstance().getAllMechs();
+        }
+
+        setMechs(allMechs);
+
+        this.advancedSearchDialog = new AdvancedSearchDialog(parent, campaign.getCalendar().get(GregorianCalendar.YEAR));
+
+
     }
 
     private void initComponents() {
-        ResourceBundle resourceMap = ResourceBundle.getBundle("mekhq.resources.UnitSearchControl", new EncodeControl()); //$NON-NLS-1$
-
         GridBagConstraints gridBagConstraints;
-
-        scrTableUnits = new JScrollPane();
-        tableUnits = new JTable();
-        panelMekView = new MechViewPanel();
-        panelFilterBtns = new JPanel();
-        panelLeft = new JPanel();
-        lblWeight = new JLabel();
-        comboWeight = new JComboBox<>();
-        txtFilter = new JTextField();
-        lblFilter = new JLabel();
-        lblImage = new JLabel();
-        btnAdvSearch = new JButton();
-        btnResetSearch = new JButton();
-        panelSearchBtns = new JPanel();
-
         this.setLayout(new BorderLayout());
 
-        panelFilterBtns.setName("panelFilterBtns"); // NOI18N
-        panelFilterBtns.setLayout(new java.awt.GridBagLayout());
+        panelFilterBtns.setName("panelFilterBtns");
+        panelFilterBtns.setLayout(new GridBagLayout());
+
+
+        createUnitTypeArea();
+        createUnitWeightArea();
+    }
+
+    private void createUnitTypeArea() {
+        this.lblUnitType = new JLabel();
+        this.lblUnitType.setName("lblUnitType");
+        this.lblUnitType.setText(resourceMap.getString("lblUnitType.text"));
+
+        GridBagConstraints gridBagConstraints = new GridBagConstraints();
+        gridBagConstraints.gridx = 0;
+        gridBagConstraints.gridy = 0;
+        gridBagConstraints.fill = java.awt.GridBagConstraints.HORIZONTAL;
+        gridBagConstraints.anchor = java.awt.GridBagConstraints.WEST;
+        this.panelFilterBtns.add(this.lblUnitType, gridBagConstraints);
+
+        this.comboUnitType = new JComboBox<>();
+        this.comboUnitType.setName("comboUnitType");
+        this.comboUnitType.setMinimumSize(new Dimension(200, 27));
+        this.comboUnitType.setPreferredSize(new Dimension(200, 27));
+        this.comboUnitType.addActionListener(evt -> comboUnitTypeActionPerformed(evt));
+
+        DefaultComboBoxModel<String> unitTypeModel = new DefaultComboBoxModel<>();
+        if (this.unitType.isPresent()) {
+            String unitTypeName = this.unitType.get().getTypeDisplayableName();
+            unitTypeModel.addElement(unitTypeName);
+            unitTypeModel.setSelectedItem(unitTypeName);
+            this.comboUnitType.setEnabled(false);
+        } else {
+            for (int i = 0; i < UnitType.SIZE; i++) {
+                unitTypeModel.addElement(UnitType.getTypeDisplayableName(i));
+            }
+            unitTypeModel.setSelectedItem(UnitType.getTypeDisplayableName(UnitType.MEK));
+        }
+
+        this.comboUnitType.setModel(unitTypeModel);
+
+        gridBagConstraints = new java.awt.GridBagConstraints();
+        gridBagConstraints.gridx = 1;
+        gridBagConstraints.gridy = 0;
+        gridBagConstraints.anchor = java.awt.GridBagConstraints.WEST;
+        this.panelFilterBtns.add(this.comboUnitType, gridBagConstraints);
+    }
+
+    private void createUnitWeightArea() {
+        this.lblUnitWeight = new JLabel();
+        this.lblUnitWeight.setName("lblUnitWeight"); // NOI18N
+        this.lblUnitWeight.setText(resourceMap.getString("lblWeight.text")); // NOI18N
+
+        GridBagConstraints gridBagConstraints = new GridBagConstraints();
+        gridBagConstraints.gridx = 0;
+        gridBagConstraints.gridy = 1;
+        gridBagConstraints.anchor = java.awt.GridBagConstraints.WEST;
+        this.panelFilterBtns.add(this.lblUnitWeight, gridBagConstraints);
+
+        this.comboUnitWeight = new JComboBox<>();
+        this.comboUnitWeight.setName("comboUnitWeight");
+        this.comboUnitWeight.setMinimumSize(new Dimension(200, 27));
+        this.comboUnitWeight.setPreferredSize(new Dimension(200, 27));
+        this.comboUnitWeight.addActionListener(evt -> comboWeightActionPerformed(evt));
+
+        DefaultComboBoxModel<String> unitWeightModel = new DefaultComboBoxModel<>();
+        if (this.unitWeightClass.isPresent()) {
+            String weightClassName = EntityWeightClass.getClassName(this.unitWeightClass.get());
+            unitWeightModel.addElement(weightClassName);
+            unitWeightModel.setSelectedItem(weightClassName);
+            this.comboUnitWeight.setEnabled(false);
+        } else {
+            for (int i = 0; i < EntityWeightClass.SIZE; i++) {
+                unitWeightModel.addElement(EntityWeightClass.getClassName(i));
+            }
+            unitWeightModel.addElement("All");
+            unitWeightModel.setSelectedItem(EntityWeightClass.getClassName(EntityWeightClass.WEIGHT_LIGHT));
+        }
+
+        this.comboUnitWeight.setModel(unitWeightModel);
+
+        gridBagConstraints = new GridBagConstraints();
+        gridBagConstraints.gridx = 1;
+        gridBagConstraints.gridy = 1;
+        gridBagConstraints.anchor = java.awt.GridBagConstraints.WEST;
+        this.panelFilterBtns.add(this.comboUnitWeight, gridBagConstraints);
     }
 
     private void setUserPreferences() {
@@ -133,55 +230,6 @@ public class UnitSearchControl extends JPanel {
 
 
 
-        lblUnitType.setText(resourceMap.getString("lblUnitType.text")); // NOI18N
-        lblUnitType.setName("lblUnitType"); // NOI18N
-        gridBagConstraints = new java.awt.GridBagConstraints();
-        gridBagConstraints.gridx = 0;
-        gridBagConstraints.gridy = 0;
-        gridBagConstraints.fill = java.awt.GridBagConstraints.HORIZONTAL;
-        gridBagConstraints.anchor = java.awt.GridBagConstraints.WEST;
-        panelFilterBtns.add(lblUnitType, gridBagConstraints);
-
-        DefaultComboBoxModel<String> unitTypeModel = new DefaultComboBoxModel<>();
-        for (int i = 0; i < UnitType.SIZE; i++) {
-            unitTypeModel.addElement(UnitType.getTypeDisplayableName(i));
-        }
-        unitTypeModel.setSelectedItem(UnitType.getTypeName(UnitType.MEK));
-        comboUnitType.setModel(unitTypeModel);
-        comboUnitType.setMinimumSize(new java.awt.Dimension(200, 27));
-        comboUnitType.setName("comboUnitType"); // NOI18N
-        comboUnitType.setPreferredSize(new java.awt.Dimension(200, 27));
-        comboUnitType.addActionListener(evt -> comboUnitTypeActionPerformed(evt));
-        gridBagConstraints = new java.awt.GridBagConstraints();
-        gridBagConstraints.gridx = 1;
-        gridBagConstraints.gridy = 0;
-        gridBagConstraints.anchor = java.awt.GridBagConstraints.WEST;
-        panelFilterBtns.add(comboUnitType, gridBagConstraints);
-
-        lblWeight.setText(resourceMap.getString("lblWeight.text")); // NOI18N
-        lblWeight.setName("lblWeight"); // NOI18N
-        gridBagConstraints = new java.awt.GridBagConstraints();
-        gridBagConstraints.gridx = 0;
-        gridBagConstraints.gridy = 1;
-        gridBagConstraints.anchor = java.awt.GridBagConstraints.WEST;
-        panelFilterBtns.add(lblWeight, gridBagConstraints);
-
-        DefaultComboBoxModel<String> weightModel = new DefaultComboBoxModel<>();
-        for (int i = 0; i < EntityWeightClass.SIZE; i++) {
-            weightModel.addElement(EntityWeightClass.getClassName(i));
-        }
-        weightModel.addElement("All");
-        weightModel.setSelectedItem(EntityWeightClass.getClassName(EntityWeightClass.WEIGHT_LIGHT));
-        comboWeight.setModel(weightModel);
-        comboWeight.setMinimumSize(new java.awt.Dimension(200, 27));
-        comboWeight.setName("comboWeight"); // NOI18N
-        comboWeight.setPreferredSize(new java.awt.Dimension(200, 27));
-        comboWeight.addActionListener(evt -> comboWeightActionPerformed(evt));
-        gridBagConstraints = new java.awt.GridBagConstraints();
-        gridBagConstraints.gridx = 1;
-        gridBagConstraints.gridy = 1;
-        gridBagConstraints.anchor = java.awt.GridBagConstraints.WEST;
-        panelFilterBtns.add(comboWeight, gridBagConstraints);
 
         txtFilter.setText(resourceMap.getString("txtFilter.text")); // NOI18N
         txtFilter.setMinimumSize(new java.awt.Dimension(200, 28));
@@ -332,7 +380,7 @@ public class UnitSearchControl extends JPanel {
 
     private void filterUnits() {
         RowFilter<UnitSelectorDialog.MechTableModel, Integer> unitTypeFilter = null;
-        final int nClass = comboWeight.getSelectedIndex();
+        final int nClass = comboUnitWeight.getSelectedIndex();
         final int nUnit = comboUnitType.getSelectedIndex();
         final int year = campaign.getCalendar().get(GregorianCalendar.YEAR);
         //If current expression doesn't parse, don't update.
@@ -458,7 +506,7 @@ public class UnitSearchControl extends JPanel {
         this.mechs = m;
 
         // break out if there are no units to filter
-        if (mechs == null) {
+        if (this.mechs == null) {
             System.err.println("No units to filter!");
         } else {
             unitModel.setData(mechs);
@@ -481,8 +529,8 @@ public class UnitSearchControl extends JPanel {
         return comboUnitType;
     }
 
-    public JComboBox<String> getComboWeight() {
-        return comboWeight;
+    public JComboBox<String> getComboUnitWeight() {
+        return comboUnitWeight;
     }
 
 
