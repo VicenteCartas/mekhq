@@ -25,47 +25,43 @@ import megamek.client.ui.swing.MechTileset;
 import megamek.client.ui.swing.MechViewPanel;
 import megamek.common.*;
 import megamek.common.loaders.EntityLoadingException;
-import megamek.common.logging.LogLevel;
 import megamek.common.util.EncodeControl;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.unit.Unit;
-import mekhq.campaign.unit.UnitOrder;
 import mekhq.campaign.unit.UnitTechProgression;
-import mekhq.gui.dialog.UnitSelectorDialog;
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import javax.swing.event.ListSelectionEvent;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.TableColumn;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
-import java.awt.event.ActionListener;
 import java.io.IOException;
 import java.text.DecimalFormat;
+import java.text.ParseException;
 import java.util.*;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class UnitSearchControl extends JPanel {
     private static MechTileset unitTileset;
     private static ResourceBundle resourceMap;
 
     private final Campaign campaign;
-    private final Optional<List<Unit>> units;
-    private final MechSummary[] unitsSummary;
-    private final Optional<UnitType> unitType;
-    private final Optional<Integer> unitWeightClass;
-
-    private Unit selectedUnit;
-    private Entity selectedEntity;
-
+    private final List<Map.Entry<MechSummary, Unit>> units;
+    private Integer unitType;
+    private Integer unitWeightClass;
     private final AdvancedSearchDialog advancedSearchDialog;
 
-    private TableRowSorter<UnitSearchControl.MechTableModel> sorter;
-    private UnitSearchControl.MechTableModel unitModel;
+    private Map.Entry<MechSummary, Unit> selectedUnit;
+
+    private TableRowSorter<UnitTableModel> sorter;
+    private UnitTableModel unitModel;
     private MechSearchFilter searchFilter;
 
     private JLabel lblUnitType;
@@ -88,51 +84,89 @@ public class UnitSearchControl extends JPanel {
     public UnitSearchControl(
             Frame parent,
             Campaign campaign,
-            Optional<List<Unit>> units,
-            Optional<UnitType> unitType,
-            Optional<Integer> unitWeightClass) {
+            List<Unit> possibleUnits,
+            Integer unitType,
+            Integer unitWeightClass) {
         this.campaign = campaign;
-        this.units = units;
         this.unitType = unitType;
         this.unitWeightClass = unitWeightClass;
 
+        this.advancedSearchDialog = new AdvancedSearchDialog(parent, campaign.getCalendar().get(GregorianCalendar.YEAR));
         resourceMap = ResourceBundle.getBundle("mekhq.resources.UnitSearchControl", new EncodeControl()); //$NON-NLS-1$
 
+        if (possibleUnits != null) {
+            this.units = new ArrayList<>(possibleUnits.size());
+
+            List<MechSummary> summaries = possibleUnits.stream().map(Unit::toSummary).collect(Collectors.toList());
+            for(int i = 0; i < possibleUnits.size(); i ++) {
+                this.units.add(new AbstractMap.SimpleEntry<>(summaries.get(i), possibleUnits.get(i)));
+            }
+        } else {
+            MechSummary[] summaries = MechSummaryCache.getInstance().getAllMechs();
+            this.units = Arrays
+                    .stream(summaries)
+                    .map(s -> new AbstractMap.SimpleEntry<MechSummary, Unit>(s, null))
+                    .collect(Collectors.toList());
+        }
 
         initComponents();
         setUserPreferences();
+        setUnitsModel();
+    }
 
+    public Optional<Unit> getSelectedUnit() {
+        if(this.selectedUnit == null) {
+            return Optional.empty();
+        }
+        return Optional.of(this.selectedUnit.getValue());
+    }
 
-
-
-
-
-        unitModel = new UnitSearchControl.MechTableModel();
-
-        if (units.isPresent()) {
-            // Create summary from units
-            this.unitsSummary = null;
-        } else {
-            this.unitsSummary = MechSummaryCache.getInstance().getAllMechs();
+    public Optional<Entity> getSelectedEntity() {
+        final String METHOD_NAME = "getSelectedEntity";
+        if(this.selectedUnit == null) {
+            return Optional.empty();
         }
 
-        setMechs(allMechs);
+        try
+        {
+            return Optional.of(
+                    new MechFileParser(
+                            this.selectedUnit.getKey().getSourceFile(),
+                            this.selectedUnit.getKey().getEntryName())
+                            .getEntity());
+        }
+        catch (EntityLoadingException ele) {
+            MekHQ.getLogger().error(getClass(), METHOD_NAME, ele);
+            return Optional.empty();
+        }
+    }
 
-        this.advancedSearchDialog = new AdvancedSearchDialog(parent, campaign.getCalendar().get(GregorianCalendar.YEAR));
-
-
+    @Override
+    public void setVisible(boolean visible) {
+        this.advancedSearchDialog.clearValues();
+        this.searchFilter = null;
+        filterUnits();
+        super.setVisible(visible);
     }
 
     private void initComponents() {
         GridBagConstraints gridBagConstraints;
         this.setLayout(new BorderLayout());
 
-        panelFilterBtns.setName("panelFilterBtns");
-        panelFilterBtns.setLayout(new GridBagLayout());
-
-
+        createFilterPanel();
         createUnitTypeArea();
         createUnitWeightArea();
+        createFilterArea();
+        createImageArea();
+        createAdvancedSearchArea();
+        createUnitsTableArea();
+        finalizeLayout();
+    }
+
+    private void createFilterPanel() {
+        this.panelFilterBtns = new JPanel();
+        this.panelFilterBtns.setName("panelFilterBtns");
+        this.panelFilterBtns.setLayout(new GridBagLayout());
     }
 
     private void createUnitTypeArea() {
@@ -149,13 +183,12 @@ public class UnitSearchControl extends JPanel {
 
         this.comboUnitType = new JComboBox<>();
         this.comboUnitType.setName("comboUnitType");
-        this.comboUnitType.setMinimumSize(new Dimension(200, 27));
         this.comboUnitType.setPreferredSize(new Dimension(200, 27));
-        this.comboUnitType.addActionListener(evt -> comboUnitTypeActionPerformed(evt));
+        this.comboUnitType.addActionListener(x -> filterUnits());
 
         DefaultComboBoxModel<String> unitTypeModel = new DefaultComboBoxModel<>();
-        if (this.unitType.isPresent()) {
-            String unitTypeName = this.unitType.get().getTypeDisplayableName();
+        if (this.unitType != null) {
+            String unitTypeName = UnitType.getTypeDisplayableName(this.unitType);
             unitTypeModel.addElement(unitTypeName);
             unitTypeModel.setSelectedItem(unitTypeName);
             this.comboUnitType.setEnabled(false);
@@ -188,13 +221,12 @@ public class UnitSearchControl extends JPanel {
 
         this.comboUnitWeight = new JComboBox<>();
         this.comboUnitWeight.setName("comboUnitWeight");
-        this.comboUnitWeight.setMinimumSize(new Dimension(200, 27));
         this.comboUnitWeight.setPreferredSize(new Dimension(200, 27));
-        this.comboUnitWeight.addActionListener(evt -> comboWeightActionPerformed(evt));
+        this.comboUnitWeight.addActionListener(x -> filterUnits());
 
         DefaultComboBoxModel<String> unitWeightModel = new DefaultComboBoxModel<>();
-        if (this.unitWeightClass.isPresent()) {
-            String weightClassName = EntityWeightClass.getClassName(this.unitWeightClass.get());
+        if (this.unitWeightClass != null) {
+            String weightClassName = EntityWeightClass.getClassName(this.unitWeightClass);
             unitWeightModel.addElement(weightClassName);
             unitWeightModel.setSelectedItem(weightClassName);
             this.comboUnitWeight.setEnabled(false);
@@ -215,27 +247,23 @@ public class UnitSearchControl extends JPanel {
         this.panelFilterBtns.add(this.comboUnitWeight, gridBagConstraints);
     }
 
-    private void setUserPreferences() {
-    }
+    private void createFilterArea() {
+        this.lblFilter = new JLabel();
+        this.lblFilter.setName("lblFilter");
+        this.lblFilter.setText(resourceMap.getString("lblFilter.text"));
 
+        GridBagConstraints gridBagConstraints = new GridBagConstraints();
+        gridBagConstraints.gridx = 0;
+        gridBagConstraints.gridy = 2;
+        gridBagConstraints.weighty = 1.0;
+        gridBagConstraints.anchor = java.awt.GridBagConstraints.WEST;
+        this.panelFilterBtns.add(this.lblFilter, gridBagConstraints);
 
-
-
-
-
-
-    private void initComponents() {
-
-
-
-
-
-
-        txtFilter.setText(resourceMap.getString("txtFilter.text")); // NOI18N
-        txtFilter.setMinimumSize(new java.awt.Dimension(200, 28));
-        txtFilter.setName("txtFilter"); // NOI18N
-        txtFilter.setPreferredSize(new java.awt.Dimension(200, 28));
-        txtFilter.getDocument().addDocumentListener(
+        this.txtFilter = new JTextField();
+        this.txtFilter.setName("txtFilter");
+        this.txtFilter.setText(resourceMap.getString("txtFilter.text"));
+        this.txtFilter.setPreferredSize(new Dimension(200, 28));
+        this.txtFilter.getDocument().addDocumentListener(
                 new DocumentListener() {
                     public void changedUpdate(DocumentEvent e) {
                         filterUnits();
@@ -247,67 +275,67 @@ public class UnitSearchControl extends JPanel {
                         filterUnits();
                     }
                 });
-        gridBagConstraints = new java.awt.GridBagConstraints();
+
+        gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.gridx = 1;
         gridBagConstraints.gridy = 2;
         gridBagConstraints.weighty = 1.0;
-        gridBagConstraints.anchor = java.awt.GridBagConstraints.WEST;
-        panelFilterBtns.add(txtFilter, gridBagConstraints);
+        gridBagConstraints.anchor = GridBagConstraints.WEST;
+        this.panelFilterBtns.add(this.txtFilter, gridBagConstraints);
+    }
 
-        lblFilter.setText(resourceMap.getString("lblFilter.text")); // NOI18N
-        lblFilter.setName("lblFilter"); // NOI18N
-        gridBagConstraints = new java.awt.GridBagConstraints();
-        gridBagConstraints.gridx = 0;
-        gridBagConstraints.gridy = 2;
-        gridBagConstraints.weighty = 1.0;
-        gridBagConstraints.anchor = java.awt.GridBagConstraints.WEST;
-        panelFilterBtns.add(lblFilter, gridBagConstraints);
+    private void createImageArea() {
+        this.lblImage = new JLabel();
+        this.lblImage.setName("lblImage");
+        this.lblImage.setHorizontalAlignment(SwingConstants.CENTER);
+        this.lblImage.setText(resourceMap.getString("lblImage.text"));
 
-        lblImage.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
-        lblImage.setText(resourceMap.getString("lblImage.text")); // NOI18N
-        lblImage.setName("lblImage"); // NOI18N
-        gridBagConstraints = new java.awt.GridBagConstraints();
+        GridBagConstraints gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.gridx = 2;
         gridBagConstraints.gridy = 0;
         gridBagConstraints.gridheight = 3;
-        gridBagConstraints.fill = java.awt.GridBagConstraints.BOTH;
+        gridBagConstraints.fill = GridBagConstraints.BOTH;
         gridBagConstraints.weightx = 1.0;
         gridBagConstraints.weighty = 1.0;
-        panelFilterBtns.add(lblImage, gridBagConstraints);
+        this.panelFilterBtns.add(this.lblImage, gridBagConstraints);
+    }
 
-        panelSearchBtns.setLayout(new GridBagLayout());
-
-        btnAdvSearch.setText(megamek.client.ui.Messages.getString("MechSelectorDialog.AdvSearch")); //$NON-NLS-1$
-        btnAdvSearch.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                searchFilter = asd.showDialog();
-                btnResetSearch.setEnabled(searchFilter!=null);
-                filterUnits();
-            }
+    private void createAdvancedSearchArea() {
+        this.btnAdvSearch = new JButton();
+        this.btnAdvSearch.setText(megamek.client.ui.Messages.getString("MechSelectorDialog.AdvSearch")); //$NON-NLS-1$
+        this.btnAdvSearch.addActionListener(evt -> {
+            searchFilter = this.advancedSearchDialog.showDialog();
+            this.btnResetSearch.setEnabled(searchFilter != null);
+            filterUnits();
         });
-        gridBagConstraints = new GridBagConstraints();
+
+        GridBagConstraints gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridwidth = 1;
         gridBagConstraints.gridy = 0;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        panelSearchBtns.add(btnAdvSearch, gridBagConstraints);
+        this.panelSearchBtns.add(this.btnAdvSearch, gridBagConstraints);
 
-        btnResetSearch.setText(Messages.getString("MechSelectorDialog.Reset")); //$NON-NLS-1$
-        btnResetSearch.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                asd.clearValues();
-                searchFilter=null;
-                btnResetSearch.setEnabled(false);
-                filterUnits();
-            }
+        this.btnResetSearch = new JButton();
+        this.btnResetSearch.setText(Messages.getString("MechSelectorDialog.Reset")); //$NON-NLS-1$
+        this.btnResetSearch.setEnabled(false);
+        this.btnResetSearch.addActionListener(evt -> {
+            this.advancedSearchDialog.clearValues();
+            searchFilter = null;
+            this.btnResetSearch.setEnabled(false);
+            filterUnits();
         });
-        btnResetSearch.setEnabled(false);
+
         gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.gridx = 1;
         gridBagConstraints.gridwidth = 1;
         gridBagConstraints.gridy = 0;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        panelSearchBtns.add(btnResetSearch, gridBagConstraints);
+        this.panelSearchBtns.add(this.btnResetSearch, gridBagConstraints);
+
+        this.panelSearchBtns = new JPanel();
+        this.panelSearchBtns.setName("panelSearchBtns");
+        this.panelSearchBtns.setLayout(new GridBagLayout());
 
         gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.gridx = 0;
@@ -317,98 +345,108 @@ public class UnitSearchControl extends JPanel {
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.weightx = 0.0;
         gridBagConstraints.insets = new java.awt.Insets(10, 10, 10, 0);
-        panelFilterBtns.add(panelSearchBtns, gridBagConstraints);
+        this.panelFilterBtns.add(this.panelSearchBtns, gridBagConstraints);
+    }
 
+    private void createUnitsTableArea() {
+        this.unitModel = new UnitTableModel();
 
-        scrTableUnits.setMinimumSize(new java.awt.Dimension(500, 400));
-        scrTableUnits.setName("scrTableUnits"); // NOI18N
-        scrTableUnits.setPreferredSize(new java.awt.Dimension(500, 400));
+        this.sorter = new TableRowSorter<>(this.unitModel);
+        this.sorter.setComparator(UnitTableModel.COL_COST, new UnitSearchControl.MoneySorter());
 
-        tableUnits.setFont(Font.decode(resourceMap.getString("tableUnits.font"))); // NOI18N
-        tableUnits.setModel(unitModel);
+        this.tableUnits = new JTable();
         tableUnits.setName("tableUnits"); // NOI18N
-        tableUnits.setSelectionMode(javax.swing.ListSelectionModel.SINGLE_SELECTION);
-        sorter = new TableRowSorter<>(unitModel);
-        sorter.setComparator(UnitSelectorDialog.MechTableModel.COL_COST, new UnitSelectorDialog.FormattedNumberSorter());
-        tableUnits.setRowSorter(sorter);
-        tableUnits.getSelectionModel().addListSelectionListener(evt -> unitChanged(evt));
-        TableColumn column = null;
-        for (int i = 0; i < UnitSelectorDialog.MechTableModel.N_COL; i++) {
+        tableUnits.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        tableUnits.setModel(this.unitModel);
+        tableUnits.setRowSorter(this.sorter);
+        tableUnits.getSelectionModel().addListSelectionListener(this::unitChanged);
+
+        TableColumn column;
+        for (int i = 0; i < UnitTableModel.N_COL; i++) {
             column = tableUnits.getColumnModel().getColumn(i);
-            if (i == UnitSelectorDialog.MechTableModel.COL_CHASSIS) {
+            if (i == UnitTableModel.COL_CHASSIS) {
                 column.setPreferredWidth(125);
-            }
-            else if(i == UnitSelectorDialog.MechTableModel.COL_MODEL
-                    || i == UnitSelectorDialog.MechTableModel.COL_COST) {
+            } else if(i == UnitTableModel.COL_MODEL ||
+                    i == UnitTableModel.COL_COST) {
                 column.setPreferredWidth(75);
-            }
-            else if(i == UnitSelectorDialog.MechTableModel.COL_WEIGHT
-                    || i == UnitSelectorDialog.MechTableModel.COL_BV) {
+            } else if(i == UnitTableModel.COL_WEIGHT ||
+                    i == UnitTableModel.COL_BV) {
                 column.setPreferredWidth(50);
-            }
-            else {
+            } else {
                 column.setPreferredWidth(25);
             }
             column.setCellRenderer(unitModel.getRenderer());
-
         }
-        scrTableUnits.setViewportView(tableUnits);
 
-        panelLeft.setLayout(new BorderLayout());
-        panelLeft.add(panelFilterBtns, BorderLayout.PAGE_START);
-        panelLeft.add(scrTableUnits, BorderLayout.CENTER);
-
-        splitMain = new JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT,panelLeft, panelMekView);
-        splitMain.setOneTouchExpandable(true);
-        splitMain.setResizeWeight(0.0);
-        getContentPane().add(splitMain, BorderLayout.CENTER);
-
-                pack();
+        this.scrTableUnits = new JScrollPane();
+        this.scrTableUnits.setName("scrTableUnits"); // NOI18N
+        this.scrTableUnits.setPreferredSize(new Dimension(500, 400));
+        this.scrTableUnits.setViewportView(tableUnits);
     }
 
-    private void comboWeightActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_comboWeightActionPerformed
+    private void finalizeLayout() {
+        this.panelLeft = new JPanel();
+        this.panelLeft.setLayout(new BorderLayout());
+        this.panelLeft.add(this.panelFilterBtns, BorderLayout.PAGE_START);
+        this.panelLeft.add(this.scrTableUnits, BorderLayout.CENTER);
+
+        this.panelMekView = new MechViewPanel();
+
+        this.splitMain = new JSplitPane();
+        this.splitMain = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, this.panelLeft, this.panelMekView);
+        this.splitMain.setOneTouchExpandable(true);
+        this.splitMain.setResizeWeight(0.0);
+        this.add(this.splitMain, BorderLayout.CENTER);
+    }
+
+    private void setUserPreferences() {
+    }
+
+    private void setUnitsModel() {
+        final String METHOD_NAME = "setUnitsModel";
+        if (this.units != null) {
+            this.unitModel.setData(this.units);
+        } else {
+            MekHQ.getLogger().error(
+                    getClass(),
+                    METHOD_NAME,
+                    "No units to filter. This is not expected, please report a bug.");
+        }
         filterUnits();
     }
 
-    public Entity getEntity() {
-        if(null == selectedUnit) {
-            return null;
-        }
-        return selectedUnit.getEntity();
-    }
-
-
     private void filterUnits() {
-        RowFilter<UnitSelectorDialog.MechTableModel, Integer> unitTypeFilter = null;
-        final int nClass = comboUnitWeight.getSelectedIndex();
-        final int nUnit = comboUnitType.getSelectedIndex();
-        final int year = campaign.getCalendar().get(GregorianCalendar.YEAR);
+        RowFilter<UnitTableModel, Integer> unitTypeFilter;
+        final int nClass = this.comboUnitWeight.getSelectedIndex();
+        final int nUnit = this.comboUnitType.getSelectedIndex();
+        final int year = this.campaign.getCalendar().get(GregorianCalendar.YEAR);
+
         //If current expression doesn't parse, don't update.
         try {
-            unitTypeFilter = new RowFilter<UnitSelectorDialog.MechTableModel,Integer>() {
+            unitTypeFilter = new RowFilter<UnitTableModel,Integer>() {
                 @Override
-                public boolean include(Entry<? extends UnitSelectorDialog.MechTableModel, ? extends Integer> entry) {
-                    UnitSelectorDialog.MechTableModel mechModel = entry.getModel();
-                    MechSummary mech = mechModel.getMechSummary(entry.getIdentifier());
-                    ITechnology tech = UnitTechProgression.getProgression(mech, campaign.getTechFaction(), true);
-                    if (
-                        /*year limits*/
-                            (!campaign.getCampaignOptions().limitByYear() || mech.getYear() <= year) &&
-                                    /*Clan/IS limits*/
-                                    (campaign.getCampaignOptions().allowClanPurchases() || !TechConstants.isClan(mech.getType())) &&
-                                    (campaign.getCampaignOptions().allowISPurchases() || TechConstants.isClan(mech.getType())) &&
-                                    /* Canon */
-                                    (mech.isCanon() || !campaign.getCampaignOptions().allowCanonOnly()) &&
-                                    /* Weight */
-                                    (mech.getWeightClass() == nClass || nClass == EntityWeightClass.SIZE) &&
-                                    /* Technology Level */
-                                    (null != tech) && campaign.isLegal(tech) &&
-                                    /*Unit type*/
-                                    (nUnit == UnitType.SIZE || mech.getUnitType().equals(UnitType.getTypeName(nUnit))) &&
-                                    (searchFilter==null || MechSearchFilter.isMatch(mech, searchFilter))) {
+                public boolean include(Entry<? extends UnitTableModel, ? extends Integer> entry) {
+                    UnitTableModel unitModel = entry.getModel();
+                    Map.Entry<MechSummary, Unit> unit = unitModel.getUnit(entry.getIdentifier());
+                    ITechnology tech = UnitTechProgression.getProgression(unit.getKey(), campaign.getTechFaction(), true);
+
+                    if (/*year limits*/
+                            (!campaign.getCampaignOptions().limitByYear() || unit.getKey().getYear() <= year) &&
+                            /*Clan/IS limits*/
+                            (campaign.getCampaignOptions().allowClanPurchases() || !TechConstants.isClan(unit.getKey().getType())) &&
+                            (campaign.getCampaignOptions().allowISPurchases() || TechConstants.isClan(unit.getKey().getType())) &&
+                            /* Canon */
+                            (unit.getKey().isCanon() || !campaign.getCampaignOptions().allowCanonOnly()) &&
+                            /* Weight */
+                            (unit.getKey().getWeightClass() == nClass || nClass == EntityWeightClass.SIZE) &&
+                            /* Technology Level */
+                            (tech != null) && campaign.isLegal(tech) &&
+                            /*Unit type*/
+                            (nUnit == UnitType.SIZE || unit.getKey().getUnitType().equals(UnitType.getTypeName(nUnit))) &&
+                            (searchFilter == null || MechSearchFilter.isMatch(unit.getKey(), searchFilter))) {
                         if(txtFilter.getText().length() > 0) {
                             String text = txtFilter.getText();
-                            return mech.getName().toLowerCase().contains(text.toLowerCase());
+                            return unit.getKey().getName().toLowerCase().contains(text.toLowerCase());
                         }
                         return true;
                     }
@@ -421,123 +459,60 @@ public class UnitSearchControl extends JPanel {
         sorter.setRowFilter(unitTypeFilter);
     }
 
-    private void unitChanged(javax.swing.event.ListSelectionEvent evt) {
+    private void unitChanged(ListSelectionEvent evt) {
         final String METHOD_NAME = "unitChanged(ListSelectionEvent)"; //$NON-NLS-1$
 
-        int view = tableUnits.getSelectedRow();
-        if(view < 0) {
+        int selectedRowIndex = this.tableUnits.getSelectedRow();
+        if(selectedRowIndex < 0) {
             //selection got filtered away
-            selectedUnit = null;
+            this.selectedUnit = null;
             refreshUnitView();
             return;
         }
-        int selected = tableUnits.convertRowIndexToModel(view);
-        // else
-        MechSummary ms = mechs[selected];
-        try {
-            // For some unknown reason the base path gets screwed up after you
-            // print so this sets the source file to the full path.
-            Entity entity = new MechFileParser(ms.getSourceFile(), ms.getEntryName()).getEntity();
-            selectedUnit = new UnitOrder(entity, campaign);
-            btnBuy.setEnabled(true);
-            btnBuy.setText("Buy (TN: " + campaign.getTargetForAcquisition(selectedUnit, campaign.getLogisticsPerson(), false).getValueAsString() + "+)");
-            btnBuy.setToolTipText(campaign.getTargetForAcquisition(selectedUnit, campaign.getLogisticsPerson(), false).getDesc());
-            refreshUnitView();
-        } catch (EntityLoadingException ex) {
-            selectedUnit = null;
-            btnBuy.setEnabled(false);
-            btnBuy.setText("Buy (TN: --)");
-            btnBuy.setToolTipText(null);
-            MekHQ.getLogger().log(getClass(), METHOD_NAME, LogLevel.ERROR,
-                    "Unable to load mech: " + ms.getSourceFile() + ": " //$NON-NLS-1$
-                            + ms.getEntryName() + ": " + ex.getMessage()); //$NON-NLS-1$
-            MekHQ.getLogger().error(getClass(), METHOD_NAME, ex);
-            refreshUnitView();
-        }
+
+        int selectedModelIndex = this.tableUnits.convertRowIndexToModel(selectedRowIndex);
+        this.selectedUnit = this.units.get(selectedModelIndex);
+        refreshUnitView();
     }
 
     void refreshUnitView() {
-        final String METHOD_NAME = "refreshUnitView()"; //$NON-NLS-1$
+        final String METHOD_NAME = "refreshUnitView()";
 
-        boolean populateTextFields = true;
-
-        // null entity, so load a default unit.
-        if (selectedUnit == null) {
+        if (this.selectedUnit == null) {
             panelMekView.reset();
             lblImage.setIcon(null);
             return;
         }
-        MechView mechView = null;
-        try {
-            mechView = new MechView(selectedUnit.getEntity(), false, true);
-        } catch (Exception e) {
-            e.printStackTrace();
-            // error unit didn't load right. this is bad news.
-            populateTextFields = false;
-        }
-        if (populateTextFields && (mechView != null)) {
-            panelMekView.setMech(selectedUnit.getEntity(), true);
-        } else {
+
+        Optional<Entity> selectedEntity = getSelectedEntity();
+        if (!selectedEntity.isPresent()) {
             panelMekView.reset();
+            lblImage.setIcon(null);
+            return;
         }
 
-        if (mt == null) {
-            mt = new MechTileset(Configuration.unitImagesDir());
+        panelMekView.setMech(selectedEntity.get(), true);
+
+        if (unitTileset == null) {
+            unitTileset = new MechTileset(Configuration.unitImagesDir());
             try {
-                mt.loadFromFile("mechset.txt");
+                unitTileset.loadFromFile("mechset.txt");
             } catch (IOException ex) {
                 MekHQ.getLogger().error(getClass(), METHOD_NAME, ex);
-                //TODO: do something here
                 return;
             }
-        }// end if(null tileset)
-        Image unitImage = mt.imageFor(selectedUnit.getEntity(), lblImage, -1);
-        if(null != unitImage) {
+        }
+
+        Image unitImage = unitTileset.imageFor(selectedEntity.get(), lblImage, -1);
+        if(unitImage != null) {
             lblImage.setIcon(new ImageIcon(unitImage));
         }
     }
-    /*
-     public Entity getSelectedEntity() {
-        return selectedUnit;
-
-    }
-     */
-    public void setMechs (MechSummary [] m) {
-        this.mechs = m;
-
-        // break out if there are no units to filter
-        if (this.mechs == null) {
-            System.err.println("No units to filter!");
-        } else {
-            unitModel.setData(mechs);
-        }
-        filterUnits();
-    }
-
-    public void changeBuyBtnToSelectBtn () {
-        for (ActionListener actionListener : btnBuy.getActionListeners()) {
-            btnBuy.removeActionListener(actionListener);
-        }
-
-        ResourceBundle resourceMap = ResourceBundle.getBundle("UnitSelectorDialog", new EncodeControl()); //$NON-NLS-1$
-        btnBuy.setText(resourceMap.getString("btnBuy.textSelect")); // NOI18N
-
-        btnBuy.addActionListener(evt -> btnBuySelectActionPerformed(evt));
-    }
-
-    public JComboBox<String> getComboUnitType() {
-        return comboUnitType;
-    }
-
-    public JComboBox<String> getComboUnitWeight() {
-        return comboUnitWeight;
-    }
-
 
     /**
-     * A table model for displaying work items
+     * A table model for displaying units
      */
-    public class MechTableModel extends AbstractTableModel {
+    public class UnitTableModel extends AbstractTableModel {
         private static final long serialVersionUID = 8472587304279640434L;
         private final static int COL_MODEL = 0;
         private final static int COL_CHASSIS = 1;
@@ -547,15 +522,18 @@ public class UnitSearchControl extends JPanel {
         private final static int COL_COST = 5;
         private final static int N_COL = 6;
 
-        private MechSummary[] data = new MechSummary[0];
+        private List<Map.Entry<MechSummary, Unit>> data = new ArrayList<>();
 
-        public MechTableModel() {
-            //this.columnNames = new String[] {"Model", "Chassis"};
-            //this.data = new MechSummary[0];
+        public UnitTableModel() {
+        }
+
+        public void setData(List<Map.Entry<MechSummary, Unit>> units) {
+            this.data = units;
+            fireTableDataChanged();
         }
 
         public int getRowCount() {
-            return data.length;
+            return data.size();
         }
 
         public int getColumnCount() {
@@ -593,7 +571,7 @@ public class UnitSearchControl extends JPanel {
         }
 
         @Override
-        public Class<? extends Object> getColumnClass(int c) {
+        public Class<?> getColumnClass(int c) {
             return getValueAt(0, c).getClass();
         }
 
@@ -602,36 +580,35 @@ public class UnitSearchControl extends JPanel {
             return false;
         }
 
-        public MechSummary getMechSummary(int i) {
-            return data[i];
-        }
-
-        //fill table with values
-        public void setData(MechSummary[] ms) {
-            data = ms;
-            fireTableDataChanged();
+        public Map.Entry<MechSummary, Unit> getUnit(int index) {
+            return data.get(index);
         }
 
         public Object getValueAt(int row, int col) {
-            MechSummary ms = data[row];
+            Map.Entry<MechSummary, Unit> entry = data.get(row);
             if(col == COL_MODEL) {
-                return ms.getModel();
+                return entry.getKey().getModel();
             }
             if(col == COL_CHASSIS) {
-                return ms.getChassis();
+                return entry.getKey().getChassis();
             }
             if(col == COL_WEIGHT) {
-                return ms.getTons();
+                return entry.getKey().getTons();
             }
             if(col == COL_BV) {
-                return ms.getBV();
+                return entry.getKey().getBV();
             }
             if(col == COL_YEAR) {
-                return ms.getYear();
+                return entry.getKey().getYear();
             }
             if(col == COL_COST) {
-                return getPurchasePrice(ms).toAmountAndSymbolString();
+                if (entry.getValue() != null) {
+                    return entry.getValue().getSellValue().toAmountAndSymbolString();
+                } else {
+                    return getPurchasePrice(entry.getKey()).toAmountAndSymbolString();
+                }
             }
+
             return "?";
         }
 
@@ -641,25 +618,27 @@ public class UnitSearchControl extends JPanel {
                     || ms.getUnitType().equals(UnitType.getTypeName(UnitType.BATTLE_ARMOR))) {
                 cost = Money.of(ms.getAlternateCost());
             }
+
             if(TechConstants.isClan(ms.getType())) {
                 cost = cost.multipliedBy(campaign.getCampaignOptions().getClanPriceModifier());
             }
+
             return cost;
         }
 
-        public UnitSelectorDialog.MechTableModel.Renderer getRenderer() {
-            return new UnitSelectorDialog.MechTableModel.Renderer();
+        public UnitSearchControl.UnitTableModel.Renderer getRenderer() {
+            return new UnitSearchControl.UnitTableModel.Renderer();
         }
 
         public class Renderer extends DefaultTableCellRenderer {
-
-            private static final long serialVersionUID = 9054581142945717303L;
-
-            public Component getTableCellRendererComponent(JTable table,
-                                                           Object value, boolean isSelected, boolean hasFocus,
-                                                           int row, int column) {
-                super.getTableCellRendererComponent(table, value, isSelected,
-                        hasFocus, row, column);
+            public Component getTableCellRendererComponent(
+                    JTable table,
+                    Object value,
+                    boolean isSelected,
+                    boolean hasFocus,
+                    int row,
+                    int column) {
+                super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
                 setOpaque(true);
                 int actualCol = table.convertColumnIndexToModel(column);
                 setHorizontalAlignment(getAlignment(actualCol));
@@ -670,38 +649,27 @@ public class UnitSearchControl extends JPanel {
     }
 
     /**
-     * A comparator for numbers that have been formatted with DecimalFormat
-     * @author Jay Lawson
-     *
+     * A sorter for money values.
      */
-    public class FormattedNumberSorter implements Comparator<String> {
-
+    public class MoneySorter implements Comparator<String> {
         @Override
         public int compare(String s0, String s1) {
-            //lets find the weight class integer for each name
+            final String METHOD_NAME = "compare";
+
             long l0 = 0;
             try {
-                l0 = DecimalFormat.getInstance().parse(s0.replace(",", "")).longValue();
-            } catch (java.text.ParseException e) {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
+                l0 = DecimalFormat.getInstance().parse(s0.substring(0, s0.indexOf(" ")).replace(",", "")).longValue();
+            } catch (ParseException e) {
+                MekHQ.getLogger().error(getClass(), METHOD_NAME, e);
             }
+
             long l1 = 0;
             try {
-                l1 = DecimalFormat.getInstance().parse(s1.replace(",", "")).longValue();
-            } catch (java.text.ParseException e) {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
+                l1 = DecimalFormat.getInstance().parse(s1.substring(0, s1.indexOf(" ")).replace(",", "")).longValue();
+            } catch (ParseException e) {
+                MekHQ.getLogger().error(getClass(), METHOD_NAME, e);
             }
             return ((Comparable<Long>)l0).compareTo(l1);
         }
-    }
-
-    @Override
-    public void setVisible(boolean visible) {
-        asd.clearValues();
-        searchFilter=null;
-        filterUnits();
-        super.setVisible(visible);
     }
 }
