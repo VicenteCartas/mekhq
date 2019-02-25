@@ -41,6 +41,8 @@ import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.TableColumn;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
+import java.beans.PropertyChangeEvent;
+import java.beans.PropertyChangeListener;
 import java.io.IOException;
 import java.text.DecimalFormat;
 import java.text.ParseException;
@@ -51,6 +53,8 @@ import java.util.stream.Collectors;
 public class UnitSearchControl extends JPanel {
     private static MechTileset unitTileset;
     private static ResourceBundle resourceMap;
+
+    private List<PropertyChangeListener> listeners;
 
     private final Campaign campaign;
     private final List<Map.Entry<MechSummary, Unit>> units;
@@ -87,6 +91,7 @@ public class UnitSearchControl extends JPanel {
             List<Unit> possibleUnits,
             Integer unitType,
             Integer unitWeightClass) {
+        this.listeners = new ArrayList<>();
         this.campaign = campaign;
         this.unitType = unitType;
         this.unitWeightClass = unitWeightClass;
@@ -99,13 +104,13 @@ public class UnitSearchControl extends JPanel {
 
             List<MechSummary> summaries = possibleUnits.stream().map(Unit::toSummary).collect(Collectors.toList());
             for(int i = 0; i < possibleUnits.size(); i ++) {
-                this.units.add(new AbstractMap.SimpleEntry<>(summaries.get(i), possibleUnits.get(i)));
+                this.units.add(new AbstractMap.SimpleImmutableEntry<>(summaries.get(i), possibleUnits.get(i)));
             }
         } else {
             MechSummary[] summaries = MechSummaryCache.getInstance().getAllMechs();
             this.units = Arrays
                     .stream(summaries)
-                    .map(s -> new AbstractMap.SimpleEntry<MechSummary, Unit>(s, null))
+                    .map(s -> new AbstractMap.SimpleImmutableEntry<MechSummary, Unit>(s, null))
                     .collect(Collectors.toList());
         }
 
@@ -141,12 +146,12 @@ public class UnitSearchControl extends JPanel {
         }
     }
 
-    @Override
-    public void setVisible(boolean visible) {
-        this.advancedSearchDialog.clearValues();
-        this.searchFilter = null;
-        filterUnits();
-        super.setVisible(visible);
+    public void addListSelectionListener(PropertyChangeListener x) {
+        this.listeners.add(x);
+    }
+
+    public void removeListSelectionListener(PropertyChangeListener x) {
+        this.listeners.remove(x);
     }
 
     private void initComponents() {
@@ -359,7 +364,7 @@ public class UnitSearchControl extends JPanel {
         tableUnits.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         tableUnits.setModel(this.unitModel);
         tableUnits.setRowSorter(this.sorter);
-        tableUnits.getSelectionModel().addListSelectionListener(this::unitChanged);
+        tableUnits.getSelectionModel().addListSelectionListener(this::unitSelectedChanged);
 
         TableColumn column;
         for (int i = 0; i < UnitTableModel.N_COL; i++) {
@@ -459,20 +464,29 @@ public class UnitSearchControl extends JPanel {
         sorter.setRowFilter(unitTypeFilter);
     }
 
-    private void unitChanged(ListSelectionEvent evt) {
-        final String METHOD_NAME = "unitChanged(ListSelectionEvent)"; //$NON-NLS-1$
+    private void unitSelectedChanged(ListSelectionEvent evt) {
+        final String METHOD_NAME = "unitSelectedChanged(ListSelectionEvent)"; //$NON-NLS-1$
+
+        Map.Entry<MechSummary, Unit> oldValue;
+        oldValue = this.selectedUnit;
 
         int selectedRowIndex = this.tableUnits.getSelectedRow();
         if(selectedRowIndex < 0) {
-            //selection got filtered away
             this.selectedUnit = null;
-            refreshUnitView();
-            return;
+        } else {
+            int selectedModelIndex = this.tableUnits.convertRowIndexToModel(selectedRowIndex);
+            this.selectedUnit = this.units.get(selectedModelIndex);
         }
 
-        int selectedModelIndex = this.tableUnits.convertRowIndexToModel(selectedRowIndex);
-        this.selectedUnit = this.units.get(selectedModelIndex);
         refreshUnitView();
+        PropertyChangeEvent pce = new PropertyChangeEvent(
+                this,
+                "selectedUnit",
+                oldValue,
+                this.selectedUnit);
+        for (PropertyChangeListener listener : this.listeners) {
+            listener.propertyChange(pce);
+        }
     }
 
     void refreshUnitView() {
