@@ -32,68 +32,138 @@
  */
 package mekhq.gui.dialog;
 
-import java.awt.BorderLayout;
 import java.awt.EventQueue;
-import java.awt.FlowLayout;
-import java.awt.event.ActionEvent;
-import java.awt.event.FocusEvent;
-import java.awt.event.FocusListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.text.NumberFormat;
 import java.util.ResourceBundle;
-import javax.swing.JButton;
-import javax.swing.JDialog;
-import javax.swing.JFormattedTextField;
 import javax.swing.JFrame;
 import javax.swing.JOptionPane;
-import javax.swing.JPanel;
-import javax.swing.SwingUtilities;
-import javax.swing.WindowConstants;
 
-import megamek.client.ui.comboBoxes.MMComboBox;
+import javafx.application.Platform;
+import javafx.collections.FXCollections;
+import javafx.embed.swing.JFXPanel;
+import javafx.geometry.Insets;
+import javafx.scene.Scene;
+import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.TextField;
+import javafx.scene.control.Tooltip;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+
 import megamek.client.ui.preferences.JWindowPreference;
 import megamek.client.ui.preferences.PreferencesNode;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.finances.enums.TransactionType;
-import mekhq.gui.utilities.JMoneyTextField;
+import mekhq.gui.baseComponents.AbstractMHQJavaFXDialog;
 
 /**
+ * Dialog used to add (or remove) funds from the campaign treasury.
+ *
+ * <p>This dialog was migrated from AWT/Swing to JavaFX as a reference example of an incremental UI migration. The
+ * window itself remains a Swing {@link javax.swing.JDialog} (so existing call sites and modal behaviour are
+ * unchanged), but its contents are built entirely with JavaFX controls hosted inside a {@link JFXPanel}. The
+ * Swing/JavaFX interop plumbing lives in {@link AbstractMHQJavaFXDialog}.</p>
+ *
+ * <p>The public API ({@link #getClosedType()}, {@link #getTransactionType()}, {@link #getFundsQuantityField()} and
+ * {@link #getFundsDescription()}) is intentionally preserved so that {@code FinancesTab} and any other callers do not
+ * need to change.</p>
+ *
  * @author natit
  */
-public class AddFundsDialog extends JDialog implements FocusListener {
+public class AddFundsDialog extends AbstractMHQJavaFXDialog {
     private static final MMLogger LOGGER = MMLogger.create(AddFundsDialog.class);
 
-    private JMoneyTextField fundsQuantityField;
-    private JFormattedTextField descriptionField;
-    private MMComboBox<TransactionType> categoryCombo;
-    private int closedType = JOptionPane.CLOSED_OPTION;
     private final transient ResourceBundle resourceMap = ResourceBundle.getBundle("mekhq.resources.AddFundsDialog",
           MekHQ.getMHQOptions().getLocale());
 
+    // JavaFX controls (only touched on the JavaFX Application Thread)
+    private TextField fundsQuantityField;
+    private ComboBox<TransactionType> categoryCombo;
+    private TextField descriptionField;
+
+    // Results cached on confirm so the Swing getters can read them safely from the EDT after the dialog closes.
+    private volatile int closedType = JOptionPane.CLOSED_OPTION;
+    private volatile Money fundsQuantity = Money.zero();
+    private volatile String fundsDescription = "";
+    private volatile TransactionType transactionType = TransactionType.MISCELLANEOUS;
+
     public AddFundsDialog(final JFrame frame, final boolean modal) {
-        super(frame, modal);
-        initComponents();
+        super(frame, modal, ResourceBundle.getBundle("mekhq.resources.AddFundsDialog",
+              MekHQ.getMHQOptions().getLocale()).getString("Form.title"));
+        setName("Form");
         setUserPreferences();
     }
 
-    private void initComponents() {
-        setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
-        setName("Form");
-        setTitle(resourceMap.getString("Form.title"));
+    /**
+     * Builds the JavaFX content for this dialog.
+     *
+     * @return the JavaFX {@link Scene} hosting the input controls
+     */
+    @Override
+    protected Scene buildScene() {
+        fundsQuantityField = new TextField(resourceMap.getString("fundsQuantityField.text"));
+        fundsQuantityField.setTooltip(new Tooltip(resourceMap.getString("fundsQuantityField.toolTipText")));
+        fundsQuantityField.setPrefColumnCount(10);
 
-        JButton btnAddFunds = new JButton();
-        btnAddFunds.setText(resourceMap.getString("btnAddFunds.text"));
-        btnAddFunds.setActionCommand(resourceMap.getString("btnAddFunds.actionCommand"));
-        btnAddFunds.setName("btnAddFunds");
-        btnAddFunds.addActionListener(this::btnAddFundsActionPerformed);
+        categoryCombo = new ComboBox<>(FXCollections.observableArrayList(TransactionType.values()));
+        categoryCombo.getSelectionModel().select(TransactionType.MISCELLANEOUS);
+        categoryCombo.setTooltip(new Tooltip("The category the transaction falls into."));
 
-        getContentPane().add(buildFieldsPanel(), BorderLayout.NORTH);
-        getContentPane().add(btnAddFunds, BorderLayout.PAGE_END);
+        descriptionField = new TextField("Rich Uncle");
+        descriptionField.setTooltip(new Tooltip("Description of the transaction."));
+        descriptionField.setPrefColumnCount(20);
+        // Mirror the old Swing behaviour: select everything when the field gains focus.
+        descriptionField.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (isFocused) {
+                Platform.runLater(descriptionField::selectAll);
+            }
+        });
+        // Pressing Enter in the description field confirms, matching the previous dialog.
+        descriptionField.setOnAction(event -> confirm());
 
-        setLocationRelativeTo(getParent());
-        pack();
+        Button btnAddFunds = new Button(resourceMap.getString("btnAddFunds.text"));
+        btnAddFunds.setMaxWidth(Double.MAX_VALUE);
+        btnAddFunds.setOnAction(event -> confirm());
+
+        HBox fields = new HBox(2, fundsQuantityField, categoryCombo, descriptionField);
+        fields.setPadding(new Insets(2));
+
+        BorderPane root = new BorderPane();
+        root.setTop(fields);
+        root.setBottom(btnAddFunds);
+
+        return new Scene(root);
+    }
+
+    /**
+     * Caches the entered values and closes the dialog. Invoked on the JavaFX Application Thread.
+     */
+    private void confirm() {
+        fundsQuantity = parseMoney(fundsQuantityField.getText());
+        fundsDescription = descriptionField.getText();
+        transactionType = categoryCombo.getSelectionModel().getSelectedItem();
+        closedType = JOptionPane.OK_OPTION;
+        closeDialog();
+    }
+
+    /**
+     * Parses a user supplied amount into {@link Money}, mirroring the lenient behaviour of the old
+     * {@code JMoneyTextField} (defaults to zero on any parse failure).
+     *
+     * @param text the raw text entered by the user
+     *
+     * @return the parsed {@link Money} amount, or {@link Money#zero()} if it cannot be parsed
+     */
+    private static Money parseMoney(String text) {
+        try {
+            return Money.of(NumberFormat.getInstance().parse(text).doubleValue());
+        } catch (Exception ignored) {
+            return Money.zero();
+        }
     }
 
     /**
@@ -109,63 +179,20 @@ public class AddFundsDialog extends JDialog implements FocusListener {
         }
     }
 
-    private JPanel buildFieldsPanel() {
-        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 2));
-
-        fundsQuantityField = new JMoneyTextField();
-        fundsQuantityField.setText(resourceMap.getString("fundsQuantityField.text"));
-        fundsQuantityField.setToolTipText(resourceMap.getString("fundsQuantityField.toolTipText"));
-        fundsQuantityField.setName("fundsQuantityField");
-        fundsQuantityField.setColumns(10);
-        panel.add(fundsQuantityField);
-
-        categoryCombo = new MMComboBox<>("categoryCombo", TransactionType.values());
-        categoryCombo.setSelectedItem(TransactionType.MISCELLANEOUS);
-        categoryCombo.setToolTipText("The category the transaction falls into.");
-        categoryCombo.setName("categoryCombo");
-        panel.add(categoryCombo);
-
-        descriptionField = new JFormattedTextField("Rich Uncle");
-        descriptionField.addActionListener(x -> this.btnAddFundsActionPerformed(null));
-        descriptionField.addFocusListener(this);
-        descriptionField.setToolTipText("Description of the transaction.");
-        descriptionField.setName("descriptionField");
-        descriptionField.setColumns(20);
-        panel.add(descriptionField);
-        return panel;
-    }
-
     public Money getFundsQuantityField() {
-        return fundsQuantityField.getMoney();
+        return fundsQuantity;
     }
 
     public String getFundsDescription() {
-        return descriptionField.getText();
+        return fundsDescription;
     }
 
     public TransactionType getTransactionType() {
-        return categoryCombo.getSelectedItem();
-    }
-
-    @Override
-    public void focusGained(FocusEvent e) {
-        if (descriptionField.equals(e.getSource())) {
-            SwingUtilities.invokeLater(() -> descriptionField.selectAll());
-        }
-    }
-
-    @Override
-    public void focusLost(FocusEvent e) {
-        // not used
+        return transactionType;
     }
 
     public int getClosedType() {
         return closedType;
-    }
-
-    private void btnAddFundsActionPerformed(ActionEvent evt) {
-        this.closedType = JOptionPane.OK_OPTION;
-        this.setVisible(false);
     }
 
     /**

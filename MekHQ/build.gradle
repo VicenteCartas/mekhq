@@ -8,6 +8,14 @@ plugins {
     id 'jacoco'
     id 'java'
     id 'checkstyle'
+    // JavaFX support for incremental Swing -> JavaFX migration (e.g. AddFundsDialog via JFXPanel interop)
+    id 'org.openjfx.javafxplugin' version '0.1.0'
+}
+
+javafx {
+    version = '21.0.5'
+    // javafx.controls pulls in javafx.base/graphics; javafx.swing provides JFXPanel for Swing interop
+    modules = ['javafx.controls', 'javafx.swing']
 }
 
 tasks.withType(AbstractArchiveTask).configureEach {
