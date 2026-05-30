@@ -84,7 +84,9 @@ public abstract class AbstractMHQJavaFXDialog extends JDialog {
      */
     protected AbstractMHQJavaFXDialog(final JFrame frame, final boolean modal, final String title) {
         super(frame, modal);
-        initComponents(title);
+        setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+        setTitle(title);
+        getContentPane().add(jfxPanel, BorderLayout.CENTER);
     }
 
     /**
@@ -103,11 +105,15 @@ public abstract class AbstractMHQJavaFXDialog extends JDialog {
         return DEFAULT_PREFERRED_SIZE;
     }
 
-    private void initComponents(final String title) {
-        setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
-        setTitle(title);
-        getContentPane().add(jfxPanel, BorderLayout.CENTER);
-
+    /**
+     * Builds the JavaFX scene and sizes the dialog.
+     *
+     * <p>This must be called by the subclass <em>at the end of its own constructor</em>, once all of its fields are
+     * initialised. It cannot be done from this base constructor because {@link #buildScene()} typically reads subclass
+     * fields, and Java only runs subclass field initialisers after {@code super(...)} returns &mdash; calling it any
+     * earlier yields a {@link NullPointerException}.</p>
+     */
+    protected void initialize() {
         // Build the JavaFX scene graph on the JavaFX Application Thread, then size the window once it is ready.
         final CountDownLatch sceneReady = new CountDownLatch(1);
         Platform.runLater(() -> {

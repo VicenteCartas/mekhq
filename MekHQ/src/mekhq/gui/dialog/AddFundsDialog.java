@@ -95,6 +95,7 @@ public class AddFundsDialog extends AbstractMHQJavaFXDialog {
         super(frame, modal, ResourceBundle.getBundle("mekhq.resources.AddFundsDialog",
               MekHQ.getMHQOptions().getLocale()).getString("Form.title"));
         setName("Form");
+        initialize();
         setUserPreferences();
     }
 
