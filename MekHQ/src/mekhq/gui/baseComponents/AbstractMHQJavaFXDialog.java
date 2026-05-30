@@ -76,6 +76,7 @@ public abstract class AbstractMHQJavaFXDialog extends JDialog {
     private static final Dimension DEFAULT_PREFERRED_SIZE = new Dimension(420, 70);
 
     private final JFXPanel jfxPanel = new JFXPanel();
+    private boolean sceneBuilt;
 
     /**
      * @param frame the owning Swing frame
@@ -106,14 +107,23 @@ public abstract class AbstractMHQJavaFXDialog extends JDialog {
     }
 
     /**
-     * Builds the JavaFX scene and sizes the dialog.
+     * Builds the JavaFX scene (once) the first time the dialog is shown, then sizes and positions the window.
      *
-     * <p>This must be called by the subclass <em>at the end of its own constructor</em>, once all of its fields are
-     * initialised. It cannot be done from this base constructor because {@link #buildScene()} typically reads subclass
-     * fields, and Java only runs subclass field initialisers after {@code super(...)} returns &mdash; calling it any
-     * earlier yields a {@link NullPointerException}.</p>
+     * <p>The scene is built lazily here rather than in the constructor on purpose: {@link #buildScene()} typically
+     * reads subclass fields, and Java only runs a subclass's field initialisers <em>after</em> {@code super(...)}
+     * returns. Building from the constructor would therefore see those fields as {@code null}. By deferring to the
+     * first {@code setVisible(true)} the subclass is guaranteed to be fully constructed.</p>
      */
-    protected void initialize() {
+    @Override
+    public void setVisible(final boolean visible) {
+        if (visible && !sceneBuilt) {
+            buildSceneAndPack();
+            sceneBuilt = true;
+        }
+        super.setVisible(visible);
+    }
+
+    private void buildSceneAndPack() {
         // Build the JavaFX scene graph on the JavaFX Application Thread, then size the window once it is ready.
         final CountDownLatch sceneReady = new CountDownLatch(1);
         Platform.runLater(() -> {

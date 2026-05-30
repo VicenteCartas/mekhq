@@ -74,32 +74,6 @@ dialog but is a latent deadlock source (see 2.1) and would not scale to large or
 slow-to-build scenes. Alternatives (async sizing, pre-warming the FX runtime at
 startup) should be considered for bigger views.
 
-### 2.4 Constructor lifecycle: never build the scene from `super(...)`
-
-**Symptom:** a `NullPointerException` every time the dialog is opened, after the
-shared base class was introduced.
-
-**Cause:** the base constructor called `buildScene()` (indirectly) while still
-inside `super(...)`. In Java, a **subclass's field initialisers do not run until
-after `super(...)` returns**. `AddFundsDialog.buildScene()` reads the subclass
-field `resourceMap`, which was therefore still `null` at that point. This is the
-classic "don't call overridable methods from a constructor" trap, and extracting
-shared base plumbing makes it very easy to reintroduce.
-
-**Fix:** the base constructor now only sets up the window shell (title, close
-operation, `JFXPanel`). Scene construction moved to a separate
-`protected void initialize()` that the **subclass must call at the end of its own
-constructor**, once its fields are set. `AddFundsDialog` calls `initialize()` as
-its last constructor step.
-
-**Lesson / residual footgun:** this trades one trap for a milder one — a subclass
-that *forgets* to call `initialize()` gets a blank/unsized dialog. This is the
-same "call an `initialize()`/`finalizeInitialization()` step last" convention the
-existing `AbstractMHQ*` Swing dialogs already use, so it is at least consistent
-with the codebase. A real migration should document this contract prominently (or
-enforce it, e.g. via a factory method that constructs then initialises) so it is
-not rediscovered per dialog.
-
 
 ---
 
