@@ -37,6 +37,7 @@ import static mekhq.utilities.MHQInternationalization.getTextAt;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.util.Objects;
 import javax.swing.BorderFactory;
 import javax.swing.JPanel;
 
@@ -127,8 +128,11 @@ public class MoraleBar extends JPanel {
      * @param contract the contract whose enemy morale should be displayed
      *
      * @return a transparent panel containing the configured morale bar
+     *
+     * @throws NullPointerException if {@code contract} is {@code null}
      */
     public static @Nonnull JPanel createDialogPanel(@Nonnull final AtBContract contract) {
+        Objects.requireNonNull(contract, "contract must not be null");
         final JPanel panel = new JPanel(new BorderLayout());
         panel.setOpaque(false);
         final int horizontalPadding = UIUtil.scaleForGUI(40);
@@ -160,8 +164,11 @@ public class MoraleBar extends JPanel {
      * @param contract the contract whose enemy morale should be described
      *
      * @return the label and tooltip to display
+     *
+     * @throws NullPointerException if {@code contract} is {@code null}
      */
     public static @Nonnull MoraleDisplay getMoraleDisplay(@Nonnull final AtBContract contract) {
+        Objects.requireNonNull(contract, "contract must not be null");
         final AtBMoraleLevel level = contract.getMoraleLevel();
         if ((contract.getContractType().isGarrisonDuty() || contract.getContractType().isRetainer()) &&
                 level.isRouted()) {
