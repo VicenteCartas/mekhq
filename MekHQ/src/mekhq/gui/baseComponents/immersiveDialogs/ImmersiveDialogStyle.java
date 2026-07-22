@@ -54,9 +54,12 @@ import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JSpinner;
-import javax.swing.UIManager;
 import javax.swing.border.AbstractBorder;
 import javax.swing.border.Border;
+
+import mekhq.gui.visual.ConsoleBackdropPanel;
+import mekhq.gui.visual.MekHQVisualTheme;
+import mekhq.gui.visual.MekHQVisualTheme.ColorRole;
 
 /** Shared visual language for immersive communication dialogs. */
 final class ImmersiveDialogStyle {
@@ -64,20 +67,13 @@ final class ImmersiveDialogStyle {
     private static final String TITLE_BAR_CAPTION_PROPERTY = "JComponent.titleBarCaption";
     private static final String WINDOW_BUTTONS_PLACEHOLDER_PROPERTY =
           "FlatLaf.fullWindowContent.buttonsPlaceholder";
-    private static final Color DARK_THEME_SIGNAL = new Color(86, 208, 197);
-    private static final Color LIGHT_THEME_SIGNAL = new Color(23, 112, 112);
-    private static final Color DARK_THEME_INFORMATION = new Color(235, 177, 76);
-    private static final Color LIGHT_THEME_INFORMATION = new Color(150, 92, 16);
-    private static final int FRAME_PADDING = scaleForGUI(10);
-    private static final int SECTION_GAP = scaleForGUI(6);
-    private static final int CORNER_CUT = scaleForGUI(11);
 
     private ImmersiveDialogStyle() {
     }
 
     static JPanel createBackdropPanel() {
-        JPanel panel = new TransmissionBackdropPanel();
-        panel.setLayout(new BorderLayout(0, scaleForGUI(10)));
+        JPanel panel = new ConsoleBackdropPanel();
+        panel.setLayout(new BorderLayout(0, MekHQVisualTheme.sectionInset()));
         return panel;
     }
 
@@ -116,12 +112,15 @@ final class ImmersiveDialogStyle {
         JPanel panel = new AngularTransmissionPanel();
         panel.setLayout(new BorderLayout());
         panel.setBorder(BorderFactory.createCompoundBorder(new AngularTransmissionBorder(),
-              BorderFactory.createEmptyBorder(FRAME_PADDING, FRAME_PADDING, FRAME_PADDING, FRAME_PADDING)));
+              BorderFactory.createEmptyBorder(MekHQVisualTheme.sectionInset(),
+                  MekHQVisualTheme.sectionInset(),
+                  MekHQVisualTheme.sectionInset(),
+                  MekHQVisualTheme.sectionInset())));
         return panel;
     }
 
     static JPanel createSourcePanel(String title, JPanel content) {
-        JPanel panel = new JPanel(new BorderLayout(0, SECTION_GAP));
+          JPanel panel = new JPanel(new BorderLayout(0, MekHQVisualTheme.controlGap()));
         panel.setOpaque(false);
         panel.add(createSectionHeader(title, getSignalColor()), BorderLayout.NORTH);
         panel.add(content, BorderLayout.CENTER);
@@ -131,7 +130,7 @@ final class ImmersiveDialogStyle {
     static JPanel createSectionHeader(String title, Color color) {
         JPanel panel = new JPanel(new BorderLayout(scaleForGUI(8), 0));
         panel.setOpaque(false);
-        panel.setBorder(BorderFactory.createEmptyBorder(0, 0, SECTION_GAP, 0));
+        panel.setBorder(BorderFactory.createEmptyBorder(0, 0, MekHQVisualTheme.controlGap(), 0));
 
         JLabel label = createTechnicalLabel(title, color, -1.0f);
         JComponent separator = new CenteredRule(withAlpha(color, 150));
@@ -145,12 +144,18 @@ final class ImmersiveDialogStyle {
         panel.setLayout(new BorderLayout(0, scaleForGUI(3)));
         panel.setBorder(BorderFactory.createCompoundBorder(
               BorderFactory.createMatteBorder(0, scaleForGUI(3), 0, 0, getInformationColor()),
-              BorderFactory.createEmptyBorder(SECTION_GAP, scaleForGUI(10), SECTION_GAP, scaleForGUI(10))));
+              BorderFactory.createEmptyBorder(MekHQVisualTheme.controlGap(),
+                  MekHQVisualTheme.sectionInset(),
+                  MekHQVisualTheme.controlGap(),
+                  MekHQVisualTheme.sectionInset())));
         return panel;
     }
 
     static Border createSectionSpacingBorder() {
-          return BorderFactory.createEmptyBorder(SECTION_GAP, SECTION_GAP, SECTION_GAP, SECTION_GAP);
+            return BorderFactory.createEmptyBorder(MekHQVisualTheme.controlGap(),
+                MekHQVisualTheme.controlGap(),
+                MekHQVisualTheme.controlGap(),
+                MekHQVisualTheme.controlGap());
     }
 
     static void applyResponseButtonStyle(JButton button) {
@@ -191,72 +196,53 @@ final class ImmersiveDialogStyle {
     }
 
     static Color getSignalColor() {
-        return isDarkTheme() ? DARK_THEME_SIGNAL : LIGHT_THEME_SIGNAL;
+        return MekHQVisualTheme.color(ColorRole.SIGNAL);
     }
 
     static Color getInformationColor() {
-        return isDarkTheme() ? DARK_THEME_INFORMATION : LIGHT_THEME_INFORMATION;
+        return MekHQVisualTheme.color(ColorRole.CAUTION);
     }
 
     private static JLabel createTechnicalLabel(String text, Color color, float sizeAdjustment) {
         JLabel label = new JLabel(text);
-        Font baseFont = label.getFont();
-        label.setFont(new Font(Font.MONOSPACED, Font.BOLD,
-              Math.max(1, Math.round(baseFont.getSize2D() + sizeAdjustment))));
+        label.setFont(MekHQVisualTheme.technicalFont(label, sizeAdjustment));
         label.setForeground(color);
         return label;
     }
 
     private static Color getSurfaceColor() {
-        return mix(getPanelColor(), getLabelColor(), isDarkTheme() ? 0.06f : 0.025f);
+        return MekHQVisualTheme.color(ColorRole.SURFACE);
     }
 
     private static Color getSubtleSignalColor() {
-        return mix(getPanelColor(), getSignalColor(), isDarkTheme() ? 0.42f : 0.30f);
+        return mix(MekHQVisualTheme.color(ColorRole.BORDER), getSignalColor(), isDarkTheme() ? 0.42f : 0.30f);
     }
 
     private static Color getInteractiveSignalColor() {
-        return mix(getLabelColor(), getSignalColor(), isDarkTheme() ? 0.62f : 0.72f);
-    }
-
-    private static Color getPanelColor() {
-        Color color = UIManager.getColor("Panel.background");
-        return (color == null) ? Color.DARK_GRAY : color;
-    }
-
-    private static Color getLabelColor() {
-        Color color = UIManager.getColor("Label.foreground");
-        return (color == null) ? Color.WHITE : color;
+        return MekHQVisualTheme.color(ColorRole.INTERACTIVE);
     }
 
     private static boolean isDarkTheme() {
-        Color background = getPanelColor();
-        double luminance = 0.2126 * background.getRed() +
-                                 0.7152 * background.getGreen() +
-                                 0.0722 * background.getBlue();
-        return luminance < 128;
+        return MekHQVisualTheme.isDarkTheme();
     }
 
     private static Color mix(Color firstColor, Color secondColor, float secondColorWeight) {
-        float firstColorWeight = 1.0f - secondColorWeight;
-        int red = Math.round(firstColor.getRed() * firstColorWeight + secondColor.getRed() * secondColorWeight);
-        int green = Math.round(firstColor.getGreen() * firstColorWeight + secondColor.getGreen() * secondColorWeight);
-        int blue = Math.round(firstColor.getBlue() * firstColorWeight + secondColor.getBlue() * secondColorWeight);
-        return new Color(red, green, blue);
+        return MekHQVisualTheme.mix(firstColor, secondColor, secondColorWeight);
     }
 
     private static Color withAlpha(Color color, int alpha) {
-        return new Color(color.getRed(), color.getGreen(), color.getBlue(), alpha);
+        return MekHQVisualTheme.withAlpha(color, alpha);
     }
 
     private static Path2D createAngularFrame(float left, float top, float right, float bottom) {
+        int cornerCut = MekHQVisualTheme.cornerCut();
         Path2D frame = new Path2D.Float();
         frame.moveTo(left, top);
-        frame.lineTo(right - CORNER_CUT, top);
-        frame.lineTo(right, top + CORNER_CUT);
+        frame.lineTo(right - cornerCut, top);
+        frame.lineTo(right, top + cornerCut);
         frame.lineTo(right, bottom);
-        frame.lineTo(left + CORNER_CUT, bottom);
-        frame.lineTo(left, bottom - CORNER_CUT);
+        frame.lineTo(left + cornerCut, bottom);
+        frame.lineTo(left, bottom - cornerCut);
         frame.closePath();
         return frame;
     }
@@ -297,24 +283,6 @@ final class ImmersiveDialogStyle {
             Graphics2D graphics2D = (Graphics2D) graphics.create();
             graphics2D.clip(createAngularFrame(0, 0, getWidth(), getHeight()));
             super.paintChildren(graphics2D);
-            graphics2D.dispose();
-        }
-    }
-
-    private static final class TransmissionBackdropPanel extends JPanel {
-        @Override
-        protected void paintComponent(Graphics graphics) {
-            super.paintComponent(graphics);
-            Graphics2D graphics2D = (Graphics2D) graphics.create();
-            graphics2D.setColor(withAlpha(getSignalColor(), isDarkTheme() ? 14 : 9));
-
-            int gridSize = scaleForGUI(28);
-            for (int x = 0; x < getWidth(); x += gridSize) {
-                graphics2D.drawLine(x, 0, x, getHeight());
-            }
-            for (int y = 0; y < getHeight(); y += gridSize) {
-                graphics2D.drawLine(0, y, getWidth(), y);
-            }
             graphics2D.dispose();
         }
     }
@@ -377,8 +345,9 @@ final class ImmersiveDialogStyle {
             graphics2D.draw(frame);
 
             graphics2D.setColor(getSignalColor());
-            graphics2D.drawLine(Math.round(left + CORNER_CUT), Math.round(top),
-                  Math.round(left + CORNER_CUT + scaleForGUI(42)), Math.round(top));
+            int cornerCut = MekHQVisualTheme.cornerCut();
+            graphics2D.drawLine(Math.round(left + cornerCut), Math.round(top),
+                Math.round(left + cornerCut + scaleForGUI(42)), Math.round(top));
             graphics2D.dispose();
         }
     }

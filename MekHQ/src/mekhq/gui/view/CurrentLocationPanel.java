@@ -42,6 +42,7 @@ import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.io.File;
 import java.time.LocalDate;
+import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.UIManager;
 
@@ -69,8 +70,9 @@ import mekhq.campaign.universe.enums.HiringHallLevel;
 import mekhq.gui.CampaignGUI;
 import mekhq.gui.baseComponents.ScalingVerticalFillImage;
 import mekhq.gui.baseComponents.ScalingWidthConstrainedPanel;
-import mekhq.gui.baseComponents.roundedComponents.RoundedJButton;
-import mekhq.gui.baseComponents.roundedComponents.RoundedLineBorder;
+import mekhq.gui.visual.ConsoleBorders;
+import mekhq.gui.visual.ConsoleComponentStyler;
+import mekhq.gui.visual.ConsoleState;
 import mekhq.utilities.MHQInternationalization;
 import mekhq.utilities.ReportingUtilities;
 import org.apache.commons.lang3.ObjectUtils;
@@ -100,7 +102,7 @@ public class CurrentLocationPanel extends ScalingWidthConstrainedPanel {
     private final ScalingVerticalFillImage imgLocation = new ScalingVerticalFillImage();
     private final JLabel lblLocationPrimaryInfo = new JLabel();
     private final JLabel lblLocationSecondaryInfo = new JLabel();
-    private final RoundedJButton btnRecruitment = new RoundedJButton();
+    private final JButton btnRecruitment = new JButton();
 
     /**
      * Constructs a new {@code CurrentLocationPanel}.
@@ -117,6 +119,7 @@ public class CurrentLocationPanel extends ScalingWidthConstrainedPanel {
         this.campaign = campaign;
 
         setLayout(new GridBagLayout());
+        setOpaque(false);
         GridBagConstraints gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.insets = new Insets(0, CampaignGUI.THIN_GAP, 0, CampaignGUI.MEDIUM_GAP);
 
@@ -147,6 +150,7 @@ public class CurrentLocationPanel extends ScalingWidthConstrainedPanel {
 
         btnRecruitment.addActionListener(e -> openRecruitmentDialog.run());
         btnRecruitment.setToolTipText(getTextAt("recruitment.tooltip"));
+        ConsoleComponentStyler.styleButton(btnRecruitment, ConsoleComponentStyler.ButtonRole.STANDARD);
         gridBagConstraints.gridy++;
         gridBagConstraints.weighty = 0;
         gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
@@ -177,7 +181,8 @@ public class CurrentLocationPanel extends ScalingWidthConstrainedPanel {
         PlanetarySystem system = location.getCurrentSystem();
         LocalDate date = campaign.getLocalDate();
 
-        setBorder(RoundedLineBorder.createRoundedLineBorder(getTitle()));
+        ConsoleState locationState = location.isOnPlanet() ? ConsoleState.NOMINAL : ConsoleState.INFORMATION;
+          setBorder(ConsoleBorders.createTitledBorder(this, getTitle(), locationState.color()));
 
         File locationImage;
         if (location.isAtJumpPoint()) {

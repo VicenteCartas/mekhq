@@ -51,7 +51,7 @@ import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.gui.ActionScheduler;
 import mekhq.gui.CampaignGUI;
 import mekhq.gui.baseComponents.ScalingWidthConstrainedPanel;
-import mekhq.gui.baseComponents.roundedComponents.RoundedLineBorder;
+import mekhq.gui.visual.ConsoleBorders;
 import mekhq.utilities.MHQInternationalization;
 import mekhq.utilities.ReportingUtilities;
 
@@ -90,11 +90,11 @@ public class CommandSummaryPanel extends ScalingWidthConstrainedPanel {
         super(minWidth, maxWidth);
         this.campaign = campaign;
 
-        setBorder(RoundedLineBorder.createRoundedLineBorder(getTextAt("panel.title")));
+        setOpaque(false);
+          setBorder(ConsoleBorders.createTitledBorder(this, getTextAt("panel.title")));
         setLayout(new GridBagLayout());
         GridBagConstraints gridBagConstraints = new GridBagConstraints();
 
-        // Column 0: static labels
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = 0;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
@@ -105,7 +105,6 @@ public class CommandSummaryPanel extends ScalingWidthConstrainedPanel {
         gridBagConstraints.gridy++;
         add(new JLabel(getTextAt("combatStrength.label")), gridBagConstraints);
 
-        // Column 1: dynamic data values
         gridBagConstraints.gridx = 1;
         gridBagConstraints.gridy = 0;
         gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
@@ -140,7 +139,8 @@ public class CommandSummaryPanel extends ScalingWidthConstrainedPanel {
         String experience = SkillType.getColoredExperienceLevelName(campaign.getPlayerForce()
                                                                           .getReputation()
                                                                           .getAverageSkillLevel());
-        lblUnitReputationValue.setText(getFormattedTextAt("reputation.text", campaign.getUnitRatingText(), experience));
+        lblUnitReputationValue.setText(getFormattedTextAt("reputation.text",
+              campaign.getUnitRatingText(), experience));
         int totalBv = AtBDynamicScenarioFactory.getBVBudgetForStratConSingles(campaign, true);
         lblCombatStrengthValue.setText(getFormattedTextAt("combatStrength.text", totalBv));
         refreshFunds();
@@ -155,14 +155,14 @@ public class CommandSummaryPanel extends ScalingWidthConstrainedPanel {
         lblFundsValue.setText(getFormattedTextAt("funds.text", amount));
         if (campaign.getPlayerForce().getFinances().hasActiveLoans()) {
             lblFunds.setText(getFormattedTextAt("funds.label.hasLoan", ReportingUtilities.getNegativeColor()));
-        } else  {
+        } else {
             lblFunds.setText(getTextAt("funds.label.noLoan"));
         }
     }
 
     /**
-    * Retrieves and formats localized text from the panel's resource bundle.
-    */
+     * Retrieves and formats localized text from the panel's resource bundle.
+     */
     private static String getFormattedTextAt(String key, Object... args) {
         return MHQInternationalization.getFormattedTextAt(RESOURCE_BUNDLE, key, args);
     }

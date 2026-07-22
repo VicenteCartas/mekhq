@@ -42,17 +42,18 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.ImageIcon;
+import javax.swing.JButton;
 import javax.swing.SwingUtilities;
 import javax.swing.border.Border;
-import javax.swing.border.TitledBorder;
 
 import megamek.common.event.Subscribe;
 import mekhq.MekHQ;
 import mekhq.campaign.events.NewDayEvent;
 import mekhq.gui.CampaignGUI;
 import mekhq.gui.baseComponents.ScalingWidthConstrainedPanel;
-import mekhq.gui.baseComponents.roundedComponents.RoundedJButton;
-import mekhq.gui.baseComponents.roundedComponents.RoundedLineBorder;
+import mekhq.gui.visual.ConsoleBorders;
+import mekhq.gui.visual.ConsoleComponentStyler;
+import mekhq.gui.visual.ConsoleState;
 import mekhq.utilities.MHQInternationalization;
 
 /**
@@ -83,7 +84,7 @@ public class AdvanceTimePanel extends ScalingWidthConstrainedPanel {
 
         // Advance Multiple Days button
 
-        RoundedJButton btnAdvanceNDays = new RoundedJButton();
+        JButton btnAdvanceNDays = new JButton();
         ImageIcon icon = new ImageIcon(ADVANCE_N_DAYS_ICON);
         if (icon.getIconHeight() > 0) {
             btnAdvanceNDays.setIcon(icon);
@@ -96,10 +97,11 @@ public class AdvanceTimePanel extends ScalingWidthConstrainedPanel {
         int advanceNDaysHeight = icon.getIconHeight() + CampaignGUI.MEDIUM_GAP * 2;
         btnAdvanceNDays.setMinimumSize(new Dimension(advanceNDaysWidth, advanceNDaysHeight));
         btnAdvanceNDays.setMaximumSize(new Dimension(advanceNDaysWidth, Integer.MAX_VALUE));
+        ConsoleComponentStyler.styleButton(btnAdvanceNDays, ConsoleComponentStyler.ButtonRole.STANDARD);
 
         // Advance Day button
 
-        RoundedJButton btnAdvanceDay = new RoundedJButton(getTextAt("advanceDay.label"));
+        JButton btnAdvanceDay = new JButton(getTextAt("advanceDay.label"));
         btnAdvanceDay.setIcon(new ImageIcon(ADVANCE_DAY_ICON));
         // This button uses a mnemonic that is unique and listed in the initMenu JavaDoc
         btnAdvanceDay.setMnemonic(KeyEvent.VK_A);
@@ -122,14 +124,16 @@ public class AdvanceTimePanel extends ScalingWidthConstrainedPanel {
                 }
             });
         });
-        btnAdvanceDay.setMnemonic(KeyEvent.VK_A);
-        Insets insets = RoundedLineBorder.createRoundedLineBorder().getBorderInsets(this);
+        Insets insets = ConsoleBorders.createTitledBorder(this, "", ConsoleState.INFORMATION.color())
+                      .getBorderInsets(this);
         int reservedStaticWidth = CampaignGUI.SMALL_GAP + advanceNDaysWidth + insets.left + insets.right;
         btnAdvanceDay.setMinimumSize(new Dimension(minWidth - reservedStaticWidth, advanceNDaysHeight));
         btnAdvanceDay.setMaximumSize(new Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
+        ConsoleComponentStyler.styleButton(btnAdvanceDay, ConsoleComponentStyler.ButtonRole.PRIMARY);
 
         // Panel layout
 
+        setOpaque(false);
         setLayout(new BoxLayout(this, BoxLayout.X_AXIS));
         add(btnAdvanceDay);
         add(Box.createHorizontalStrut(CampaignGUI.SMALL_GAP));
@@ -151,15 +155,16 @@ public class AdvanceTimePanel extends ScalingWidthConstrainedPanel {
     }
 
     /**
-     * Updates the panel's border to display the current campaign date.
+     * Updates the panel's header to display the current campaign date.
      *
      * @param date the new local date to display
      */
     private void refresh(LocalDate date) {
         String formattedDate = MekHQ.getMHQOptions().getLongDisplayFormattedDate(date);
         Border innerPadding = BorderFactory.createEmptyBorder(CampaignGUI.THIN_GAP, 0, 0, 0);
-        TitledBorder rounded = RoundedLineBorder.createRoundedLineBorder(formattedDate);
-        setBorder(BorderFactory.createCompoundBorder(rounded, innerPadding));
+          setBorder(BorderFactory.createCompoundBorder(
+              ConsoleBorders.createTitledBorder(this, formattedDate, ConsoleState.INFORMATION.color()),
+              innerPadding));
     }
 
     /**

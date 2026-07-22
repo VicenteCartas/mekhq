@@ -128,6 +128,7 @@ import mekhq.gui.dialog.reportDialogs.PersonnelReportDialog;
 import mekhq.gui.dialog.reportDialogs.ReputationReportDialog;
 import mekhq.gui.dialog.reportDialogs.TransportReportDialog;
 import mekhq.gui.enums.MHQTabType;
+import mekhq.gui.visual.CommandUiComponentGalleryDialog;
 import mekhq.io.FileType;
 import mekhq.utilities.MHQInternationalization;
 import mekhq.utilities.MHQXMLUtility;
@@ -589,6 +590,9 @@ public class MekHQMenuBar extends JMenuBar {
         menuManage.add(miAutoResolveBehaviorEditor);
 
         menuManage.addSeparator();
+          menuManage.add(createMenuItem("miCommandUiComponentGallery.text", KeyEvent.VK_U,
+              evt -> new CommandUiComponentGalleryDialog(getFrame()).setVisible(true)));
+
         JMenu immersiveDialogPreview = new JMenu(getTextAt("miImmersiveDialogPreview.text"));
         immersiveDialogPreview.setMnemonic(KeyEvent.VK_I);
 

@@ -67,7 +67,6 @@ import java.util.UUID;
 import java.util.stream.IntStream;
 import java.util.zip.GZIPOutputStream;
 import javax.swing.*;
-import javax.swing.border.Border;
 
 import megamek.client.ui.dialogs.UnitLoadingDialog;
 import megamek.client.ui.dialogs.unitSelectorDialogs.AbstractUnitSelectorDialog;
@@ -118,9 +117,6 @@ import mekhq.campaign.universe.NewsItem;
 import mekhq.campaign.utilities.AutomatedTechAssignments;
 import mekhq.gui.baseComponents.ScalingWidthConstrainedPanel;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogSimple;
-import mekhq.gui.baseComponents.roundedComponents.RoundedJButton;
-import mekhq.gui.baseComponents.roundedComponents.RoundedLineBorder;
-import mekhq.gui.baseComponents.roundedComponents.RoundedMMToggleButton;
 import mekhq.gui.dialog.*;
 import mekhq.gui.dialog.glossary.GlossaryDialog;
 import mekhq.gui.enums.MHQTabType;
@@ -130,6 +126,11 @@ import mekhq.gui.model.PartsTableModel;
 import mekhq.gui.view.AdvanceTimePanel;
 import mekhq.gui.view.CommandSummaryPanel;
 import mekhq.gui.view.CurrentLocationPanel;
+import mekhq.gui.visual.ConsoleAttentionIcon;
+import mekhq.gui.visual.ConsoleBackdropPanel;
+import mekhq.gui.visual.ConsoleBorders;
+import mekhq.gui.visual.ConsoleComponentStyler;
+import mekhq.gui.visual.MekHQVisualTheme;
 
 /**
  * The application's main frame.
@@ -179,7 +180,6 @@ public class CampaignGUI extends JPanel {
 
     /* Components for the status panel */
     private JPanel statusPanel;
-    private JLabel lblFunds;
     private JComboBox<LocationFilterItem> choiceActiveLocation;
     private JLabel lblTempAsTechs;
     private JLabel lblTempMedics;
@@ -197,14 +197,14 @@ public class CampaignGUI extends JPanel {
 
     /* Top Panel */
     private JPanel pnlTop;
-    private RoundedJButton btnCompanyGenerator;
-    private final RoundedJButton btnContractMarket =
-          new RoundedJButton(resourceMap.getString("btnContractMarket.market"));
-    private final RoundedJButton btnUnitMarket = new RoundedJButton(resourceMap.getString("btnUnitMarket.market"));
+    private JButton btnCompanyGenerator;
+    private final JButton btnContractMarket = new JButton(resourceMap.getString("btnContractMarket.market"));
+    private final JButton btnUnitMarket = new JButton(resourceMap.getString("btnUnitMarket.market"));
 
     ReportHyperlinkListener reportHLL;
 
     private boolean logNagActive = false;
+    private final ConsoleAttentionIcon commandCenterAttentionIcon = new ConsoleAttentionIcon();
 
     private transient StandardFormationIcon copyFormationIcon = null;
     // endregion Variable Declarations
@@ -320,11 +320,12 @@ public class CampaignGUI extends JPanel {
             tabMain.setEnabledAt(stratConTabIndex, !isMaplessMode);
         }
 
-        // check to see if we just selected the command center tab
-        // and if so change its color to standard
+        // Clear Command Center attention styling when the player opens it.
         tabMain.addChangeListener(evt -> {
-            if (tabMain.getSelectedIndex() == 0) {
-                tabMain.setBackgroundAt(0, null);
+            int selectedIndex = tabMain.getSelectedIndex();
+            if ((selectedIndex >= 0) && (tabMain.getComponentAt(selectedIndex) == commandCenterTab)) {
+                tabMain.setBackgroundAt(selectedIndex, null);
+                setCommandCenterAttention(false);
                 logNagActive = false;
             }
         });
@@ -333,10 +334,17 @@ public class CampaignGUI extends JPanel {
         initStatusBar();
 
         setLayout(new BorderLayout());
+        ConsoleBackdropPanel shellPanel = new ConsoleBackdropPanel();
+        shellPanel.setBorder(BorderFactory.createEmptyBorder(MekHQVisualTheme.thinGap(),
+              MekHQVisualTheme.sectionGap(),
+              MekHQVisualTheme.thinGap(),
+              MekHQVisualTheme.sectionGap()));
+        shellPanel.add(tabMain, BorderLayout.CENTER);
+        shellPanel.add(pnlTop, BorderLayout.PAGE_START);
+        shellPanel.add(statusPanel, BorderLayout.PAGE_END);
+        add(shellPanel, BorderLayout.CENTER);
 
-        add(tabMain, BorderLayout.CENTER);
-        add(pnlTop, BorderLayout.PAGE_START);
-        add(statusPanel, BorderLayout.PAGE_END);
+        ConsoleComponentStyler.styleTabbedPane(tabMain);
 
         refreshWindowTitle();
         refreshCampaignControlButtons();
@@ -407,6 +415,9 @@ public class CampaignGUI extends JPanel {
 
     private void initStatusBar() {
         statusPanel = new JPanel(new FlowLayout(FlowLayout.LEADING, 20, 4));
+        statusPanel.setOpaque(false);
+        statusPanel.setBorder(BorderFactory.createMatteBorder(MekHQVisualTheme.hairline(), 0, 0, 0,
+              MekHQVisualTheme.color(MekHQVisualTheme.ColorRole.BORDER)));
         statusPanel.getAccessibleContext().setAccessibleName("Status Bar");
 
         lblTempAsTechs = new JLabel();
@@ -421,31 +432,31 @@ public class CampaignGUI extends JPanel {
         lblTempVesselCrew = new JLabel();
         lblPartsAvailabilityRating = new JLabel();
 
-        statusPanel.add(new JLabel(getTextAt(resourceMap.getBaseBundleName(), "lblActiveLocation.text")));
+        statusPanel.add(createStatusHeading("lblActiveLocation.text"));
         choiceActiveLocation = new JComboBox<>(buildActiveLocationModel());
         choiceActiveLocation.addActionListener(ev -> refreshLocationFilteredTabs());
+        ConsoleComponentStyler.styleInput(choiceActiveLocation);
         statusPanel.add(choiceActiveLocation);
-        Border innerBorder = BorderFactory.createCompoundBorder(
-              new RoundedLineBorder(UIUtil.uiIndependentGray(), 1, 8),
-              BorderFactory.createEmptyBorder(1, 3, 1, 3));
 
         pnlVehicleCrew = new JPanel(new FlowLayout(FlowLayout.LEADING, 6, 0));
-        pnlVehicleCrew.setBorder(innerBorder);
-        pnlVehicleCrew.add(new JLabel(statusBarLabel("statusBar.pnlVehicleCrew.title")));
+        pnlVehicleCrew.setOpaque(false);
+        pnlVehicleCrew.setBorder(ConsoleBorders.createGroupSeparator());
+        pnlVehicleCrew.add(createStatusHeading("statusBar.pnlVehicleCrew.title"));
         pnlVehicleCrew.add(lblTempVehicleCrewGround);
         pnlVehicleCrew.add(lblTempVehicleCrewVTOL);
         pnlVehicleCrew.add(lblTempVehicleCrewNaval);
 
         pnlVesselCrew = new JPanel(new FlowLayout(FlowLayout.LEADING, 6, 0));
-        pnlVesselCrew.setBorder(innerBorder);
-        pnlVesselCrew.add(new JLabel(statusBarLabel("statusBar.pnlVesselCrew.title")));
+        pnlVesselCrew.setOpaque(false);
+        pnlVesselCrew.setBorder(ConsoleBorders.createGroupSeparator());
+        pnlVesselCrew.add(createStatusHeading("statusBar.pnlVesselCrew.title"));
         pnlVesselCrew.add(lblTempVesselPilot);
         pnlVesselCrew.add(lblTempVesselGunner);
         pnlVesselCrew.add(lblTempVesselCrew);
 
         JPanel pnlTempPersonnel = new JPanel(new FlowLayout(FlowLayout.LEADING, 8, 2));
-        pnlTempPersonnel.setBorder(RoundedLineBorder.createSubtleRoundedLineBorder());
-        pnlTempPersonnel.add(new JLabel(statusBarLabel("statusBar.pnlTempPersonnel.title")));
+        pnlTempPersonnel.setOpaque(false);
+        pnlTempPersonnel.add(createStatusHeading("statusBar.pnlTempPersonnel.title"));
         pnlTempPersonnel.add(lblTempAsTechs);
         pnlTempPersonnel.add(lblTempMedics);
         pnlTempPersonnel.add(lblTempSoldiers);
@@ -457,24 +468,18 @@ public class CampaignGUI extends JPanel {
         statusPanel.add(lblPartsAvailabilityRating);
     }
 
-    /**
-     * Initializes and arranges the top button panel and its components in the user interface.
-     *
-     * <p>This method sets up the location label with a travel status report, applies visual borders, and positions
-     * the major controls at the top of the panel using a {@link GridBagLayout}:</p>
-     *
-     * <ul>
-     *   <li>Adds the current location and travel status label.</li>
-     *   <li>Places market-related controls beside the location label.</li>
-     *   <li>Adds the main button panel for user actions.</li>
-     * </ul>
-     *
-     * <p>Accessibility names and layout constraints are assigned to ensure that the UI is properly arranged and
-     * accessible.</p>
-     */
+    private JLabel createStatusHeading(String resourceKey) {
+        JLabel label = new JLabel(getTextAt(resourceMap.getBaseBundleName(), resourceKey));
+        label.setFont(MekHQVisualTheme.technicalFont(label, -2.0f));
+        label.setForeground(MekHQVisualTheme.color(MekHQVisualTheme.ColorRole.SIGNAL));
+        return label;
+    }
+
+    /** Initializes and arranges the top shell controls without changing their established order. */
     private void initTopPanel() {
         pnlTop = new JPanel();
         pnlTop.setLayout(new BoxLayout(pnlTop, BoxLayout.X_AXIS));
+        pnlTop.setOpaque(false);
 
         pnlTop.add(new CurrentLocationPanel(365, 420, TOP_PANEL_HEIGHT - 30,
               getCampaign(), this::openRecruitmentDialog));
@@ -489,7 +494,8 @@ public class CampaignGUI extends JPanel {
     private JPanel createMarketsPanel(int minWidth, int maxWidth) {
         JPanel pnlMarkets = new ScalingWidthConstrainedPanel(minWidth, maxWidth);
         pnlMarkets.setLayout(new GridBagLayout());
-        pnlMarkets.setBorder(RoundedLineBorder.createRoundedLineBorder(resourceMap.getString("pnlMarkets.title")));
+        pnlMarkets.setOpaque(false);
+        pnlMarkets.setBorder(ConsoleBorders.createTitledBorder(pnlMarkets, resourceMap.getString("pnlMarkets.title")));
 
         GridBagConstraints gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.fill = GridBagConstraints.BOTH;
@@ -500,6 +506,7 @@ public class CampaignGUI extends JPanel {
         btnContractMarket.addActionListener(e -> showContractMarket());
         btnContractMarket.setHorizontalTextPosition(SwingConstants.CENTER);
         btnContractMarket.setVerticalTextPosition(SwingConstants.CENTER);
+        ConsoleComponentStyler.styleButton(btnContractMarket, ConsoleComponentStyler.ButtonRole.STANDARD);
         gridBagConstraints.gridy = 0;
         pnlMarkets.add(btnContractMarket, gridBagConstraints);
 
@@ -507,6 +514,7 @@ public class CampaignGUI extends JPanel {
         btnUnitMarket.addActionListener(e -> showUnitMarket());
         btnUnitMarket.setHorizontalTextPosition(SwingConstants.CENTER);
         btnUnitMarket.setVerticalTextPosition(SwingConstants.CENTER);
+        ConsoleComponentStyler.styleButton(btnUnitMarket, ConsoleComponentStyler.ButtonRole.STANDARD);
         gridBagConstraints.gridy = 1;
         gridBagConstraints.insets = new Insets(SMALL_GAP, 0, 0, 0);
         pnlMarkets.add(btnUnitMarket, gridBagConstraints);
@@ -531,6 +539,7 @@ public class CampaignGUI extends JPanel {
     private JPanel createCampaignControlPanel(int minWidth, int maxWidth) {
         JPanel pnlButton = new ScalingWidthConstrainedPanel(minWidth, maxWidth);
         pnlButton.setLayout(new GridBagLayout());
+        pnlButton.setOpaque(false);
         GridBagConstraints gridBagConstraints = new GridBagConstraints();
 
         gridBagConstraints.weightx = 1;
@@ -538,21 +547,23 @@ public class CampaignGUI extends JPanel {
         gridBagConstraints.gridwidth = 2;
         gridBagConstraints.fill = GridBagConstraints.BOTH;
 
-        btnCompanyGenerator = new RoundedJButton(resourceMap.getString("btnCompanyGenerator.text"));
+        btnCompanyGenerator = new JButton(resourceMap.getString("btnCompanyGenerator.text"));
         btnCompanyGenerator.setToolTipText(resourceMap.getString("btnCompanyGenerator.toolTipText"));
         btnCompanyGenerator.addActionListener(
               e -> new CompanyGenerationDialog(getFrame(), getCampaign()).setVisible(true));
-        gridBagConstraints.gridy = 0;
-        gridBagConstraints.insets = new Insets(MEDIUM_GAP - 2, SMALL_GAP, -2, SMALL_GAP);
-        pnlButton.add(btnCompanyGenerator, gridBagConstraints);
+        ConsoleComponentStyler.styleButton(btnCompanyGenerator, ConsoleComponentStyler.ButtonRole.STANDARD);
+          gridBagConstraints.gridy = 0;
+          gridBagConstraints.insets = new Insets(MEDIUM_GAP - 2, SMALL_GAP, -2, SMALL_GAP);
+          pnlButton.add(btnCompanyGenerator, gridBagConstraints);
 
-        RoundedMMToggleButton btnGMMode = new RoundedMMToggleButton(resourceMap.getString("btnGMMode.text"));
+        JToggleButton btnGMMode = new JToggleButton(resourceMap.getString("btnGMMode.text"));
         btnGMMode.setToolTipText(resourceMap.getString("btnGMMode.toolTipText"));
         btnGMMode.setSelected(getCampaign().isGM());
         btnGMMode.addActionListener(e -> {
             getCampaign().setGMMode(btnGMMode.isSelected());
             windowMenu.refreshGMMenuItems();
         });
+        ConsoleComponentStyler.styleToggle(btnGMMode, ConsoleComponentStyler.ButtonRole.STANDARD);
         gridBagConstraints.gridy = 1;
         gridBagConstraints.insets = new Insets(MEDIUM_GAP - 2, SMALL_GAP, 0, SMALL_GAP);
         pnlButton.add(btnGMMode, gridBagConstraints);
@@ -562,16 +573,18 @@ public class CampaignGUI extends JPanel {
         gridBagConstraints.gridwidth = 1;
         gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
 
-        RoundedJButton btnGlossary = new RoundedJButton(resourceMap.getString("btnGlossary.text"));
+        JButton btnGlossary = new JButton(resourceMap.getString("btnGlossary.text"));
         btnGlossary.setToolTipText(resourceMap.getString("btnGlossary.toolTipText"));
         btnGlossary.addActionListener(evt -> new GlossaryDialog(getFrame()));
+        ConsoleComponentStyler.styleButton(btnGlossary, ConsoleComponentStyler.ButtonRole.STANDARD);
         gridBagConstraints.weightx = 0.4;
         gridBagConstraints.insets = new Insets(SMALL_GAP, SMALL_GAP, THIN_GAP, 0);
         pnlButton.add(btnGlossary, gridBagConstraints);
 
-        RoundedJButton btnBugReport = new RoundedJButton(resourceMap.getString("btnBugReport.text"));
+        JButton btnBugReport = new JButton(resourceMap.getString("btnBugReport.text"));
         btnBugReport.setToolTipText(resourceMap.getString("btnBugReport.toolTipText"));
         btnBugReport.addActionListener(evt -> new EasyBugReportDialog(getFrame(), getCampaign()));
+        ConsoleComponentStyler.styleButton(btnBugReport, ConsoleComponentStyler.ButtonRole.STANDARD);
         gridBagConstraints.weightx = 0.6;
         gridBagConstraints.insets = new Insets(SMALL_GAP, SMALL_GAP, THIN_GAP, SMALL_GAP);
         pnlButton.add(btnBugReport, gridBagConstraints);
@@ -679,7 +692,22 @@ public class CampaignGUI extends JPanel {
                     .orElse(tabMain.getTabCount());
         tabMain.insertTab(tab.getTabName(), null, tab, null, index);
         tabMain.setMnemonicAt(index, tab.tabType().getMnemonic());
+        if (tab.tabType() == MHQTabType.COMMAND_CENTER) {
+            tabMain.setIconAt(index, commandCenterAttentionIcon);
+        }
         SwingUtilities.invokeLater(tab::refreshAll);
+    }
+
+    private void setCommandCenterAttention(boolean active) {
+        int commandCenterIndex = tabMain.indexOfComponent(commandCenterTab);
+        if (commandCenterIndex < 0) {
+            return;
+        }
+
+        commandCenterAttentionIcon.setActive(active);
+        tabMain.setToolTipTextAt(commandCenterIndex,
+              active ? resourceMap.getString("panCommand.attention.toolTipText") : null);
+        tabMain.repaint(tabMain.getBoundsAt(commandCenterIndex));
     }
 
     /**
@@ -1367,8 +1395,8 @@ public class CampaignGUI extends JPanel {
      *
      * <p>If the {@code logNagActive} flag is already set, the method returns immediately to prevent repeat
      * processing. If the currently selected tab is the Command Center, no nag is performed. Otherwise, the method
-     * iterates through the tab list and highlights the Command Center tab by changing its label color and sets the
-     * {@code logNagActive} flag.</p>
+    * highlights the Command Center tab with a fixed-size attention marker and background cue, then sets the
+    * {@code logNagActive} flag.</p>
      *
      * <p>If no tab is currently selected, a warning is logged and no action is taken.</p>
      *
@@ -1402,10 +1430,11 @@ public class CampaignGUI extends JPanel {
             return;
         }
 
-        // If the Command Center is still attached and not currently selected, color that tab's label.
+        // If the Command Center is still attached and not currently selected, show its attention state.
         int commandCenterIndex = tabMain.indexOfComponent(commandCenterTab);
         if ((commandCenterIndex >= 0) && (selectedTab != commandCenterTab)) {
             tabMain.setBackgroundAt(commandCenterIndex, UIUtil.uiDarkBlue());
+            setCommandCenterAttention(true);
             logNagActive = true;
         }
 
