@@ -45,6 +45,7 @@ import java.awt.image.BufferedImage;
 import java.util.Map;
 import javax.swing.JButton;
 import javax.swing.JPanel;
+import javax.swing.JRootPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTable;
@@ -122,6 +123,10 @@ class ConsoleVisualComponentsTest {
             assertTrue(separatorInsets.left >= MekHQVisualTheme.controlGap());
             assertEquals(0, separatorInsets.top);
             assertEquals(0, separatorInsets.bottom);
+
+            Insets regionInsets = ConsoleBorders.createRegionBorder().getBorderInsets(panel);
+            assertTrue(regionInsets.left >= MekHQVisualTheme.hairline());
+            assertEquals(regionInsets.left, regionInsets.right);
         });
     }
 
@@ -166,10 +171,25 @@ class ConsoleVisualComponentsTest {
             assertTrue(tabs.isOpaque());
             assertEquals(MekHQVisualTheme.color(MekHQVisualTheme.ColorRole.SURFACE), tabs.getBackground());
             assertEquals("underlined", tabs.getClientProperty("JTabbedPane.tabType"));
+            assertEquals(Boolean.FALSE, tabs.getClientProperty("JTabbedPane.showTabSeparators"));
+            assertEquals(MekHQVisualTheme.color(MekHQVisualTheme.ColorRole.SIGNAL),
+                ((Map<?, ?>) tabs.getClientProperty(FLATLAF_STYLE_PROPERTY)).get("underlineColor"));
 
             JSplitPane splitPane = new JSplitPane();
             ConsoleComponentStyler.styleSplitPane(splitPane);
             assertTrue(splitPane.isContinuousLayout());
+        });
+    }
+
+    @Test
+    void applicationWindowKeepsTitleAndMenuInSeparateRows() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JRootPane rootPane = new JRootPane();
+            ConsoleWindowStyler.styleApplicationFrame(rootPane);
+
+            assertEquals(Boolean.FALSE, rootPane.getClientProperty("JRootPane.menuBarEmbedded"));
+            assertEquals(Boolean.FALSE, rootPane.getClientProperty("FlatLaf.fullWindowContent"));
+            assertEquals(Boolean.TRUE, rootPane.getClientProperty("JRootPane.titleBarShowTitle"));
         });
     }
 

@@ -56,11 +56,11 @@ public final class ConsoleHeaderPanel extends JPanel {
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(0, 0, MekHQVisualTheme.thinGap(), 0));
 
-        titleLabel.setFont(MekHQVisualTheme.technicalFont(titleLabel, -1.0f));
+        titleLabel.setFont(MekHQVisualTheme.technicalFont(titleLabel, 0.0f));
         titleLabel.setForeground(MekHQVisualTheme.color(ColorRole.SIGNAL));
         titleLabel.setText(title);
 
-        statusLabel.setFont(MekHQVisualTheme.technicalFont(statusLabel, -2.0f));
+        statusLabel.setFont(MekHQVisualTheme.technicalFont(statusLabel, 0.0f));
         statusLabel.setVisible(false);
         trailingPanel.setOpaque(false);
         trailingPanel.add(statusLabel);

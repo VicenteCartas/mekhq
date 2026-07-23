@@ -56,7 +56,7 @@ public final class ConsoleBorders {
               title,
               TitledBorder.LEADING,
               TitledBorder.TOP,
-              MekHQVisualTheme.technicalFont(component, -1.0f),
+              MekHQVisualTheme.technicalFont(component, 0.0f),
               accent);
     }
 
@@ -66,5 +66,11 @@ public final class ConsoleBorders {
         return BorderFactory.createCompoundBorder(
               BorderFactory.createMatteBorder(0, MekHQVisualTheme.hairline(), 0, 0, lineColor),
               BorderFactory.createEmptyBorder(0, MekHQVisualTheme.controlGap(), 0, 0));
+    }
+
+    public static Border createRegionBorder() {
+        Color lineColor = MekHQVisualTheme.mix(MekHQVisualTheme.color(ColorRole.BORDER),
+              MekHQVisualTheme.color(ColorRole.SIGNAL), 0.20f);
+        return BorderFactory.createLineBorder(lineColor, MekHQVisualTheme.hairline());
     }
 }

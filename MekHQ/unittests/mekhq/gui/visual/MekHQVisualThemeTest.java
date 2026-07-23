@@ -64,10 +64,12 @@ class MekHQVisualThemeTest {
 
     @Test
     void technicalFontIsMonospacedAndBold() {
-        Font font = MekHQVisualTheme.technicalFont(new JLabel(), 1.0f);
+        JLabel label = new JLabel();
+        Font font = MekHQVisualTheme.technicalFont(label, 0.0f);
 
         assertEquals(Font.MONOSPACED, font.getFamily());
         assertTrue(font.isBold());
+        assertEquals(label.getFont().getSize(), font.getSize());
     }
 
     @Test

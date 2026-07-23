@@ -342,7 +342,7 @@ Rounded-control migration policy:
 
 Estimated effort: **3–5 developer days**
 
-Status: **Implementation complete; live visual acceptance pending.**
+Status: **Implementation complete; first live-feedback pass incorporated and final visual acceptance pending.**
 
 Implemented in place:
 
@@ -350,6 +350,8 @@ Implemented in place:
 - Technical, semantic title borders for location, markets, command summary, and campaign date.
 - Standard FlatLaf buttons and toggles with primary emphasis reserved for Advance Day.
 - Underlined primary navigation with a fixed-size, non-color unread marker for Command Center reports.
+- Conventional separate title and menu rows for the campaign frame; immersive dialogs retain integrated headers.
+- Technical labels at the regular UI font size and primary tabs without vertical separators.
 - One-line status telemetry with lightweight group separators instead of nested boxes.
 - Original component order, grouping, constrained dimensions, tab order, mnemonics, and workflows preserved.
 
@@ -369,6 +371,18 @@ Deliverable: a functional shell around the unchanged existing tabs.
 ### Phase 3: Command Center Pilot
 
 Estimated effort: **5–8 developer days**
+
+Status: **Styling-in-place implementation complete; live visual acceptance pending.**
+
+Implemented in place:
+
+- Shared technical framing for campaign assessment, objectives, daily activity, and procurement regions.
+- Underlined daily-report navigation with fixed-size non-color unread markers and accessible tooltip updates.
+- Standard FlatLaf faction and procurement controls with all existing listeners and enable-state logic preserved.
+- Shared table and scroll-pane treatment for objectives and procurement without changing models, sorters, or shortcuts.
+- Technical/muted static assessment labels while exact dynamic values, hyperlinks, warnings, and report HTML remain intact.
+- Original `GridBagLayout` constraints, panel order, faction art, report channels, procurement actions, and tutorial links
+  preserved.
 
 - Apply the shared visual language to existing Command Center sections without moving them in the initial pass.
 - Review proposed relocation separately and recompose only the sections approved during live feedback.

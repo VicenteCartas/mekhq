@@ -59,7 +59,7 @@ public final class TelemetryPanel extends JPanel {
               MekHQVisualTheme.controlGap()));
 
         label.setText(labelText);
-        label.setFont(MekHQVisualTheme.technicalFont(label, -2.0f));
+        label.setFont(MekHQVisualTheme.technicalFont(label, 0.0f));
         label.setForeground(MekHQVisualTheme.color(ColorRole.MUTED));
 
         value.setText(valueText);

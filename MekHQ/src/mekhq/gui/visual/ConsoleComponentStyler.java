@@ -93,8 +93,10 @@ public final class ConsoleComponentStyler {
     public static void styleTabbedPane(JTabbedPane tabbedPane) {
         tabbedPane.setOpaque(true);
         tabbedPane.setBackground(MekHQVisualTheme.color(ColorRole.SURFACE));
+          tabbedPane.putClientProperty(FLATLAF_STYLE_PROPERTY, Map.of(
+              "underlineColor", MekHQVisualTheme.color(ColorRole.SIGNAL)));
         tabbedPane.putClientProperty(TABBED_PANE_TYPE_PROPERTY, "underlined");
-        tabbedPane.putClientProperty(TABBED_PANE_SEPARATORS_PROPERTY, Boolean.TRUE);
+          tabbedPane.putClientProperty(TABBED_PANE_SEPARATORS_PROPERTY, Boolean.FALSE);
         tabbedPane.putClientProperty(TABBED_PANE_CONTENT_SEPARATOR_PROPERTY, Boolean.TRUE);
         tabbedPane.putClientProperty(TABBED_PANE_ALIGNMENT_PROPERTY, "leading");
     }

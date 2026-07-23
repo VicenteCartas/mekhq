@@ -130,6 +130,7 @@ import mekhq.gui.visual.ConsoleAttentionIcon;
 import mekhq.gui.visual.ConsoleBackdropPanel;
 import mekhq.gui.visual.ConsoleBorders;
 import mekhq.gui.visual.ConsoleComponentStyler;
+import mekhq.gui.visual.ConsoleWindowStyler;
 import mekhq.gui.visual.MekHQVisualTheme;
 
 /**
@@ -307,6 +308,7 @@ public class CampaignGUI extends JPanel {
     private void initComponents() {
         frame = new JFrame("MekHQ");
         frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        ConsoleWindowStyler.styleApplicationFrame(frame.getRootPane());
 
         tabMain = new EnhancedTabbedPane(true, true);
         tabMain.setToolTipText("");
@@ -470,7 +472,7 @@ public class CampaignGUI extends JPanel {
 
     private JLabel createStatusHeading(String resourceKey) {
         JLabel label = new JLabel(getTextAt(resourceMap.getBaseBundleName(), resourceKey));
-        label.setFont(MekHQVisualTheme.technicalFont(label, -2.0f));
+        label.setFont(MekHQVisualTheme.technicalFont(label, 0.0f));
         label.setForeground(MekHQVisualTheme.color(MekHQVisualTheme.ColorRole.SIGNAL));
         return label;
     }
@@ -574,6 +576,7 @@ public class CampaignGUI extends JPanel {
         gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
 
         JButton btnGlossary = new JButton(resourceMap.getString("btnGlossary.text"));
+        btnGlossary.setMargin(new Insets(0, SMALL_GAP, 0, SMALL_GAP));
         btnGlossary.setToolTipText(resourceMap.getString("btnGlossary.toolTipText"));
         btnGlossary.addActionListener(evt -> new GlossaryDialog(getFrame()));
         ConsoleComponentStyler.styleButton(btnGlossary, ConsoleComponentStyler.ButtonRole.STANDARD);
@@ -582,6 +585,7 @@ public class CampaignGUI extends JPanel {
         pnlButton.add(btnGlossary, gridBagConstraints);
 
         JButton btnBugReport = new JButton(resourceMap.getString("btnBugReport.text"));
+        btnBugReport.setMargin(new Insets(0, SMALL_GAP, 0, SMALL_GAP));
         btnBugReport.setToolTipText(resourceMap.getString("btnBugReport.toolTipText"));
         btnBugReport.addActionListener(evt -> new EasyBugReportDialog(getFrame(), getCampaign()));
         ConsoleComponentStyler.styleButton(btnBugReport, ConsoleComponentStyler.ButtonRole.STANDARD);
