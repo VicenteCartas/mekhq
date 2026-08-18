@@ -113,6 +113,10 @@ import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.Systems;
 import mekhq.gui.CampaignGUI;
 import mekhq.gui.FileDialogs;
+import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogCore;
+import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogCore.ButtonLabelTooltipPair;
+import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogWidth;
+import mekhq.gui.baseComponents.immersiveDialogs.TransmissionSignalQuality;
 import mekhq.gui.campaignOptions.CampaignOptionsDialog;
 import mekhq.gui.developerTools.ContractDefinitionEditorDialog;
 import mekhq.gui.developerTools.ScenarioModifierEditorDialog;
@@ -609,8 +613,86 @@ public class MekHQMenuBar extends JMenuBar {
               evt -> new StratConFacilityEditorDialog(getFrame()).setVisible(true));
         menuDeveloperTools.add(miFacilityEditor);
 
+          menuDeveloperTools.addSeparator();
+          JMenu videoPreview = new JMenu(getTextAt("miImmersiveDialogVideoPreview.text"));
+          videoPreview.setMnemonic(KeyEvent.VK_V);
+          videoPreview.add(createMenuItem("miImmersiveDialogVideoPreview.decision.text", KeyEvent.VK_D,
+              evt -> showTemporaryDecisionTransmissionPreview()));
+          videoPreview.add(createMenuItem("miImmersiveDialogVideoPreview.longBriefing.text", KeyEvent.VK_B,
+              evt -> showTemporaryLongBriefingPreview()));
+          menuDeveloperTools.add(videoPreview);
+
         return menuDeveloperTools;
     }
+
+        // Temporary local-only helpers for recording the immersive-dialog PR video.
+        private void showTemporaryDecisionTransmissionPreview() {
+          Campaign campaign = getCampaign();
+          Person commander = getTemporaryPreviewCommander(campaign);
+          Person contact = getTemporaryPreviewContact(campaign, commander);
+          Person localSpeaker = (commander == null || commander.equals(contact)) ? null : commander;
+
+          List<ButtonLabelTooltipPair> responses = List.of(
+              new ButtonLabelTooltipPair(getTextAt("immersiveDialogVideoPreview.openNegotiations.text"),
+                  getTextAt("immersiveDialogVideoPreview.openNegotiations.toolTipText")),
+              new ButtonLabelTooltipPair(getTextAt("immersiveDialogVideoPreview.requestBrief.text"),
+                  getTextAt("immersiveDialogVideoPreview.requestBrief.toolTipText")),
+              new ButtonLabelTooltipPair(getTextAt("immersiveDialogVideoPreview.decline.text"),
+                  getTextAt("immersiveDialogVideoPreview.decline.toolTipText")));
+
+          new ImmersiveDialogCore(campaign,
+              contact,
+              localSpeaker,
+              getTextAt("immersiveDialogVideoPreview.decision.message"),
+              responses,
+              getTextAt("immersiveDialogVideoPreview.decision.information"),
+              ImmersiveDialogWidth.MEDIUM.getWidth(),
+              true,
+              null,
+              null,
+              TransmissionSignalQuality.REMOTE,
+              true);
+        }
+
+        private void showTemporaryLongBriefingPreview() {
+          Campaign campaign = getCampaign();
+          Person commander = getTemporaryPreviewCommander(campaign);
+          Person contact = getTemporaryPreviewContact(campaign, commander);
+
+          new ImmersiveDialogCore(campaign,
+              contact,
+              null,
+              getTextAt("immersiveDialogVideoPreview.longBriefing.message"),
+              List.of(new ButtonLabelTooltipPair(
+                  getTextAt("immersiveDialogVideoPreview.acknowledge.text"), null)),
+              getTextAt("immersiveDialogVideoPreview.longBriefing.information"),
+              ImmersiveDialogWidth.LARGE.getWidth(),
+              false,
+              null,
+              null,
+              TransmissionSignalQuality.DEGRADED,
+              true);
+        }
+
+        private Person getTemporaryPreviewCommander(Campaign campaign) {
+          return campaign.getPlayerForce().getHumanResources().getCommander(campaign.getCampaignOptions(),
+              campaign.isClanCampaign(), campaign.getLocalDate());
+        }
+
+        private Person getTemporaryPreviewContact(Campaign campaign, Person commander) {
+          var humanResources = campaign.getPlayerForce().getHumanResources();
+          Person contact = humanResources.getSeniorAdminPerson(Campaign.AdministratorSpecialization.LOGISTICS,
+              campaign.getCampaignOptions(), campaign.isClanCampaign(), campaign.getLocalDate());
+
+          if (contact != null) {
+            return contact;
+          }
+
+          return humanResources.getPersonnel().stream()
+                   .filter(person -> !person.equals(commander))
+                   .findFirst()
+                   .orElse(commander);
+        }
 
     /**
      * The Help menu uses the following Mnemonic keys as of 19-March-2020: A
