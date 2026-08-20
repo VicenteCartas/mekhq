@@ -63,6 +63,9 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.HyperlinkEvent;
 import javax.swing.event.HyperlinkEvent.EventType;
+import javax.swing.text.html.HTMLDocument;
+import javax.swing.text.html.HTMLEditorKit;
+import javax.swing.text.html.StyleSheet;
 
 import megamek.client.ui.comboBoxes.MMComboBox;
 import megamek.codeUtilities.MathUtility;
@@ -384,7 +387,7 @@ public class ImmersiveDialogCore extends JDialog {
 
     private JEditorPane getJEditorPane(String centerMessage, JPanel buttonPanel) {
         JEditorPane editorPane = new JEditorPane();
-        editorPane.setContentType("text/html");
+        configureHtmlEditorPane(editorPane);
         editorPane.setEditable(false);
         editorPane.setFocusable(false);
         editorPane.setBorder(BorderFactory.createEmptyBorder());
@@ -506,7 +509,7 @@ public class ImmersiveDialogCore extends JDialog {
 
     private JEditorPane getJEditorPane(String outOfCharacterMessage) {
         JEditorPane editorPane = new JEditorPane();
-        editorPane.setContentType("text/html");
+        configureHtmlEditorPane(editorPane);
         editorPane.setEditable(false);
         editorPane.setFocusable(false);
 
@@ -517,6 +520,20 @@ public class ImmersiveDialogCore extends JDialog {
         // Use inline CSS to set font family, size, and other style properties
         editorPane.setText(String.format("<div style='width: %s'>%s</div>", width, outOfCharacterMessage));
         return editorPane;
+    }
+
+    private void configureHtmlEditorPane(JEditorPane editorPane) {
+        StyleSheet styleSheet = new StyleSheet();
+        styleSheet.addRule("body, div, p, span { background-color: transparent; }");
+        styleSheet.addRule("body { margin: 0; padding: 0; }");
+        styleSheet.addRule("p { margin: 0 0 0.5em 0; }");
+
+        HTMLEditorKit editorKit = new HTMLEditorKit();
+        editorKit.setStyleSheet(styleSheet);
+        editorPane.setEditorKit(editorKit);
+        editorPane.setDocument(new HTMLDocument(styleSheet));
+        editorPane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
+        editorPane.setOpaque(false);
     }
 
     /**

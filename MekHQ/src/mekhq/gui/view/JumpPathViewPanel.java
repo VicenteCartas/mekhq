@@ -33,17 +33,24 @@
 package mekhq.gui.view;
 
 import static java.lang.Math.ceil;
+import static java.text.MessageFormat.format;
 import static mekhq.campaign.personnel.skills.SkillType.EXP_REGULAR;
 
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.text.NumberFormat;
 import java.time.LocalDate;
 import java.util.ResourceBundle;
 import javax.swing.BorderFactory;
+import javax.swing.BoxLayout;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 
+import megamek.client.ui.util.UIUtil;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.JumpPath;
@@ -59,268 +66,235 @@ import mekhq.gui.baseComponents.JScrollablePanel;
  * @author Jay Lawson (jaylawson39 at yahoo.com)
  */
 public class JumpPathViewPanel extends JScrollablePanel {
+    private static final Color DOSSIER_BACKGROUND = new Color(7, 16, 27);
+    private static final Color DOSSIER_TEXT = new Color(218, 231, 235);
+    private static final Color DOSSIER_MUTED_TEXT = new Color(132, 153, 161);
+    private static final Color DOSSIER_ACCENT = new Color(65, 210, 224);
+    private static final Color DOSSIER_ACTIVE = new Color(235, 166, 66);
+    private static final Color DOSSIER_DIVIDER = new Color(35, 66, 82);
+    private static final int HORIZONTAL_PADDING = UIUtil.scaleForGUI(14);
+
     private final JumpPath path;
     private final Campaign campaign;
-
-    private JPanel pnlPath;
-    private JPanel pnlStats;
+    private final ResourceBundle resourceMap;
 
     public JumpPathViewPanel(JumpPath p, Campaign c) {
         super();
         this.path = p;
         this.campaign = c;
+        resourceMap = ResourceBundle.getBundle("mekhq.resources.JumpPathViewPanel",
+              MekHQ.getMHQOptions().getLocale());
         initComponents();
     }
 
     private void initComponents() {
+        setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
+        setBackground(DOSSIER_BACKGROUND);
+        setOpaque(true);
 
-        pnlStats = new JPanel();
-        pnlPath = new JPanel();
-
-        setLayout(new GridBagLayout());
-
-
-        pnlStats.setName("pnlStats");
-        pnlStats.setBorder(BorderFactory.createTitledBorder("Summary"));
-        fillStats();
-        GridBagConstraints gridBagConstraints = new GridBagConstraints();
-        gridBagConstraints.gridx = 0;
-        gridBagConstraints.gridy = 0;
-        gridBagConstraints.gridheight = 1;
-        gridBagConstraints.weightx = 1.0;
-        gridBagConstraints.insets = new Insets(5, 5, 5, 5);
-        gridBagConstraints.fill = GridBagConstraints.BOTH;
-        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        add(pnlStats, gridBagConstraints);
-
-        pnlPath.setName("pnlPath");
-        pnlPath.setBorder(BorderFactory.createTitledBorder("Full Path"));
-        getPath();
-        gridBagConstraints = new GridBagConstraints();
-        gridBagConstraints.gridx = 0;
-        gridBagConstraints.gridy = 2;
-        gridBagConstraints.gridheight = 1;
-        gridBagConstraints.weightx = 1.0;
-        gridBagConstraints.weighty = 1.0;
-        gridBagConstraints.insets = new Insets(5, 5, 5, 5);
-        gridBagConstraints.fill = GridBagConstraints.BOTH;
-        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        add(pnlPath, gridBagConstraints);
+        add(createHeader());
+        add(createSummary());
+        add(createItinerary());
     }
 
-    private void getPath() {
-        GridBagConstraints gridBagConstraints;
-        pnlPath.setLayout(new GridBagLayout());
-        int i = 0;
-        JLabel lblPlanet;
+    private JPanel createHeader() {
+        JPanel header = createBandPanel();
+        header.setLayout(new GridBagLayout());
+        header.setBorder(BorderFactory.createEmptyBorder(12, HORIZONTAL_PADDING, 10, HORIZONTAL_PADDING));
+
+        boolean activeRoute = isActiveRoute();
+        Color routeColor = activeRoute ? DOSSIER_ACTIVE : DOSSIER_ACCENT;
+
+        JLabel eyebrow = new JLabel(resourceMap.getString("dossier.eyebrow.text"));
+        eyebrow.setForeground(routeColor);
+        eyebrow.setFont(eyebrow.getFont().deriveFont(Font.BOLD, eyebrow.getFont().getSize2D() * 0.85f));
+        GridBagConstraints constraints = createFullWidthConstraints(0);
+        constraints.insets = new Insets(0, 0, 3, 0);
+        header.add(eyebrow, constraints);
+
+        JLabel routeStatus = new JLabel(resourceMap.getString(activeRoute
+              ? "dossier.activeRoute.text"
+              : "dossier.plannedRoute.text"));
+        routeStatus.setForeground(DOSSIER_TEXT);
+        routeStatus.setFont(routeStatus.getFont().deriveFont(Font.BOLD, routeStatus.getFont().getSize2D() * 1.3f));
+        constraints = createFullWidthConstraints(1);
+        constraints.insets = new Insets(0, 0, 4, 0);
+        header.add(routeStatus, constraints);
+
         LocalDate currentDate = campaign.getLocalDate();
-
-        boolean isUseCommandCircuit =
-              FactionStandingUtilities.isUseCommandCircuit(campaign.getPlayerForce()
-                                                                 .isOverridingCommandCircuitRequirements(),
-                    campaign.isGM(),
-                    campaign.getCampaignOptions().isUseFactionStandingCommandCircuitSafe(),
-                    campaign.getPlayerForce().getFactionStandings(), campaign.getFutureAtBContracts());
-
-        for (PlanetarySystem system : path.getSystems()) {
-            lblPlanet =
-                  new JLabel(system.getPrintableName(currentDate) + " (" + system.getRechargeTimeText(currentDate,
-                        isUseCommandCircuit) + ")");
-            gridBagConstraints = new GridBagConstraints();
-            gridBagConstraints.gridx = 0;
-            gridBagConstraints.gridy = i;
-            gridBagConstraints.gridwidth = 1;
-            gridBagConstraints.weightx = 1.0;
-            if (i >= (path.getSystems().size() - 1)) {
-                gridBagConstraints.weighty = 1.0;
-            }
-            gridBagConstraints.insets = new Insets(0, 0, 0, 0);
-            gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
-            gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-            pnlPath.add(lblPlanet, gridBagConstraints);
-            i++;
-        }
+        String startName = getSystemName(path.getFirstSystem(), currentDate);
+        String endName = getSystemName(path.getLastSystem(), currentDate);
+        JLabel endpoints = new JLabel(format(resourceMap.getString("dossier.route.format"), startName, endName));
+        endpoints.setForeground(DOSSIER_MUTED_TEXT);
+        constraints = createFullWidthConstraints(2);
+        header.add(endpoints, constraints);
+        return header;
     }
 
-    private void fillStats() {
-        ResourceBundle resourceMap = ResourceBundle.getBundle("mekhq.resources.JumpPathViewPanel",
-              MekHQ.getMHQOptions().getLocale());
-
-        JLabel lblJumps = new JLabel();
-        JLabel txtJumps = new JLabel();
-        JLabel lblTimeStart = new JLabel();
-        JLabel txtTimeStart = new JLabel();
-        JLabel lblTimeEnd = new JLabel();
-        JLabel txtTimeEnd = new JLabel();
-        JLabel lblRechargeTime = new JLabel();
-        JLabel txtRechargeTime = new JLabel();
-        JLabel lblTotalTime = new JLabel();
-        JLabel txtTotalTime = new JLabel();
-        JLabel lblCost = new JLabel();
-        JLabel txtCost = new JLabel();
-
+    private JPanel createSummary() {
+        JPanel summary = createSection("section.summary.text");
         LocalDate currentDate = campaign.getLocalDate();
-        String startName = (path.getFirstSystem() == null) ? "?" : path.getFirstSystem().getPrintableName(currentDate);
-        String endName = (path.getLastSystem() == null) ? "?" : path.getLastSystem().getPrintableName(currentDate);
+        double currentTransit = campaign.getPlayerForce().getForceDetachment().getCurrentLocation().getTransitTime();
+        boolean useCommandCircuit = isUseCommandCircuit();
 
-        GridBagConstraints gridBagConstraints;
-        pnlStats.setLayout(new GridBagLayout());
-
-        lblJumps.setName("lblJumps");
-        lblJumps.setText(resourceMap.getString("lblJumps1.text"));
-        gridBagConstraints = new GridBagConstraints();
-        gridBagConstraints.gridx = 0;
-        gridBagConstraints.gridy = 1;
-        gridBagConstraints.fill = GridBagConstraints.NONE;
-        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        pnlStats.add(lblJumps, gridBagConstraints);
-
-        txtJumps.setName("lblJumps2");
-        txtJumps.setText("<html>" + path.getJumps() + " jumps" + "</html>");
-        gridBagConstraints = new GridBagConstraints();
-        gridBagConstraints.gridx = 1;
-        gridBagConstraints.gridy = 1;
-        gridBagConstraints.weightx = 0.5;
-        gridBagConstraints.insets = new Insets(0, 10, 0, 0);
-        gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
-        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        pnlStats.add(txtJumps, gridBagConstraints);
-
-        lblTimeStart.setName("lblTimeStart");
-        lblTimeStart.setText(resourceMap.getString("lblTimeStart1.text"));
-        gridBagConstraints = new GridBagConstraints();
-        gridBagConstraints.gridx = 0;
-        gridBagConstraints.gridy = 2;
-        gridBagConstraints.fill = GridBagConstraints.NONE;
-        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        pnlStats.add(lblTimeStart, gridBagConstraints);
-
-        txtTimeStart.setName("lblTimeStart2");
-        txtTimeStart.setText("<html>" +
-                                   Math.round(path.getStartTime(campaign.getPlayerForce()
-                                                                      .getForceDetachment()
-                                                                      .getCurrentLocation()
-                                                                      .getTransitTime()) *
-                                                    100.0) /
-                                         100.0 +
-                                   " days from " +
-                                   startName +
-                                   " to jump point" +
-                                   "</html>");
-        gridBagConstraints = new GridBagConstraints();
-        gridBagConstraints.gridx = 1;
-        gridBagConstraints.gridy = 2;
-        gridBagConstraints.weightx = 0.5;
-        gridBagConstraints.insets = new Insets(0, 10, 0, 0);
-        gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
-        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        pnlStats.add(txtTimeStart, gridBagConstraints);
-
-        lblTimeEnd.setName("lblTimeEnd");
-        lblTimeEnd.setText(resourceMap.getString("lblTimeEnd1.text"));
-        gridBagConstraints = new GridBagConstraints();
-        gridBagConstraints.gridx = 0;
-        gridBagConstraints.gridy = 3;
-        gridBagConstraints.fill = GridBagConstraints.NONE;
-        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        pnlStats.add(lblTimeEnd, gridBagConstraints);
-
-        txtTimeEnd.setName("lblTimeEnd2");
-        txtTimeEnd.setText("<html>" +
-                                 Math.round(path.getEndTime() * 100.0) / 100.0 +
-                                 " days from final jump point to " +
-                                 endName +
-                                 "</html>");
-        gridBagConstraints = new GridBagConstraints();
-        gridBagConstraints.gridx = 1;
-        gridBagConstraints.gridy = 3;
-        gridBagConstraints.weightx = 0.5;
-        gridBagConstraints.insets = new Insets(0, 10, 0, 0);
-        gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
-        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        pnlStats.add(txtTimeEnd, gridBagConstraints);
-
-        lblRechargeTime.setName("lblRechargeTime1");
-        lblRechargeTime.setText(resourceMap.getString("lblRechargeTime1.text"));
-        gridBagConstraints = new GridBagConstraints();
-        gridBagConstraints.gridx = 0;
-        gridBagConstraints.gridy = 4;
-        gridBagConstraints.fill = GridBagConstraints.NONE;
-        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        pnlStats.add(lblRechargeTime, gridBagConstraints);
-
-        boolean isUseCommandCircuit = FactionStandingUtilities.isUseCommandCircuit(campaign.getPlayerForce()
-                                                                                         .isOverridingCommandCircuitRequirements(),
-              campaign.isGM(), campaign.getCampaignOptions().isUseFactionStandingCommandCircuitSafe(),
-              campaign.getPlayerForce().getFactionStandings(), campaign.getFutureAtBContracts());
-
-        txtRechargeTime.setName("lblRechargeTime2");
-        txtRechargeTime.setText("<html>" +
-                                      Math.round(path.getTotalRechargeTime(currentDate, isUseCommandCircuit) * 100.0) /
-                                            100.0 +
-                                      " days" +
-                                      "</html>");
-        gridBagConstraints = new GridBagConstraints();
-        gridBagConstraints.gridx = 1;
-        gridBagConstraints.gridy = 4;
-        gridBagConstraints.weightx = 0.5;
-        gridBagConstraints.insets = new Insets(0, 10, 0, 0);
-        gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
-        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        pnlStats.add(txtRechargeTime, gridBagConstraints);
-
-        lblTotalTime.setName("lblTotalTime1");
-        lblTotalTime.setText(resourceMap.getString("lblTotalTime1.text"));
-        gridBagConstraints = new GridBagConstraints();
-        gridBagConstraints.gridx = 0;
-        gridBagConstraints.gridy = 5;
-        gridBagConstraints.fill = GridBagConstraints.NONE;
-        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        pnlStats.add(lblTotalTime, gridBagConstraints);
-
-        txtTotalTime.setName("lblTotalTime2");
-        txtTotalTime.setText("<html>" + Math.round(path.getTotalTime(currentDate,
-              campaign.getPlayerForce().getForceDetachment().getCurrentLocation().getTransitTime(),
-              isUseCommandCircuit) * 100.0) / 100.0 +
-                                   " days" +
-                                   "</html>");
-        gridBagConstraints = new GridBagConstraints();
-        gridBagConstraints.gridx = 1;
-        gridBagConstraints.gridy = 5;
-        gridBagConstraints.weightx = 0.5;
-        gridBagConstraints.insets = new Insets(0, 10, 0, 0);
-        gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
-        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        pnlStats.add(txtTotalTime, gridBagConstraints);
+        int metricIndex = 0;
+        addMetric(summary, metricIndex++, "metric.jumps.text", Integer.toString(path.getJumps()));
+        addMetric(summary, metricIndex++, "metric.startTransit.text", formatDays(path.getStartTime(currentTransit)));
+        addMetric(summary, metricIndex++, "metric.endTransit.text", formatDays(path.getEndTime()));
+        addMetric(summary, metricIndex++, "metric.recharge.text",
+              formatDays(path.getTotalRechargeTime(currentDate, useCommandCircuit)));
+        addMetric(summary, metricIndex++, "metric.totalTime.text",
+              formatDays(path.getTotalTime(currentDate, currentTransit, useCommandCircuit)));
 
         if (campaign.getCampaignOptions().isPayForTransport()) {
-            lblCost.setName("lblCost1");
-            lblCost.setText(resourceMap.getString("lblCost1.text"));
-            gridBagConstraints = new GridBagConstraints();
-            gridBagConstraints.gridx = 0;
-            gridBagConstraints.gridy = 6;
-            gridBagConstraints.fill = GridBagConstraints.NONE;
-            gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-            pnlStats.add(lblCost, gridBagConstraints);
-
-            TransportCostCalculations transportCostCalculations = campaign.getTransportCostCalculation(EXP_REGULAR);
-            int duration = (int) ceil(path.getTotalTime(currentDate, campaign.getPlayerForce()
-                                                                           .getForceDetachment()
-                                                                           .getCurrentLocation()
-                                                                           .getTransitTime(),
-                  isUseCommandCircuit));
-            Money journeyCost = transportCostCalculations.calculateJumpCostForEntireJourney(duration, path.getJumps());
-
-            txtCost.setName("lblCost2");
-            txtCost.setText("<html>" + journeyCost.toAmountAndSymbolString() + "</html>");
-            gridBagConstraints = new GridBagConstraints();
-            gridBagConstraints.gridx = 1;
-            gridBagConstraints.gridy = 6;
-            gridBagConstraints.weightx = 0.5;
-            gridBagConstraints.insets = new Insets(0, 10, 0, 0);
-            gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
-            gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-            pnlStats.add(txtCost, gridBagConstraints);
+            TransportCostCalculations calculations = campaign.getTransportCostCalculation(EXP_REGULAR);
+            int duration = (int) ceil(path.getTotalTime(currentDate, currentTransit, useCommandCircuit));
+            Money journeyCost = calculations.calculateJumpCostForEntireJourney(duration, path.getJumps());
+            addMetric(summary, metricIndex, "metric.cost.text", journeyCost.toAmountAndSymbolString());
         }
+        return summary;
+    }
+
+    private JPanel createItinerary() {
+        JPanel itinerary = createSection("section.itinerary.text");
+        LocalDate currentDate = campaign.getLocalDate();
+        boolean useCommandCircuit = isUseCommandCircuit();
+        Color routeColor = isActiveRoute() ? DOSSIER_ACTIVE : DOSSIER_ACCENT;
+
+        int waypointIndex = 0;
+        for (PlanetarySystem system : path.getSystems()) {
+            JPanel waypoint = createBandPanel();
+            waypoint.setLayout(new GridBagLayout());
+            if (waypointIndex > 0) {
+                waypoint.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, DOSSIER_DIVIDER));
+            }
+
+            JLabel sequence = new JLabel(String.format("%02d", waypointIndex + 1));
+            sequence.setForeground(routeColor);
+            sequence.setFont(sequence.getFont().deriveFont(Font.BOLD));
+            GridBagConstraints constraints = new GridBagConstraints();
+            constraints.gridx = 0;
+            constraints.gridy = 0;
+            constraints.gridheight = 2;
+            constraints.anchor = GridBagConstraints.NORTHWEST;
+            constraints.insets = new Insets(8, 0, 8, 12);
+            waypoint.add(sequence, constraints);
+
+            JLabel systemName = new JLabel(system.getPrintableName(currentDate));
+            systemName.setForeground(DOSSIER_TEXT);
+            systemName.setFont(systemName.getFont().deriveFont(Font.BOLD));
+            constraints = new GridBagConstraints();
+            constraints.gridx = 1;
+            constraints.gridy = 0;
+            constraints.weightx = 1.0;
+            constraints.fill = GridBagConstraints.HORIZONTAL;
+            constraints.anchor = GridBagConstraints.NORTHWEST;
+            constraints.insets = new Insets(7, 0, 1, 0);
+            waypoint.add(systemName, constraints);
+
+            JLabel rechargeTime = new JLabel(format(resourceMap.getString("waypoint.recharge.format"),
+                  system.getRechargeTimeText(currentDate, useCommandCircuit)));
+            rechargeTime.setForeground(DOSSIER_MUTED_TEXT);
+            rechargeTime.setFont(rechargeTime.getFont()
+                                       .deriveFont(Font.PLAIN, rechargeTime.getFont().getSize2D() * 0.9f));
+            constraints = new GridBagConstraints();
+            constraints.gridx = 1;
+            constraints.gridy = 1;
+            constraints.weightx = 1.0;
+            constraints.fill = GridBagConstraints.HORIZONTAL;
+            constraints.anchor = GridBagConstraints.NORTHWEST;
+            constraints.insets = new Insets(0, 0, 7, 0);
+            waypoint.add(rechargeTime, constraints);
+
+            constraints = createFullWidthConstraints(waypointIndex + 1);
+            itinerary.add(waypoint, constraints);
+            waypointIndex++;
+        }
+        return itinerary;
+    }
+
+    private JPanel createSection(String headingKey) {
+        JPanel section = createBandPanel();
+        section.setLayout(new GridBagLayout());
+        section.setBorder(BorderFactory.createCompoundBorder(
+              BorderFactory.createMatteBorder(1, 0, 0, 0, DOSSIER_DIVIDER),
+              BorderFactory.createEmptyBorder(9, HORIZONTAL_PADDING, 10, HORIZONTAL_PADDING)));
+
+        JLabel heading = new JLabel(resourceMap.getString(headingKey));
+        heading.setForeground(DOSSIER_ACCENT);
+        heading.setFont(heading.getFont().deriveFont(Font.BOLD, heading.getFont().getSize2D() * 0.85f));
+        GridBagConstraints constraints = createFullWidthConstraints(0);
+        constraints.insets = new Insets(0, 0, 5, 0);
+        section.add(heading, constraints);
+        return section;
+    }
+
+    private void addMetric(JPanel summary, int metricIndex, String labelKey, String value) {
+        JPanel metric = createBandPanel();
+        metric.setLayout(new BoxLayout(metric, BoxLayout.Y_AXIS));
+
+        JLabel label = new JLabel(resourceMap.getString(labelKey));
+        label.setForeground(DOSSIER_MUTED_TEXT);
+        label.setFont(label.getFont().deriveFont(Font.BOLD, label.getFont().getSize2D() * 0.8f));
+        label.setAlignmentX(LEFT_ALIGNMENT);
+        metric.add(label);
+
+        JLabel metricValue = new JLabel(value);
+        metricValue.setForeground(DOSSIER_TEXT);
+        metricValue.setFont(metricValue.getFont().deriveFont(Font.BOLD));
+        metricValue.setAlignmentX(LEFT_ALIGNMENT);
+        metric.add(metricValue);
+
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.gridx = metricIndex % 2;
+        constraints.gridy = 1 + (metricIndex / 2);
+        constraints.weightx = 0.5;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.anchor = GridBagConstraints.NORTHWEST;
+        constraints.insets = new Insets(3, 0, 5, (metricIndex % 2 == 0) ? HORIZONTAL_PADDING : 0);
+        summary.add(metric, constraints);
+    }
+
+    private JPanel createBandPanel() {
+        JPanel panel = new JPanel();
+        panel.setBackground(DOSSIER_BACKGROUND);
+        panel.setOpaque(true);
+        panel.setAlignmentX(LEFT_ALIGNMENT);
+        panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
+        return panel;
+    }
+
+    private GridBagConstraints createFullWidthConstraints(int row) {
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.gridx = 0;
+        constraints.gridy = row;
+        constraints.gridwidth = 2;
+        constraints.weightx = 1.0;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.anchor = GridBagConstraints.NORTHWEST;
+        return constraints;
+    }
+
+    private boolean isActiveRoute() {
+        JumpPath activePath = campaign.getPlayerForce().getForceDetachment().getCurrentLocation().getJumpPath();
+        return activePath == path;
+    }
+
+    private boolean isUseCommandCircuit() {
+        return FactionStandingUtilities.isUseCommandCircuit(campaign.getPlayerForce()
+                                                                  .isOverridingCommandCircuitRequirements(),
+              campaign.isGM(), campaign.getCampaignOptions().isUseFactionStandingCommandCircuitSafe(),
+              campaign.getPlayerForce().getFactionStandings(), campaign.getFutureAtBContracts());
+    }
+
+    private String formatDays(double days) {
+        NumberFormat numberFormat = NumberFormat.getNumberInstance(MekHQ.getMHQOptions().getLocale());
+        numberFormat.setMaximumFractionDigits(2);
+        return format(resourceMap.getString("metric.days.format"), numberFormat.format(days));
+    }
+
+    private String getSystemName(PlanetarySystem system, LocalDate currentDate) {
+        return (system == null) ? resourceMap.getString("dossier.unknownSystem.text")
+                     : system.getPrintableName(currentDate);
     }
 }
