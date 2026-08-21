@@ -63,8 +63,8 @@ class InterstellarMapPanelLegendTest {
     private static final List<Integer> GROUP_ENTRY_COUNTS = List.of(6, 4, 7, 7);
     private static final List<String> TITLES = List.of(
           "Selected system", "Hovered system", "Current fleet", "Planned route", "Active route",
-        "Waypoint number", "Contract-search radius", "Planetary-acquisition radius", "Jump radius",
-        "50 ly HPG range", "System contact", "Faction ownership", "Faction capital", "Great Hiring Hall",
+                    "Waypoint number", "Contract-search radius", "Planetary-acquisition radius", "Jump radius",
+                "50 ly HPG range", "System contact", "Faction ownership", "National capital", "Great Hiring Hall",
         "Operation flag", "Restricted system", "GM-edited system", "Analytical / service value",
         "Faction emblem", "HPG network & traffic", "Sovereign border", "Disputed territory",
         "Unclaimed pocket", "Enclave");
@@ -81,9 +81,9 @@ class InterstellarMapPanelLegendTest {
         "A dark-green dotted ring centered on the selected system marks 50 ly; HPG layer visibility controls when it appears.",
         "Star color shows spectral class; at low zoom, contact color reflects faction or map data, with grey for empty or unowned systems.",
         "Colored arcs identify each faction present; a neutral dashed collar marks a shared system.",
-        "A crown or arch in faction color marks a capital.",
+        "A faction-color crown with a dark outline marks every dated national capital at atlas zoom.",
         "A pale triangle marks a Great Hiring Hall.",
-        "Outline means mission; filled means active scenario; a number means multiple missions.",
+        "An outline flag marks an active mission; a filled flag marks an active scenario; the count is active missions.",
         "A black X marks a system barred by outlaw or restricted-entry standing rules.",
         "A cyan outline ring marks a non-canon system override.",
         "Bracket color reflects the active map layer's value or service status.",

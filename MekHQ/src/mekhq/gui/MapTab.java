@@ -56,17 +56,21 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.awt.event.KeyEvent;
 import java.util.Objects;
 import java.util.ResourceBundle;
+import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JCheckBoxMenuItem;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JViewport;
+import javax.swing.KeyStroke;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
@@ -110,6 +114,8 @@ public final class MapTab extends CampaignGuiTab implements ActionListener {
     private static final Color ACTIVE_ROUTE_COLOR = new Color(235, 166, 66);
     private static final Color HUD_CONTROL_BACKGROUND = new Color(15, 30, 43);
     private static final int HUD_MINIMUM_HEIGHT = UIUtil.scaleForGUI(38);
+    private static final int INSPECTOR_PREFERRED_WIDTH = UIUtil.scaleForGUI(400);
+    private static final String TOGGLE_FOCUS_ACTION = "toggleMapFocus";
     private static final int ROUTE_TRANSITION_FRAME_DELAY_MS = 16;
     private static final long ROUTE_TRANSITION_DURATION_NS = 280_000_000L;
     private static final float ROUTE_TRANSITION_MIDPOINT = 0.5f;
@@ -119,10 +125,17 @@ public final class MapTab extends CampaignGuiTab implements ActionListener {
 
     private JViewport mapView;
     private JPanel panMapView;
+    private JPanel panMapFooter;
+    private JPanel tutorialPanel;
     private InterstellarMapPanel panMap;
     private PlanetarySystemMapPanel panSystem;
     private JScrollPane scrollPlanetView;
+    private JSplitPane splitMap;
     private ResourceBundle resourceMap;
+    private JButton btnToggleInspector;
+    private JButton btnToggleFocus;
+    private JButton btnToggleRouteTray;
+    private JButton btnJumpFees;
     private RoundedJButton btnCalculateJumpPath;
     private RoundedJButton btnBeginTransit;
     private JLabel lblRouteStatus;
@@ -140,11 +153,19 @@ public final class MapTab extends CampaignGuiTab implements ActionListener {
     private boolean routeTransitionMidpointApplied;
     private boolean routeRevealTransition;
     private DossierIdentity presentedDossierIdentity;
+    private MapTabLayoutState layoutState;
+    private int inspectorDividerSize;
+    private int inspectorWidth = INSPECTOR_PREFERRED_WIDTH;
+    private boolean applyingLayoutState;
     JSuggestField suggestPlanet;
 
     //region Constructors
     public MapTab(CampaignGUI gui, String tabName) {
         super(gui, tabName);
+    }
+
+    static MapTabLayoutState initializeLayoutState(MapTabLayoutState currentState) {
+        return (currentState == null) ? new MapTabLayoutState() : currentState;
     }
     //endregion Constructors
 
@@ -166,6 +187,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener {
      */
     @Override
     public void initTab() {
+        layoutState = initializeLayoutState(layoutState);
         resourceMap = ResourceBundle.getBundle("mekhq.resources.CampaignGUI",
               MekHQ.getMHQOptions().getLocale());
 
@@ -181,10 +203,10 @@ public final class MapTab extends CampaignGuiTab implements ActionListener {
                                        .getCurrentSystem());
         panMapView.add(panMap, BorderLayout.CENTER);
 
-        JPanel panMapFooter = new JPanel(new BorderLayout());
+        panMapFooter = new JPanel(new BorderLayout());
         panMapFooter.add(createRouteStrip(), BorderLayout.NORTH);
-        JPanel pnlTutorial = new TutorialHyperlinkPanel("mapTab.keyText");
-        panMapFooter.add(pnlTutorial, BorderLayout.SOUTH);
+        tutorialPanel = new TutorialHyperlinkPanel("mapTab.keyText");
+        panMapFooter.add(tutorialPanel, BorderLayout.SOUTH);
         panMapView.add(panMapFooter, BorderLayout.SOUTH);
 
         mapView = new JViewport();
@@ -195,15 +217,21 @@ public final class MapTab extends CampaignGuiTab implements ActionListener {
         scrollPlanetView.setBackground(ROUTE_STRIP_BACKGROUND);
         scrollPlanetView.getViewport().setBackground(ROUTE_STRIP_BACKGROUND);
         scrollPlanetView.setBorder(null);
-        scrollPlanetView.setMinimumSize(new Dimension(400, 600));
-        scrollPlanetView.setPreferredSize(new Dimension(400, 600));
+        scrollPlanetView.setMinimumSize(new Dimension(INSPECTOR_PREFERRED_WIDTH, 600));
+        scrollPlanetView.setPreferredSize(new Dimension(INSPECTOR_PREFERRED_WIDTH, 600));
         scrollPlanetView.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         scrollPlanetView.setViewportView(null);
         scrollPlanetView.setBorder(null);
-        JSplitPane splitMap = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, mapView, scrollPlanetView);
-        splitMap.setOneTouchExpandable(true);
+        splitMap = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, mapView, scrollPlanetView);
+        splitMap.setOneTouchExpandable(false);
         splitMap.setResizeWeight(1.0);
-        splitMap.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY, ev -> refreshPlanetView());
+        inspectorDividerSize = splitMap.getDividerSize();
+        splitMap.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY, event -> {
+            if (!applyingLayoutState && layoutState.isInspectorExpanded()) {
+                rememberInspectorWidth();
+                refreshPlanetView();
+            }
+        });
 
         panMap.setCampaign(getCampaign());
         panMap.addActionListener(this);
@@ -213,7 +241,9 @@ public final class MapTab extends CampaignGuiTab implements ActionListener {
 
         setLayout(new BorderLayout());
         add(splitMap, BorderLayout.CENTER);
+        registerFocusShortcut();
         updateRouteStrip();
+        applyLayoutState();
     }
 
     private JPanel createNavigationHud() {
@@ -287,12 +317,129 @@ public final class MapTab extends CampaignGuiTab implements ActionListener {
         constraints.gridx = 3;
         constraints.gridy = 0;
         constraints.anchor = GridBagConstraints.EAST;
+        constraints.insets = new Insets(0, 0, 0, PADDING);
         navigationHud.add(routingOptions, constraints);
+
+        btnToggleInspector = createHudButton("mapHud.inspector.hide.text",
+              "mapHud.inspector.hide.toolTipText");
+        btnToggleInspector.addActionListener(event -> {
+            layoutState.toggleInspector();
+            applyLayoutState();
+        });
+        constraints = new GridBagConstraints();
+        constraints.gridx = 4;
+        constraints.gridy = 0;
+        constraints.anchor = GridBagConstraints.EAST;
+        constraints.insets = new Insets(0, 0, 0, PADDING);
+        navigationHud.add(btnToggleInspector, constraints);
+
+        btnToggleFocus = createHudButton("mapHud.focus.enter.text", "mapHud.focus.enter.toolTipText");
+        btnToggleFocus.addActionListener(event -> toggleFocusMode());
+        constraints = new GridBagConstraints();
+        constraints.gridx = 5;
+        constraints.gridy = 0;
+        constraints.anchor = GridBagConstraints.EAST;
+        navigationHud.add(btnToggleFocus, constraints);
 
         Dimension preferredSize = navigationHud.getPreferredSize();
         preferredSize.height = Math.max(preferredSize.height, HUD_MINIMUM_HEIGHT);
         navigationHud.setPreferredSize(preferredSize);
         return navigationHud;
+    }
+
+    private void registerFocusShortcut() {
+        getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(
+              KeyStroke.getKeyStroke(KeyEvent.VK_F11, 0), TOGGLE_FOCUS_ACTION);
+        getActionMap().put(TOGGLE_FOCUS_ACTION, new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                toggleFocusMode();
+            }
+        });
+    }
+
+    private void toggleFocusMode() {
+        layoutState.toggleFocusMode();
+        applyLayoutState();
+    }
+
+    private void applyLayoutState() {
+        MapTabLayoutState.preserveViewportCenter(panMap::getMapCenter, panMap::restoreMapCenter, () -> {
+            applyingLayoutState = true;
+            try {
+                setInspectorExpanded(layoutState.isInspectorExpanded());
+                setRouteDetailsVisible(layoutState.isRouteTrayExpanded());
+                tutorialPanel.setVisible(layoutState.isTutorialVisible());
+                updateLayoutControls();
+                revalidate();
+                repaint();
+            } finally {
+                applyingLayoutState = false;
+            }
+        });
+    }
+
+    private void setInspectorExpanded(boolean expanded) {
+        if (expanded && (splitMap.getRightComponent() == null)) {
+            splitMap.setDividerSize(inspectorDividerSize);
+            splitMap.setRightComponent(scrollPlanetView);
+            int dividerLocation = Math.max(0,
+                  splitMap.getWidth() - inspectorWidth - splitMap.getDividerSize());
+            splitMap.setDividerLocation(dividerLocation);
+        } else if (!expanded && (splitMap.getRightComponent() != null)) {
+            rememberInspectorWidth();
+            splitMap.setRightComponent(null);
+            splitMap.setDividerSize(0);
+        }
+    }
+
+    private void rememberInspectorWidth() {
+        if ((splitMap == null) || (splitMap.getRightComponent() == null)) {
+            return;
+        }
+
+        int currentInspectorWidth = splitMap.getWidth() - splitMap.getDividerLocation()
+              - splitMap.getDividerSize();
+        if (currentInspectorWidth > 0) {
+            inspectorWidth = currentInspectorWidth;
+        }
+    }
+
+    private void setRouteDetailsVisible(boolean visible) {
+        lblRouteJumps.setVisible(visible);
+        lblRouteDuration.setVisible(visible);
+        lblRouteNextJump.setVisible(visible);
+        btnJumpFees.setVisible(visible);
+        btnBeginTransit.setVisible(visible);
+        if (presentedRouteSnapshot == null) {
+            lblRouteCost.setVisible(visible);
+            btnCalculateJumpPath.setVisible(visible);
+        } else {
+            lblRouteCost.setVisible(visible && presentedRouteSnapshot.costVisible());
+            btnCalculateJumpPath.setVisible(visible && presentedRouteSnapshot.plotCourseVisible());
+        }
+        routeStrip.revalidate();
+        routeStrip.repaint();
+    }
+
+    private void updateLayoutControls() {
+        boolean focusMode = layoutState.isFocusMode();
+        String inspectorState = layoutState.isInspectorExpanded() ? "hide" : "show";
+        if (focusMode) {
+            inspectorState = "focused";
+        }
+        updateHudButton(btnToggleInspector, "mapHud.inspector." + inspectorState + ".text",
+              "mapHud.inspector." + inspectorState + ".toolTipText");
+        btnToggleInspector.setEnabled(!focusMode);
+
+        String focusState = focusMode ? "exit" : "enter";
+        updateHudButton(btnToggleFocus, "mapHud.focus." + focusState + ".text",
+              "mapHud.focus." + focusState + ".toolTipText");
+
+        String routeTrayState = focusMode ? "restoreLayout"
+              : (layoutState.isRouteTrayExpanded() ? "compact" : "expand");
+        updateHudButton(btnToggleRouteTray, "routeStrip." + routeTrayState + ".text",
+              "routeStrip." + routeTrayState + ".toolTipText");
     }
 
     private JPopupMenu createRoutingMenu() {
@@ -324,6 +471,8 @@ public final class MapTab extends CampaignGuiTab implements ActionListener {
     private JButton createHudButton(String textKey, String toolTipKey) {
         JButton button = new JButton(resourceMap.getString(textKey));
         button.setToolTipText(resourceMap.getString(toolTipKey));
+        button.getAccessibleContext().setAccessibleName(button.getText());
+        button.getAccessibleContext().setAccessibleDescription(button.getToolTipText());
         button.setForeground(ROUTE_TEXT_COLOR);
         button.setBackground(HUD_CONTROL_BACKGROUND);
         button.setFocusPainted(false);
@@ -331,6 +480,13 @@ public final class MapTab extends CampaignGuiTab implements ActionListener {
               BorderFactory.createLineBorder(ROUTE_STRIP_BORDER),
               BorderFactory.createEmptyBorder(2, 8, 2, 8)));
         return button;
+    }
+
+    private void updateHudButton(JButton button, String textKey, String toolTipKey) {
+        button.setText(resourceMap.getString(textKey));
+        button.setToolTipText(resourceMap.getString(toolTipKey));
+        button.getAccessibleContext().setAccessibleName(button.getText());
+        button.getAccessibleContext().setAccessibleDescription(button.getToolTipText());
     }
 
     private JPanel createRouteStrip() {
@@ -393,7 +549,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener {
         constraints.insets = new Insets(0, 0, 0, PADDING);
         routeStrip.add(lblRouteCost, constraints);
 
-        JButton btnJumpFees = createHudButton("btnJumpFees.text", "btnJumpFees.toolTipText");
+        btnJumpFees = createHudButton("btnJumpFees.text", "btnJumpFees.toolTipText");
         btnJumpFees.addActionListener(evt -> showJumpFeeSummary());
         constraints = new GridBagConstraints();
         constraints.gridx = 2;
@@ -426,6 +582,23 @@ public final class MapTab extends CampaignGuiTab implements ActionListener {
         constraints.fill = GridBagConstraints.HORIZONTAL;
         constraints.anchor = GridBagConstraints.EAST;
         routeStrip.add(btnBeginTransit, constraints);
+
+        btnToggleRouteTray = createHudButton("routeStrip.compact.text",
+              "routeStrip.compact.toolTipText");
+        btnToggleRouteTray.addActionListener(event -> {
+            if (layoutState.isFocusMode()) {
+                layoutState.toggleFocusMode();
+            } else {
+                layoutState.toggleRouteTray();
+            }
+            applyLayoutState();
+        });
+        constraints = new GridBagConstraints();
+        constraints.gridx = 5;
+        constraints.gridy = 0;
+        constraints.gridheight = 3;
+        constraints.anchor = GridBagConstraints.EAST;
+        routeStrip.add(btnToggleRouteTray, constraints);
 
         routeTransitionTimer = new Timer(ROUTE_TRANSITION_FRAME_DELAY_MS, event -> updateRouteTransition());
         routeTransitionTimer.setCoalesce(true);
@@ -655,9 +828,11 @@ public final class MapTab extends CampaignGuiTab implements ActionListener {
         lblRouteNextJump.setText(snapshot.nextJumpText());
         lblRouteCost.setText(snapshot.costText());
         setRouteMetricColor(snapshot.metricColor());
-        lblRouteCost.setVisible(snapshot.costVisible());
-        btnCalculateJumpPath.setVisible(snapshot.plotCourseVisible());
+        boolean routeDetailsVisible = layoutState.isRouteTrayExpanded();
+        lblRouteCost.setVisible(routeDetailsVisible && snapshot.costVisible());
+        btnCalculateJumpPath.setVisible(routeDetailsVisible && snapshot.plotCourseVisible());
         btnCalculateJumpPath.setEnabled(enableActions && snapshot.plotCourseEnabled());
+        btnBeginTransit.setVisible(routeDetailsVisible);
         btnBeginTransit.setEnabled(enableActions && snapshot.beginTransitEnabled());
         presentedRouteSnapshot = snapshot;
         routeStrip.revalidate();

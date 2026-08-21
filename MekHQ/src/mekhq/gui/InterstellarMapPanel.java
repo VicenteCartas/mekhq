@@ -131,7 +131,7 @@ public class InterstellarMapPanel extends JPanel {
     private static final Color HOVERED_SYSTEM_COLOR = new Color(190, 215, 222);
     private static final Color SYSTEM_LABEL_COLOR = new Color(218, 231, 235);
     private static final Color OPERATION_MARKER_COLOR = new Color(239, 170, 54);
-    private static final Color OPERATION_SCENARIO_COLOR = new Color(255, 220, 122);
+    private static final Color URGENT_OPERATION_COLOR = new Color(255, 220, 122);
     private static final Color HPG_A_TRAFFIC_COLOR = new Color(145, 240, 255);
     private static final Color HPG_B_TRAFFIC_COLOR = new Color(105, 175, 255);
     private static final int LAYER_ANIMATION_DELAY_MS = 16;
@@ -279,12 +279,12 @@ public class InterstellarMapPanel extends JPanel {
                     "Star color shows spectral class; at low zoom, contact color reflects faction or map data, with grey for empty or unowned systems."),
                 new MapLegendEntry(MapLegendSymbol.FACTION_OWNERSHIP, "Faction ownership",
                     "Colored arcs identify each faction present; a neutral dashed collar marks a shared system."),
-                new MapLegendEntry(MapLegendSymbol.FACTION_CAPITAL, "Faction capital",
-                    "A crown or arch in faction color marks a capital."),
+                new MapLegendEntry(MapLegendSymbol.FACTION_CAPITAL, "National capital",
+                    "A faction-color crown with a dark outline marks every dated national capital at atlas zoom."),
                 new MapLegendEntry(MapLegendSymbol.GREAT_HIRING_HALL, "Great Hiring Hall",
                     "A pale triangle marks a Great Hiring Hall."),
                 new MapLegendEntry(MapLegendSymbol.OPERATION, "Operation flag",
-                    "Outline means mission; filled means active scenario; a number means multiple missions."),
+                    "An outline flag marks an active mission; a filled flag marks an active scenario; the count is active missions."),
                 new MapLegendEntry(MapLegendSymbol.RESTRICTED_SYSTEM, "Restricted system",
                     "A black X marks a system barred by outlaw or restricted-entry standing rules."),
                 new MapLegendEntry(MapLegendSymbol.GM_EDITED_SYSTEM, "GM-edited system",
@@ -377,6 +377,9 @@ public class InterstellarMapPanel extends JPanel {
             return new RenderViewKey(width, height, Double.doubleToLongBits(centerX),
                   Double.doubleToLongBits(centerY), Double.doubleToLongBits(scale));
         }
+    }
+
+    record MapCenter(double x, double y) {
     }
 
     record TerritoryRenderKey(RenderViewKey viewKey, LocalDate date, long dataRevision) {
@@ -542,13 +545,14 @@ public class InterstellarMapPanel extends JPanel {
             }
         }
 
-        private record SemanticZoomProfile(double territoryAlpha, double factionLogoAlpha,
+                record SemanticZoomProfile(double territoryAlpha, double factionLogoAlpha,
             double strategicContactAlpha,
           double spectralAlpha, double detailedOverlayAlpha, double ordinaryLabelAlpha,
           double routeLabelAlpha, double routeBadgeAlpha, double hpgNetworkAlpha,
-          double hpgTrafficAlpha, double capitalAlpha, double operationsAlpha,
+                    double hpgTrafficAlpha, double capitalAlpha, double missionOperationAlpha,
+                    double urgentOperationAlpha,
           double currentLocationAlpha, double serviceAlpha, double stellarDetailAlpha) {
-        private static SemanticZoomProfile create(double scale, double semanticReference) {
+        static SemanticZoomProfile create(double scale, double semanticReference) {
             double boundedReference = Math.clamp(semanticReference, 2.4, 3.6);
             double atlasEnd = Math.clamp(boundedReference / 3.0, 0.8, 1.0);
             double detailStart = Math.clamp(boundedReference * 0.8, 2.4, 3.0);
@@ -575,6 +579,7 @@ public class InterstellarMapPanel extends JPanel {
                   navigationAlpha,
                   interpolate(0.75, 1.0, navigationAlpha),
                   navigationAlpha,
+                  interpolate(0.68, 1.0, navigationAlpha),
                   navigationAlpha,
                   detailAlpha,
                   detailAlpha);
@@ -621,11 +626,15 @@ public class InterstellarMapPanel extends JPanel {
         }
 
         Point2D.Double capitalAnchor(int markerIndex, int markerCount) {
-            double markerHalfHeight = Math.max(4.5, size * 0.55);
-            double markerSpacing = Math.max(7.0, size * 1.05);
+            Rectangle2D.Double markerBounds = nationalCapitalMarkerBounds(new Point2D.Double(), size);
+            double markerSpacing = markerBounds.width + 2.0;
             double horizontalOffset = (markerIndex - ((markerCount - 1) / 2.0)) * markerSpacing;
-            return new Point2D.Double(centerX + horizontalOffset,
-                  centerY - hoveredRadius - markerHalfHeight - 4.0);
+            double rightmostX = centerX + (((markerCount - 1) / 2.0) * markerSpacing);
+            double shipLeft = shipAnchor().x - (CURRENT_LOCATION_ICON_SIZE / 2.0);
+            double bandShift = Math.min(0.0,
+                shipLeft - 2.0 - (rightmostX + (markerBounds.width / 2.0)));
+            return new Point2D.Double(centerX + horizontalOffset + bandShift,
+                centerY - hoveredRadius - (markerBounds.height / 2.0) - 4.0);
         }
 
         Point2D.Double serviceAnchor() {
@@ -1139,7 +1148,6 @@ public class InterstellarMapPanel extends JPanel {
                     SemanticZoomProfile semanticZoom = SemanticZoomProfile.create(conf.scale, semanticZoomReference);
                     TerritoryVisualProfile territoryVisuals = TerritoryVisualProfile.create(conf.scale);
                     double visibleHpgNetworkAlpha = hpgNetworkLayerAlpha * semanticZoom.hpgNetworkAlpha();
-                    double visibleOperationsAlpha = operationsLayerAlpha * semanticZoom.operationsAlpha();
 
                 Arc2D.Double arc = new Arc2D.Double();
 
@@ -1328,8 +1336,10 @@ public class InterstellarMapPanel extends JPanel {
                         }
 
                         StrategicMarker strategicMarker = strategicMarkers.get(system.getId());
-                        if ((strategicMarker != null) && (visibleOperationsAlpha > 0.0)) {
-                            paintLayerWithAlpha(g2, visibleOperationsAlpha,
+                        double markerOperationsAlpha = visibleOperationAlpha(
+                              operationsLayerAlpha, semanticZoom, strategicMarker);
+                        if (markerOperationsAlpha > 0.0) {
+                            paintLayerWithAlpha(g2, markerOperationsAlpha,
                                 markerGraphics -> drawOperationMarker(markerGraphics, markerLayout, strategicMarker));
                         }
 
@@ -1906,8 +1916,8 @@ public class InterstellarMapPanel extends JPanel {
             case JUMP_RADIUS -> paintLegendRangeRing(graphics,
                 MekHQ.getMHQOptions().getInterstellarMapJumpRadiusColour(), CONFIGURABLE_RANGE_RING_STROKE);
             case HPG_RANGE -> paintLegendRangeRing(graphics, HPG_RANGE_RING_COLOR, HPG_RANGE_RING_STROKE);
-            case FACTION_CAPITAL -> drawCapitalMarker(graphics, new Point2D.Double(32, 19), 10,
-                  new Color(232, 112, 84));
+            case FACTION_CAPITAL -> drawNationalCapitalMarker(graphics, new Point2D.Double(32, 19), 10,
+                new Color(232, 112, 84));
             case GREAT_HIRING_HALL -> drawGreatHiringHallMarker(graphics, new Point2D.Double(32, 19), 10);
             case OPERATION -> paintLegendOperation(graphics);
             case RESTRICTED_SYSTEM -> paintLegendRestrictedSystem(graphics);
@@ -2057,9 +2067,12 @@ public class InterstellarMapPanel extends JPanel {
     }
 
     private static void paintLegendOperation(Graphics2D graphics) {
-        SystemMarkerLayout layout = SystemMarkerLayout.create(43, 29, 5,
+          SystemMarkerLayout missionLayout = SystemMarkerLayout.create(42, 46, 4,
               RouteMarkerState.NONE, false, false);
-        drawOperationMarker(graphics, layout, new StrategicMarker(3, 1));
+          SystemMarkerLayout urgentLayout = SystemMarkerLayout.create(75, 46, 4,
+              RouteMarkerState.NONE, false, false);
+          drawOperationMarker(graphics, missionLayout, new StrategicMarker(1, 0));
+          drawOperationMarker(graphics, urgentLayout, new StrategicMarker(3, 1));
     }
 
     private static void paintLegendRestrictedSystem(Graphics2D graphics) {
@@ -3737,8 +3750,14 @@ public class InterstellarMapPanel extends JPanel {
     }
 
     private Map<String, StrategicMarker> buildStrategicMarkers() {
+        return buildStrategicMarkers(campaign.getActiveMissions(false), campaign.getActiveScenarios(),
+              campaign::getMission);
+    }
+
+    static Map<String, StrategicMarker> buildStrategicMarkers(List<Mission> activeMissions,
+          List<Scenario> activeScenarios, java.util.function.IntFunction<Mission> missionLookup) {
         Map<String, StrategicMarker> strategicMarkers = new HashMap<>();
-        for (Mission mission : campaign.getActiveMissions(false)) {
+        for (Mission mission : activeMissions) {
             PlanetarySystem system = mission.getSystem();
             if ((system == null) || (system.getId() == null)) {
                 continue;
@@ -3748,8 +3767,8 @@ public class InterstellarMapPanel extends JPanel {
                   : new StrategicMarker(marker.activeMissionCount() + 1, marker.activeScenarioCount()));
         }
 
-        for (Scenario scenario : campaign.getActiveScenarios()) {
-            Mission mission = campaign.getMission(scenario.getMissionId());
+        for (Scenario scenario : activeScenarios) {
+            Mission mission = missionLookup.apply(scenario.getMissionId());
             if (mission == null) {
                 continue;
             }
@@ -3764,19 +3783,32 @@ public class InterstellarMapPanel extends JPanel {
         return Map.copyOf(strategicMarkers);
     }
 
-        private static void drawOperationMarker(Graphics2D graphics, SystemMarkerLayout layout,
-                    StrategicMarker marker) {
+    static double visibleOperationAlpha(double layerAlpha, SemanticZoomProfile semanticZoom,
+          StrategicMarker marker) {
+        if (marker == null) {
+            return 0.0;
+        }
+        double semanticAlpha = marker.hasActiveScenario()
+              ? semanticZoom.urgentOperationAlpha()
+              : semanticZoom.missionOperationAlpha();
+        return layerAlpha * semanticAlpha;
+    }
+
+    static void drawOperationMarker(Graphics2D graphics, SystemMarkerLayout layout,
+          StrategicMarker marker) {
         Stroke oldStroke = graphics.getStroke();
         Paint oldPaint = graphics.getPaint();
         Font oldFont = graphics.getFont();
         try {
-                        double size = layout.size();
-            double flagHeight = Math.max(6.0, size * 0.9);
-            double flagWidth = Math.max(8.0, size * 1.15);
-                        Point2D.Double anchor = layout.operationAnchor();
-                        double mastX = anchor.x - (flagWidth / 2.0);
-                        double mastTopY = anchor.y - (flagHeight / 2.0);
-                        double mastBottomY = anchor.y + (flagHeight / 2.0);
+            boolean urgent = marker.hasActiveScenario();
+            double hierarchyScale = urgent ? 1.2 : 1.0;
+            double size = layout.size();
+            double flagHeight = Math.max(6.0, size * 0.9) * hierarchyScale;
+            double flagWidth = Math.max(8.0, size * 1.15) * hierarchyScale;
+            Point2D.Double anchor = layout.operationAnchor();
+            double mastX = anchor.x - (flagWidth / 2.0);
+            double mastTopY = anchor.y - (flagHeight / 2.0);
+            double mastBottomY = anchor.y + (flagHeight / 2.0);
 
             GeneralPath pennant = new GeneralPath();
             pennant.moveTo(mastX, mastTopY);
@@ -3785,35 +3817,45 @@ public class InterstellarMapPanel extends JPanel {
             pennant.closePath();
             Line2D.Double mast = new Line2D.Double(mastX, mastTopY, mastX, mastBottomY + 1.5);
 
-            if (marker.activeScenarioCount() > 0) {
-                graphics.setPaint(OPERATION_SCENARIO_COLOR);
+            if (urgent) {
+                graphics.setPaint(URGENT_OPERATION_COLOR);
                 graphics.fill(pennant);
             }
-            graphics.setPaint(withAlpha(Color.BLACK, 220));
-            graphics.setStroke(new BasicStroke(4.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            graphics.setPaint(withAlpha(Color.BLACK, urgent ? 235 : 190));
+            graphics.setStroke(new BasicStroke(urgent ? 4.6f : 3.8f,
+                BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             graphics.draw(mast);
             graphics.draw(pennant);
-            graphics.setPaint(OPERATION_MARKER_COLOR);
-            graphics.setStroke(new BasicStroke(2.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            graphics.setPaint(urgent ? URGENT_OPERATION_COLOR : withAlpha(OPERATION_MARKER_COLOR, 210));
+            graphics.setStroke(new BasicStroke(urgent ? 2.5f : 1.8f,
+                BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             graphics.draw(mast);
             graphics.draw(pennant);
-
-            if (marker.activeScenarioCount() > 0) {
-                graphics.setPaint(Color.WHITE);
-                graphics.setStroke(new BasicStroke(1.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                graphics.draw(new Line2D.Double(mastX + (flagWidth * 0.2), mastTopY + (flagHeight * 0.5),
-                      mastX + (flagWidth * 0.68), mastTopY + (flagHeight * 0.5)));
-            }
 
             if (marker.activeMissionCount() > 1) {
                 String countText = Integer.toString(marker.activeMissionCount());
                 Font countFont = oldFont.deriveFont(Font.BOLD,
                       Math.max(9.0f, Math.min(11.0f, oldFont.getSize2D())));
                 graphics.setFont(countFont);
-                float countX = (float) (mastX - graphics.getFontMetrics().stringWidth(countText) - 2.0);
-                float countY = (float) (mastTopY + flagHeight);
-                drawOutlinedTextWithAlpha(graphics, countText, countX, countY,
-                      OPERATION_SCENARIO_COLOR, 1.0);
+                double badgeHeight = Math.max(10.0, graphics.getFontMetrics().getAscent() + 2.0);
+                double badgeWidth = Math.max(badgeHeight,
+                    graphics.getFontMetrics().stringWidth(countText) + 6.0);
+                double badgeX = mastX - badgeWidth - 2.0;
+                double badgeY = anchor.y - (badgeHeight / 2.0);
+                java.awt.geom.RoundRectangle2D.Double badge = new java.awt.geom.RoundRectangle2D.Double(
+                    badgeX, badgeY, badgeWidth, badgeHeight, badgeHeight, badgeHeight);
+                graphics.setPaint(withAlpha(Color.BLACK, 225));
+                graphics.setStroke(new BasicStroke(3.0f));
+                graphics.draw(badge);
+                graphics.setPaint(urgent ? URGENT_OPERATION_COLOR : OPERATION_MARKER_COLOR);
+                graphics.fill(badge);
+                graphics.setPaint(Color.BLACK);
+                float countX = (float) (badgeX
+                    + ((badgeWidth - graphics.getFontMetrics().stringWidth(countText)) / 2.0));
+                float countY = (float) (badgeY
+                    + ((badgeHeight - graphics.getFontMetrics().getHeight()) / 2.0)
+                    + graphics.getFontMetrics().getAscent());
+                graphics.drawString(countText, countX, countY);
             }
         } finally {
             graphics.setFont(oldFont);
@@ -3822,7 +3864,10 @@ public class InterstellarMapPanel extends JPanel {
         }
     }
 
-    private record StrategicMarker(int activeMissionCount, int activeScenarioCount) {
+    record StrategicMarker(int activeMissionCount, int activeScenarioCount) {
+        boolean hasActiveScenario() {
+            return activeScenarioCount > 0;
+        }
     }
 
     private void drawFactionOverlay(Graphics2D graphics, Arc2D.Double arc, PlanetarySystem system,
@@ -3867,8 +3912,8 @@ public class InterstellarMapPanel extends JPanel {
 
                 if ((capitalAlpha > 0.0) && system.getId().equals(capitals.get(faction))) {
                     graphics.setComposite(capitalComposite);
-                    drawCapitalMarker(graphics, layout.capitalAnchor(capitalIndex, capitalCount),
-                          layout.size(), faction.getColor());
+                    drawFactionCapitalMarker(graphics, layout.capitalAnchor(capitalIndex, capitalCount),
+                          layout.size(), faction);
                     capitalIndex++;
                 }
                 index++;
@@ -3910,26 +3955,53 @@ public class InterstellarMapPanel extends JPanel {
         graphics.draw(arc);
     }
 
-        private static void drawCapitalMarker(Graphics2D graphics, Point2D.Double anchor, double size,
-            Color factionColor) {
-        double crownHalfWidth = Math.max(2.2, size * 0.45);
-          double crownHalfHeight = Math.max(4.5, size * 0.55);
-          double crownBaseY = anchor.y + (crownHalfHeight * 0.15);
+    static void drawFactionCapitalMarker(Graphics2D graphics, Point2D.Double anchor, double size,
+          Faction faction) {
+        drawNationalCapitalMarker(graphics, anchor, size, faction.getColor());
+    }
+
+    static Rectangle2D.Double nationalCapitalMarkerBounds(Point2D.Double anchor, double markerSize) {
+        double strokePadding = nationalCapitalOutlineWidth(markerSize) / 2.0;
+        double halfWidth = nationalCapitalHalfWidth(markerSize) + strokePadding;
+        double halfHeight = nationalCapitalHalfHeight(markerSize) + strokePadding;
+        return new Rectangle2D.Double(anchor.x - halfWidth, anchor.y - halfHeight,
+              halfWidth * 2.0, halfHeight * 2.0);
+    }
+
+    private static double nationalCapitalHalfWidth(double markerSize) {
+        return Math.max(3.6, markerSize * 0.5);
+    }
+
+    private static double nationalCapitalHalfHeight(double markerSize) {
+        return Math.max(5.5, markerSize * 0.62);
+    }
+
+    private static float nationalCapitalOutlineWidth(double markerSize) {
+        return (float) Math.clamp(markerSize * 0.42, 4.0, 5.0);
+    }
+
+    static void drawNationalCapitalMarker(Graphics2D graphics, Point2D.Double anchor, double size,
+          Color factionColor) {
+        double crownHalfWidth = nationalCapitalHalfWidth(size);
+        double crownHalfHeight = nationalCapitalHalfHeight(size);
+        double crownBaseY = anchor.y + (crownHalfHeight * 0.15);
 
         GeneralPath crown = new GeneralPath();
-          crown.moveTo(anchor.x, anchor.y + crownHalfHeight);
-          crown.lineTo(anchor.x, crownBaseY);
-          crown.moveTo(anchor.x - crownHalfWidth, crownBaseY);
-          crown.lineTo(anchor.x - crownHalfWidth, anchor.y - (crownHalfHeight * 0.45));
+        crown.moveTo(anchor.x, anchor.y + crownHalfHeight);
+        crown.lineTo(anchor.x, crownBaseY);
+        crown.moveTo(anchor.x - crownHalfWidth, crownBaseY);
+        crown.lineTo(anchor.x - crownHalfWidth, anchor.y - (crownHalfHeight * 0.45));
         crown.lineTo(anchor.x, anchor.y - crownHalfHeight);
         crown.lineTo(anchor.x + crownHalfWidth, anchor.y - (crownHalfHeight * 0.45));
-          crown.lineTo(anchor.x + crownHalfWidth, crownBaseY);
+        crown.lineTo(anchor.x + crownHalfWidth, crownBaseY);
 
-        graphics.setPaint(withAlpha(Color.BLACK, 210));
-        graphics.setStroke(new BasicStroke(4.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        graphics.setPaint(withAlpha(Color.BLACK, 205));
+        graphics.setStroke(new BasicStroke(nationalCapitalOutlineWidth(size), BasicStroke.CAP_ROUND,
+              BasicStroke.JOIN_ROUND));
         graphics.draw(crown);
         graphics.setPaint(factionColor);
-        graphics.setStroke(new BasicStroke(2.3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        graphics.setStroke(new BasicStroke((float) Math.clamp(size * 0.24, 2.3, 3.0),
+              BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
         graphics.draw(crown);
     }
 
@@ -4915,6 +4987,16 @@ public class InterstellarMapPanel extends JPanel {
         transform.scale(conf.scale, -conf.scale);
         transform.translate(conf.centerX, -conf.centerY);
         return transform;
+    }
+
+    MapCenter getMapCenter() {
+        return new MapCenter(-conf.centerX, conf.centerY);
+    }
+
+    void restoreMapCenter(MapCenter center) {
+        conf.centerX = -center.x();
+        conf.centerY = center.y();
+        repaint();
     }
 
     public void setSelectedSystem(PlanetarySystem p) {

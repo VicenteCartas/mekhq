@@ -33,9 +33,11 @@
 package mekhq.gui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.geom.Point2D;
+import java.awt.geom.Rectangle2D;
 
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -75,6 +77,35 @@ class InterstellarMapPanelMarkerLayoutTest {
         assertTrue(active.navigationRadius() > planned.navigationRadius());
           assertTrue(active.navigationRadius() - active.hoveredRadius() >= 2.5,
               "active route ring must clear hover brackets");
+    }
+
+    @ParameterizedTest
+    @ValueSource(doubles = { 3.0, 7.5, 12.0 })
+    void sharedCapitalBandStaysAtTwelveOClockAndClearOfJumpShip(double markerSize) {
+        InterstellarMapPanel.SystemMarkerLayout layout = createLayout(markerSize,
+              InterstellarMapPanel.RouteMarkerState.ACTIVE, true, true);
+        Point2D.Double ship = layout.shipAnchor();
+        Rectangle2D.Double shipBounds = new Rectangle2D.Double(ship.x - 17.0, ship.y - 17.0, 34.0, 34.0);
+
+        for (int markerCount : new int[] { 2, 3 }) {
+            Rectangle2D.Double previousBounds = null;
+            double capitalY = layout.capitalAnchor(0, markerCount).y;
+            for (int markerIndex = 0; markerIndex < markerCount; markerIndex++) {
+                Point2D.Double capital = layout.capitalAnchor(markerIndex, markerCount);
+                Rectangle2D.Double capitalBounds = InterstellarMapPanel.nationalCapitalMarkerBounds(
+                      capital, markerSize);
+
+                assertEquals(capitalY, capital.y, DELTA);
+                assertTrue(capital.y < CENTER_Y);
+                assertFalse(capitalBounds.intersects(shipBounds),
+                      "top-center national capitals must not enter the top-right JumpShip slot");
+                if (previousBounds != null) {
+                    assertFalse(previousBounds.intersects(capitalBounds),
+                          "shared national-capital symbols must not overlap");
+                }
+                previousBounds = capitalBounds;
+            }
+        }
     }
 
     private static InterstellarMapPanel.SystemMarkerLayout createLayout(double markerSize,
