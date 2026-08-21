@@ -36,8 +36,8 @@ import static java.lang.Math.ceil;
 import static megamek.client.ui.WrapLayout.wordWrap;
 import static mekhq.MHQConstants.CONFIRMATION_BEGIN_TRANSIT;
 import static mekhq.campaign.enums.DailyReportType.GENERAL;
-import static mekhq.campaign.market.contractMarket.ContractAutomation.outOfContractMothballAutomation;
 import static mekhq.campaign.market.personnelMarket.enums.PersonnelMarketStyle.MEKHQ;
+import static mekhq.campaign.mission.contract.utilities.ContractAutomation.outOfContractMothballAutomation;
 import static mekhq.campaign.personnel.skills.SkillType.EXP_REGULAR;
 import static mekhq.campaign.randomEvents.prisoners.RecoverMIAPersonnel.abandonMissingPersonnel;
 
@@ -62,7 +62,6 @@ import java.util.Objects;
 import java.util.ResourceBundle;
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
-import javax.swing.JButton;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -83,19 +82,22 @@ import megamek.common.event.Subscribe;
 import megamek.common.ui.FastJScrollPane;
 import mekhq.MekHQ;
 import mekhq.campaign.AbstractLocation;
-import mekhq.campaign.Campaign;
 import mekhq.campaign.JumpPath;
+import mekhq.campaign.RouteAlternativesPlanner.Course;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.events.NewDayEvent;
 import mekhq.campaign.events.OptionsChangedEvent;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.market.personnelMarket.markets.NewPersonnelMarket;
-import mekhq.campaign.mission.TransportCostCalculations;
+import mekhq.campaign.mission.utilities.TransportCostCalculations;
 import mekhq.campaign.unit.Unit;
 import mekhq.campaign.universe.Planet;
 import mekhq.campaign.universe.PlanetarySystem;
 import mekhq.campaign.utilities.JumpBlockers;
+import mekhq.gui.baseComponents.FramedCommandButton;
+import mekhq.gui.baseComponents.FramedCommandButtonStyle.ButtonColors;
+import mekhq.gui.baseComponents.FramedCommandButtonStyle.ButtonStateColors;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogConfirmation;
-import mekhq.gui.baseComponents.roundedComponents.RoundedJButton;
 import mekhq.gui.dialog.JumpCostsSummary;
 import mekhq.gui.enums.MHQTabType;
 import mekhq.gui.panels.TutorialHyperlinkPanel;
@@ -117,7 +119,16 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
     private static final Color PLANNED_ROUTE_COLOR = new Color(65, 210, 224);
     private static final Color ACTIVE_ROUTE_COLOR = new Color(235, 166, 66);
     private static final Color HUD_CONTROL_BACKGROUND = new Color(15, 30, 43);
+        private static final Color HUD_CONTROL_HOVER_BACKGROUND = new Color(18, 45, 56);
+        private static final Color HUD_CONTROL_PRESSED_BACKGROUND = new Color(33, 73, 82);
+        private static final ButtonColors NAVIGATION_BUTTON_COLORS = new ButtonColors(
+            new ButtonStateColors(HUD_CONTROL_BACKGROUND, ROUTE_TEXT_COLOR, ROUTE_STRIP_BORDER),
+            new ButtonStateColors(HUD_CONTROL_HOVER_BACKGROUND, PLANNED_ROUTE_COLOR, PLANNED_ROUTE_COLOR),
+            new ButtonStateColors(HUD_CONTROL_PRESSED_BACKGROUND, ROUTE_TEXT_COLOR, PLANNED_ROUTE_COLOR),
+            new ButtonStateColors(HUD_CONTROL_BACKGROUND.darker(), ROUTE_MUTED_COLOR, ROUTE_STRIP_BORDER.darker()));
     private static final int HUD_MINIMUM_HEIGHT = UIUtil.scaleForGUI(38);
+        private static final int HUD_BUTTON_VERTICAL_MARGIN = UIUtil.scaleForGUI(4);
+        private static final int HUD_BUTTON_HORIZONTAL_MARGIN = UIUtil.scaleForGUI(10);
     private static final int INSPECTOR_PREFERRED_WIDTH = UIUtil.scaleForGUI(400);
     private static final String TOGGLE_FOCUS_ACTION = "toggleMapFocus";
     private static final int ROUTE_TRANSITION_FRAME_DELAY_MS = 16;
@@ -136,12 +147,12 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
     private JScrollPane scrollPlanetView;
     private JSplitPane splitMap;
     private ResourceBundle resourceMap;
-    private JButton btnToggleInspector;
-    private JButton btnToggleFocus;
-    private JButton btnToggleRouteTray;
-    private JButton btnJumpFees;
-    private RoundedJButton btnCalculateJumpPath;
-    private RoundedJButton btnBeginTransit;
+    private FramedCommandButton btnToggleInspector;
+    private FramedCommandButton btnToggleFocus;
+    private FramedCommandButton btnToggleRouteTray;
+    private FramedCommandButton btnJumpFees;
+    private FramedCommandButton btnCalculateJumpPath;
+    private FramedCommandButton btnBeginTransit;
     private JLabel lblRouteStatus;
     private JLabel lblRouteDestination;
     private JLabel lblRouteJumps;
@@ -331,7 +342,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         constraints.insets = new Insets(0, 0, 0, PADDING);
         navigationHud.add(suggestPlanet, constraints);
 
-        JButton centerOnFleet = createHudButton("mapHud.centerOnFleet.text",
+          FramedCommandButton centerOnFleet = createHudButton("mapHud.centerOnFleet.text",
               "mapHud.centerOnFleet.toolTipText");
         centerOnFleet.addActionListener(event -> panMap.centerOnCurrentSystem());
         constraints = new GridBagConstraints();
@@ -341,7 +352,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         constraints.insets = new Insets(0, 0, 0, PADDING);
         navigationHud.add(centerOnFleet, constraints);
 
-        JButton routingOptions = createHudButton("mapHud.routingOptions.text",
+          FramedCommandButton routingOptions = createHudButton("mapHud.routingOptions.text",
               "mapHud.routingOptions.toolTipText");
         JPopupMenu routingMenu = createRoutingMenu();
         routingOptions.addActionListener(event -> routingMenu.show(routingOptions, 0, routingOptions.getHeight()));
@@ -354,6 +365,8 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
 
         btnToggleInspector = createHudButton("mapHud.inspector.hide.text",
               "mapHud.inspector.hide.toolTipText");
+          stabilizeHudButtonSize(btnToggleInspector, "mapHud.inspector.hide.text", "mapHud.inspector.show.text",
+              "mapHud.inspector.focused.text");
         btnToggleInspector.addActionListener(event -> {
             layoutState.toggleInspector();
             applyLayoutState();
@@ -366,6 +379,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         navigationHud.add(btnToggleInspector, constraints);
 
         btnToggleFocus = createHudButton("mapHud.focus.enter.text", "mapHud.focus.enter.toolTipText");
+        stabilizeHudButtonSize(btnToggleFocus, "mapHud.focus.enter.text", "mapHud.focus.exit.text");
         btnToggleFocus.addActionListener(event -> toggleFocusMode());
         constraints = new GridBagConstraints();
         constraints.gridx = 5;
@@ -501,21 +515,35 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         return routingMenu;
     }
 
-    private JButton createHudButton(String textKey, String toolTipKey) {
-        JButton button = new JButton(resourceMap.getString(textKey));
-        button.setToolTipText(resourceMap.getString(toolTipKey));
+    private FramedCommandButton createHudButton(String textKey, String toolTipKey) {
+        return createNavigationButton(resourceMap.getString(textKey), resourceMap.getString(toolTipKey));
+    }
+
+    static FramedCommandButton createNavigationButton(String text, String toolTipText) {
+        FramedCommandButton button = new FramedCommandButton(text, NAVIGATION_BUTTON_COLORS);
+        button.setToolTipText(toolTipText);
         button.getAccessibleContext().setAccessibleName(button.getText());
         button.getAccessibleContext().setAccessibleDescription(button.getToolTipText());
-        button.setForeground(ROUTE_TEXT_COLOR);
-        button.setBackground(HUD_CONTROL_BACKGROUND);
-        button.setFocusPainted(false);
-          button.setBorder(BorderFactory.createCompoundBorder(
-              BorderFactory.createLineBorder(ROUTE_STRIP_BORDER),
-              BorderFactory.createEmptyBorder(2, 8, 2, 8)));
+        button.setMargin(new Insets(HUD_BUTTON_VERTICAL_MARGIN, HUD_BUTTON_HORIZONTAL_MARGIN,
+              HUD_BUTTON_VERTICAL_MARGIN, HUD_BUTTON_HORIZONTAL_MARGIN));
         return button;
     }
 
-    private void updateHudButton(JButton button, String textKey, String toolTipKey) {
+    private void stabilizeHudButtonSize(FramedCommandButton button, String... textKeys) {
+        String currentText = button.getText();
+        Dimension stableSize = new Dimension(button.getPreferredSize());
+        for (String textKey : textKeys) {
+            button.setText(resourceMap.getString(textKey));
+            Dimension candidateSize = button.getPreferredSize();
+            stableSize.width = Math.max(stableSize.width, candidateSize.width);
+            stableSize.height = Math.max(stableSize.height, candidateSize.height);
+        }
+        button.setText(currentText);
+        button.setPreferredSize(new Dimension(stableSize));
+        button.setMinimumSize(new Dimension(stableSize));
+    }
+
+    private void updateHudButton(FramedCommandButton button, String textKey, String toolTipKey) {
         button.setText(resourceMap.getString(textKey));
         button.setToolTipText(resourceMap.getString(toolTipKey));
         button.getAccessibleContext().setAccessibleName(button.getText());
@@ -593,10 +621,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         constraints.insets = new Insets(0, 0, 0, PADDING);
         routeStrip.add(btnJumpFees, constraints);
 
-        btnBeginTransit = new RoundedJButton(resourceMap.getString("btnBeginTransit.text"));
-        btnBeginTransit.setToolTipText(resourceMap.getString("btnBeginTransit.toolTipText"));
-        btnBeginTransit.getAccessibleContext().setAccessibleName(btnBeginTransit.getText());
-        btnBeginTransit.getAccessibleContext().setAccessibleDescription(btnBeginTransit.getToolTipText());
+        btnBeginTransit = createHudButton("btnBeginTransit.text", "btnBeginTransit.toolTipText");
         btnBeginTransit.addActionListener(ev -> beginTransit());
         constraints = new GridBagConstraints();
         constraints.gridx = 3;
@@ -608,6 +633,8 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
 
         btnToggleRouteTray = createHudButton("routeStrip.compact.text",
               "routeStrip.compact.toolTipText");
+          stabilizeHudButtonSize(btnToggleRouteTray, "routeStrip.compact.text", "routeStrip.expand.text",
+              "routeStrip.restoreLayout.text");
         btnToggleRouteTray.addActionListener(event -> {
             if (layoutState.isFocusMode()) {
                 layoutState.toggleFocusMode();
@@ -678,10 +705,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         constraints.fill = GridBagConstraints.HORIZONTAL;
         planningPanel.add(suggestRouteDestination, constraints);
 
-        btnCalculateJumpPath = new RoundedJButton(resourceMap.getString("btnCalculateJumpPath.text"));
-        btnCalculateJumpPath.setToolTipText(resourceMap.getString("btnCalculateJumpPath.toolTipText"));
-        btnCalculateJumpPath.getAccessibleContext().setAccessibleName(btnCalculateJumpPath.getText());
-        btnCalculateJumpPath.getAccessibleContext().setAccessibleDescription(btnCalculateJumpPath.getToolTipText());
+        btnCalculateJumpPath = createHudButton("btnCalculateJumpPath.text", "btnCalculateJumpPath.toolTipText");
         btnCalculateJumpPath.addActionListener(event -> calculateJumpPath());
         constraints = new GridBagConstraints();
         constraints.gridx = 4;
@@ -788,6 +812,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
             return;
         }
 
+        panMap.refreshNavigationAnalysis();
         transitionToRouteSnapshot(createRouteStripSnapshot());
     }
 
@@ -801,7 +826,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         boolean hasActivePath = (activePath != null) && !activePath.isEmpty();
         JumpPath displayedPath = hasProposedPath ? proposedPath : (hasActivePath ? activePath : null);
         String unavailable = resourceMap.getString("routeStrip.unavailable.text");
-        boolean isCostVisible = getCampaign().getCampaignOptions().isPayForTransport();
+        boolean isCostVisible = getCampaign().getCampaignOptions().get(CampaignOption.PAY_FOR_TRANSPORT);
           boolean isPlotCourseVisible = true;
           boolean isPlotCourseEnabled = (resolveRouteField(suggestRouteOrigin) != null)
               && (resolveRouteField(suggestRouteDestination) != null);
@@ -1143,6 +1168,13 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         refreshPlanetView();
     }
 
+    private void adoptRouteAlternative(Course course) {
+        JumpPath alternative = course.toJumpPath();
+        if (routePlanningIntent.adopt(alternative)) {
+            applyRoutePlanningChange(true, alternative.getLastSystem());
+        }
+    }
+
     private void beginTransit() {
         JumpPath jumpPath = routePlanningIntent.getJumpPath();
         AbstractLocation currentLocation = getCampaign().getPlayerForce()
@@ -1206,7 +1238,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         updateRouteStrip();
         JumpPath path = panMap.getJumpPath();
         if (null != path && !path.isEmpty()) {
-            scrollPlanetView.setViewportView(new JumpPathViewPanel(path, getCampaign()));
+            scrollPlanetView.setViewportView(createJumpPathViewPanel(path));
             SwingUtilities.invokeLater(() -> scrollPlanetView.getVerticalScrollBar().setValue(0));
             return;
         }
@@ -1220,7 +1252,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         updateRouteStrip();
         JumpPath path = panMap.getJumpPath();
         if (null != path && !path.isEmpty()) {
-            scrollPlanetView.setViewportView(new JumpPathViewPanel(path, getCampaign()));
+            scrollPlanetView.setViewportView(createJumpPathViewPanel(path));
             SwingUtilities.invokeLater(() -> scrollPlanetView.getVerticalScrollBar().setValue(0));
             return;
         }
@@ -1229,6 +1261,15 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         if (null != system) {
             showDossier(system, pos);
         }
+    }
+
+    private JumpPathViewPanel createJumpPathViewPanel(JumpPath path) {
+        List<Course> courses = List.of();
+        if (!routePlanningIntent.getJumpPath().isEmpty() && !routePlanningIntent.getRequestedStops().isEmpty()) {
+            courses = getCampaign().calculateRouteAlternatives(routePlanningIntent.getOrigin(),
+                  routePlanningIntent.getRequestedStops());
+        }
+        return new JumpPathViewPanel(path, getCampaign(), courses, this::adoptRouteAlternative);
     }
 
     private void showDossier(PlanetarySystem system, int planetPosition) {

@@ -60,10 +60,11 @@ import org.junit.jupiter.api.Test;
 
 class InterstellarMapPanelLegendTest {
     private static final List<String> GROUPS = List.of("NAVIGATION", "RANGE RINGS", "SYSTEM STATUS", "MAP DATA");
-    private static final List<Integer> GROUP_ENTRY_COUNTS = List.of(6, 4, 7, 7);
+    private static final List<Integer> GROUP_ENTRY_COUNTS = List.of(10, 4, 7, 7);
     private static final List<String> TITLES = List.of(
           "Selected system", "Hovered system", "Current fleet", "Planned route", "Active route",
-                    "Waypoint number", "Contract-search radius", "Planetary-acquisition radius", "Jump radius",
+                    "Waypoint number", "Reachability shells", "Route caution", "Blocked route leg",
+                    "Distance measurement", "Contract-search radius", "Planetary-acquisition radius", "Jump radius",
                 "50 ly HPG range", "System contact", "Faction ownership", "National capital", "Great Hiring Hall",
         "Operation flag", "Restricted system", "GM-edited system", "Analytical / service value",
         "Faction emblem", "HPG network & traffic", "Sovereign border", "Disputed territory",
@@ -75,6 +76,10 @@ class InterstellarMapPanelLegendTest {
         "A cyan dashed path and thin rings show the proposed jump route.",
         "Amber paths and rings show the current trip; pale pulses show travel flow.",
         "Numbered badges give each route stop's order.",
+        "Cyan circles mark one-hop systems; restrained square and hexagonal rings mark deeper minimum-hop shells.",
+        "An amber triangle marks an allowed leg with a grounded caution, such as an abandoned destination.",
+        "A red dashed segment and diamond mark a leg blocked by range, access, avoidance, or recharge constraints.",
+        "A pale dash-dot line with distinct A and B endpoints shows a transient direct measurement.",
         "A configurable-color thick dashed ring centered on the selected system bounds contract searches; campaign and MekHQ options control visibility.",
         "A configurable-color thick dashed ring centered on the selected system bounds planetary acquisition; campaign, MekHQ, and zoom options control visibility.",
         "A configurable-color thick dashed ring centered on the selected system shows one-jump reach; MekHQ and zoom options control visibility.",

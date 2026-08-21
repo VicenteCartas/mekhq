@@ -33,6 +33,7 @@
 package mekhq.gui;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertIterableEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -41,8 +42,10 @@ import java.util.List;
 import java.util.Map;
 
 import mekhq.campaign.JumpPath;
+import mekhq.campaign.universe.Planet;
 import mekhq.campaign.universe.PlanetarySystem;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 class RoutePlanningIntentTest {
     @Test
@@ -142,6 +145,57 @@ class RoutePlanningIntentTest {
     }
 
     @Test
+    void adoptingAlternativePreservesRequestedStopsAndTargetPlanet() {
+        PlanetarySystem origin = system("Origin");
+        PlanetarySystem requestedStop = system("Requested Stop");
+        PlanetarySystem destination = system("Destination");
+        PlanetarySystem alternativeIntermediate = system("Alternative Intermediate");
+        Planet targetPlanet = Mockito.mock(Planet.class);
+        RoutePlanningIntent intent = new RoutePlanningIntent(origin);
+        RoutePlanningIntent.SegmentPlanner initialPlanner = (segmentOrigin, segmentDestination) -> {
+            JumpPath segment = pathOf(segmentOrigin, segmentDestination);
+            if (segmentDestination == destination) {
+                segment.setTargetPlanet(targetPlanet);
+            }
+            return segment;
+        };
+
+        assertTrue(intent.plot(origin, requestedStop, initialPlanner));
+        assertTrue(intent.append(destination, initialPlanner));
+        assertTrue(intent.adopt(pathOf(origin, alternativeIntermediate, requestedStop, destination)));
+
+        assertSame(origin, intent.getOrigin());
+        assertIterableEquals(List.of(requestedStop, destination), intent.getRequestedStops());
+        assertIterableEquals(List.of(origin, alternativeIntermediate, requestedStop, destination),
+              intent.getJumpPath().getSystems());
+        assertEquals(targetPlanet, intent.getJumpPath().getTargetPlanet());
+    }
+
+    @Test
+    void invalidAlternativeAdoptionIsTransactional() {
+        PlanetarySystem origin = system("Origin");
+        PlanetarySystem firstStop = system("First Stop");
+        PlanetarySystem secondStop = system("Second Stop");
+        PlanetarySystem destination = system("Destination");
+        RoutePlanningIntent intent = new RoutePlanningIntent(origin);
+        RoutePlanningIntent.SegmentPlanner initialPlanner = (segmentOrigin, segmentDestination) ->
+              pathOf(segmentOrigin, segmentDestination);
+
+        assertTrue(intent.plot(origin, firstStop, initialPlanner));
+        assertTrue(intent.append(secondStop, initialPlanner));
+        assertTrue(intent.append(destination, initialPlanner));
+        List<PlanetarySystem> originalSystems = intent.getJumpPath().getSystems();
+
+        assertFalse(intent.adopt(pathOf(origin, secondStop, firstStop, destination)));
+        assertFalse(intent.adopt(pathOf(system("Wrong Origin"), firstStop, secondStop, destination)));
+        assertFalse(intent.adopt(pathOf(origin, firstStop, secondStop, system("Wrong Destination"))));
+
+        assertSame(origin, intent.getOrigin());
+        assertIterableEquals(List.of(firstStop, secondStop, destination), intent.getRequestedStops());
+        assertIterableEquals(originalSystems, intent.getJumpPath().getSystems());
+    }
+
+    @Test
     void mapTabIntentInitializationIsIdempotent() {
         PlanetarySystem origin = system("Origin");
         RoutePlanningIntent initializedIntent = MapTab.initializeRoutePlanningIntent(null, origin);
@@ -165,6 +219,12 @@ class RoutePlanningIntentTest {
             }
             return path;
         };
+    }
+
+    private static JumpPath pathOf(PlanetarySystem... systems) {
+        JumpPath path = new JumpPath();
+        path.addSystems(List.of(systems));
+        return path;
     }
 
     private record Leg(PlanetarySystem origin, PlanetarySystem destination) {

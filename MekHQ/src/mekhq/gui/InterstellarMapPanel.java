@@ -63,6 +63,8 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
+import java.text.MessageFormat;
+import java.text.NumberFormat;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -77,6 +79,7 @@ import java.util.ResourceBundle;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import javax.imageio.ImageIO;
 import javax.swing.*;
@@ -91,9 +94,13 @@ import mekhq.MHQConstants;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.JumpPath;
-import mekhq.campaign.mission.AtBContract;
-import mekhq.campaign.mission.Mission;
-import mekhq.campaign.mission.Scenario;
+import mekhq.campaign.NavigationRouteAnalysis;
+import mekhq.campaign.NavigationRouteAnalysis.LegAssessment;
+import mekhq.campaign.NavigationRouteAnalysis.PathAssessment;
+import mekhq.campaign.NavigationRouteAnalysis.Severity;
+import mekhq.campaign.campaignOptions.CampaignOption;
+import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.mission.scenarios.Scenario;
 import mekhq.campaign.personnel.InjuryType;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.Factions;
@@ -191,6 +198,10 @@ public class InterstellarMapPanel extends JPanel {
     private static final Color URGENT_OPERATION_COLOR = new Color(255, 220, 122);
     private static final Color HPG_A_TRAFFIC_COLOR = new Color(145, 240, 255);
     private static final Color HPG_B_TRAFFIC_COLOR = new Color(105, 175, 255);
+    private static final Color REACHABILITY_DEEP_COLOR = new Color(126, 169, 188);
+    private static final Color NAVIGATION_CAUTION_COLOR = new Color(242, 184, 72);
+    private static final Color NAVIGATION_BLOCKED_COLOR = new Color(234, 86, 86);
+    private static final Color MEASUREMENT_COLOR = new Color(218, 231, 235);
     private static final int LAYER_ANIMATION_DELAY_MS = 16;
     private static final long LAYER_ANIMATION_DURATION_NS = 260_000_000L;
     private static final long MAP_MODE_ANIMATION_DURATION_NS = 300_000_000L;
@@ -286,6 +297,10 @@ public class InterstellarMapPanel extends JPanel {
           PLANNED_ROUTE,
           ACTIVE_ROUTE,
           WAYPOINT_BADGE,
+          REACHABILITY,
+          ROUTE_CAUTION,
+          ROUTE_BLOCKED,
+          MEASUREMENT,
           CONTRACT_SEARCH_RADIUS,
           PLANETARY_ACQUISITION_RADIUS,
           JUMP_RADIUS,
@@ -321,7 +336,19 @@ public class InterstellarMapPanel extends JPanel {
                 new MapLegendEntry(MapLegendSymbol.ACTIVE_ROUTE, "Active route",
                     "Amber paths and rings show the current trip; pale pulses show travel flow."),
                 new MapLegendEntry(MapLegendSymbol.WAYPOINT_BADGE, "Waypoint number",
-                    "Numbered badges give each route stop's order."))),
+                    "Numbered badges give each route stop's order."),
+                new MapLegendEntry(MapLegendSymbol.REACHABILITY,
+                    getMapResource("map.legend.reachability.title"),
+                    getMapResource("map.legend.reachability.description")),
+                new MapLegendEntry(MapLegendSymbol.ROUTE_CAUTION,
+                    getMapResource("map.legend.routeCaution.title"),
+                    getMapResource("map.legend.routeCaution.description")),
+                new MapLegendEntry(MapLegendSymbol.ROUTE_BLOCKED,
+                    getMapResource("map.legend.routeBlocked.title"),
+                    getMapResource("map.legend.routeBlocked.description")),
+                new MapLegendEntry(MapLegendSymbol.MEASUREMENT,
+                    getMapResource("map.legend.measurement.title"),
+                    getMapResource("map.legend.measurement.description")))),
             new MapLegendSection("RANGE RINGS", List.of(
                 new MapLegendEntry(MapLegendSymbol.CONTRACT_SEARCH_RADIUS, "Contract-search radius",
                     "A configurable-color thick dashed ring centered on the selected system bounds contract searches; campaign and MekHQ options control visibility."),
@@ -400,6 +427,127 @@ public class InterstellarMapPanel extends JPanel {
         NONE,
         PLANNED,
         ACTIVE
+    }
+
+    enum NavigationMarkerShape {
+        CIRCLE,
+        SQUARE,
+        HEXAGON,
+        TRIANGLE,
+        DIAMOND
+    }
+
+    enum NavigationMarkerTone {
+        IMMEDIATE,
+        DEEP,
+        CAUTION,
+        BLOCKED
+    }
+
+    record ReachabilityMarkerStyle(NavigationMarkerShape shape, NavigationMarkerTone tone) {
+    }
+
+    static ReachabilityMarkerStyle reachabilityMarkerStyle(int minimumHops, Severity severity,
+          boolean blockedFrontier) {
+        if (blockedFrontier || (severity == Severity.BLOCKED)) {
+            return new ReachabilityMarkerStyle(NavigationMarkerShape.DIAMOND, NavigationMarkerTone.BLOCKED);
+        }
+        if (severity == Severity.CAUTION) {
+            return new ReachabilityMarkerStyle(NavigationMarkerShape.TRIANGLE, NavigationMarkerTone.CAUTION);
+        }
+        return switch (minimumHops) {
+            case 1 -> new ReachabilityMarkerStyle(NavigationMarkerShape.CIRCLE,
+                  NavigationMarkerTone.IMMEDIATE);
+            case 2 -> new ReachabilityMarkerStyle(NavigationMarkerShape.SQUARE, NavigationMarkerTone.DEEP);
+            default -> new ReachabilityMarkerStyle(NavigationMarkerShape.HEXAGON, NavigationMarkerTone.DEEP);
+        };
+    }
+
+    static BasicStroke reachabilityMarkerStroke(NavigationMarkerTone tone) {
+        if (tone == NavigationMarkerTone.BLOCKED) {
+            return new BasicStroke(2.2f, BasicStroke.CAP_SQUARE, BasicStroke.JOIN_MITER,
+                  10.0f, new float[] { 4, 3 }, 0);
+        }
+        return new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND);
+    }
+
+    record RouteConstraintMarker(int legIndex, PlanetarySystem destination, LegAssessment assessment,
+                                 boolean brokenSegment) {
+    }
+
+    static List<RouteConstraintMarker> routeConstraintMarkers(List<PlanetarySystem> routeSystems,
+          PathAssessment assessment) {
+        if ((routeSystems == null) || (assessment == null) || (routeSystems.size() < 2)) {
+            return List.of();
+        }
+        int legCount = Math.min(routeSystems.size() - 1, assessment.legs().size());
+        List<RouteConstraintMarker> markers = new ArrayList<>();
+        for (int legIndex = 0; legIndex < legCount; legIndex++) {
+            LegAssessment leg = assessment.legs().get(legIndex);
+            if ((leg.severity() == Severity.CAUTION) || (leg.severity() == Severity.BLOCKED)) {
+                markers.add(new RouteConstraintMarker(legIndex, routeSystems.get(legIndex + 1), leg,
+                      leg.severity() == Severity.BLOCKED));
+            }
+        }
+        return List.copyOf(markers);
+    }
+
+    record MeasurementState(boolean enabled, @Nullable PlanetarySystem start, @Nullable PlanetarySystem end) {
+        static MeasurementState inactive() {
+            return new MeasurementState(false, null, null);
+        }
+
+        static MeasurementState active() {
+            return new MeasurementState(true, null, null);
+        }
+
+        MeasurementClick click(@Nullable PlanetarySystem system) {
+            if (!enabled) {
+                return new MeasurementClick(this, false);
+            }
+            if (system == null) {
+                return new MeasurementClick(this, true);
+            }
+            if ((start == null) || (end != null)) {
+                return new MeasurementClick(new MeasurementState(true, system, null), true);
+            }
+            return new MeasurementClick(new MeasurementState(true, start, system), true);
+        }
+    }
+
+    record MeasurementClick(MeasurementState state, boolean consumed) {
+    }
+
+    static Rectangle clampMeasurementLabel(Rectangle viewport, Dimension labelSize, Point preferredCenter,
+          List<Rectangle> exclusions) {
+        int margin = Math.max(1, UIUtil.scaleForGUI(8));
+        int gap = Math.max(1, UIUtil.scaleForGUI(6));
+        int width = Math.min(labelSize.width, Math.max(1, viewport.width - (margin * 2)));
+        int height = Math.min(labelSize.height, Math.max(1, viewport.height - (margin * 2)));
+        int minimumX = viewport.x + margin;
+        int maximumX = Math.max(minimumX, viewport.x + viewport.width - margin - width);
+        int minimumY = viewport.y + margin;
+        int maximumY = Math.max(minimumY, viewport.y + viewport.height - margin - height);
+        int x = Math.clamp(preferredCenter.x - (width / 2), minimumX, maximumX);
+        int y = Math.clamp(preferredCenter.y - height - gap, minimumY, maximumY);
+        Rectangle label = new Rectangle(x, y, width, height);
+
+        for (Rectangle exclusion : exclusions) {
+            if ((exclusion == null) || !label.intersects(exclusion)) {
+                continue;
+            }
+            int above = exclusion.y - gap - height;
+            if (above >= minimumY) {
+                label.y = above;
+            } else {
+                int right = exclusion.x + exclusion.width + gap;
+                int left = exclusion.x - gap - width;
+                label.x = right <= maximumX ? right : Math.max(minimumX, left);
+            }
+        }
+        label.x = Math.clamp(label.x, minimumX, maximumX);
+        label.y = Math.clamp(label.y, minimumY, maximumY);
+        return label;
     }
 
     record TerritoryHex(int column, int row) {
@@ -786,6 +934,9 @@ public class InterstellarMapPanel extends JPanel {
     private final JCheckBox optHPGNetwork;
     private final JCheckBox optTerritory;
     private final JCheckBox optOperations;
+    private final JCheckBox optReachability;
+    private final JSpinner reachabilityHops;
+    private final JCheckBox optMeasureDistance;
 
     private final Timer layerAnimationTimer;
     private final Timer selectionAnimationTimer;
@@ -852,6 +1003,12 @@ public class InterstellarMapPanel extends JPanel {
     private String systemHopDestinationId;
     private long systemHopStartTime;
     private double systemHopProgress = 1.0;
+    private NavigationRouteAnalysis.Reachability cachedReachability;
+    private PathAssessment cachedProposedRouteAssessment = emptyPathAssessment();
+    private PathAssessment cachedActiveRouteAssessment = emptyPathAssessment();
+    private MeasurementState measurementState = MeasurementState.inactive();
+    private PlanetarySystem measurementHoverSystem;
+    private LegAssessment cachedMeasurementAssessment;
     private Point lastMousePos = null;
     private int mouseMod = 0;
     private RoutePlanningHandler routePlanningHandler = NO_ROUTE_PLANNING_HANDLER;
@@ -902,6 +1059,10 @@ public class InterstellarMapPanel extends JPanel {
             @Override
             public void keyPressed(KeyEvent e) {
                 int keyCode = e.getKeyCode();
+                if ((keyCode == KeyEvent.VK_ESCAPE) && measurementState.enabled()) {
+                    stopMeasuring();
+                    return;
+                }
                 boolean moved = false;
                 if (keyCode == KeyEvent.VK_LEFT) {
                     conf.centerY -= 1.0;
@@ -934,6 +1095,10 @@ public class InterstellarMapPanel extends JPanel {
             @Override
             public void mouseExited(MouseEvent e) {
                 lastMousePos = null;
+                if (measurementState.enabled() && (measurementState.end() == null)) {
+                    measurementHoverSystem = null;
+                    cachedMeasurementAssessment = null;
+                }
                 repaint();
             }
 
@@ -1106,6 +1271,14 @@ public class InterstellarMapPanel extends JPanel {
             @Override
             public void mouseClicked(MouseEvent e) {
                 if (e.getButton() == MouseEvent.BUTTON1) {
+                    MeasurementClick measurementClick = measurementState.click(findSystemAt(e.getPoint()));
+                    if (measurementClick.consumed()) {
+                        measurementState = measurementClick.state();
+                        measurementHoverSystem = null;
+                        refreshMeasurementAssessment();
+                        repaint();
+                        return;
+                    }
                     if (e.getClickCount() >= 2) {
                         // center and zoom
                         changeSelectedSystem(nearestNeighbour(scr2mapX(e.getX()), scr2mapY(e.getY())));
@@ -1157,7 +1330,26 @@ public class InterstellarMapPanel extends JPanel {
                     lastMousePos.x = e.getX();
                     lastMousePos.y = e.getY();
                 }
+                if (measurementState.enabled() && (measurementState.start() != null)
+                      && (measurementState.end() == null)) {
+                    PlanetarySystem hoveredSystem = findSystemAt(e.getPoint());
+                    if (!isSameSystem(measurementHoverSystem, hoveredSystem)) {
+                        measurementHoverSystem = hoveredSystem;
+                        refreshMeasurementAssessment();
+                    }
+                }
                 repaint();
+            }
+        });
+
+        getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(
+              KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "stopMeasuring");
+        getActionMap().put("stopMeasuring", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                if (measurementState.enabled()) {
+                    stopMeasuring();
+                }
             }
         });
 
@@ -1211,12 +1403,12 @@ public class InterstellarMapPanel extends JPanel {
                     final double x = map2scrX(selectedSystem.getX());
                     final double y = map2scrY(selectedSystem.getY());
                     // Contract Search Radius Aura
-                    if (!InterstellarMapPanel.this.campaign.getCampaignOptions().getContractMarketMethod().isNone()
+                    if (!InterstellarMapPanel.this.campaign.getCampaignOptions().get(CampaignOption.CONTRACT_MARKET_METHOD).isNone()
                               && MekHQ.getMHQOptions().getInterstellarMapShowContractSearchRadius()) {
                         final double z = map2scrX(selectedSystem.getX()
                                                         +
                                                         InterstellarMapPanel.this.campaign.getCampaignOptions()
-                                                              .getContractSearchRadius());
+                                                              .get(CampaignOption.CONTRACT_SEARCH_RADIUS));
                         final double contractSearchRadius = z - x;
                         g2.setPaint(MekHQ.getMHQOptions().getInterstellarMapContractSearchRadiusColour());
                         g2.setStroke(CONFIGURABLE_RANGE_RING_STROKE);
@@ -1225,7 +1417,7 @@ public class InterstellarMapPanel extends JPanel {
                     }
 
                     // Acquisition Search Radius Aura
-                    if (InterstellarMapPanel.this.campaign.getCampaignOptions().isUsePlanetaryAcquisition()
+                    if (InterstellarMapPanel.this.campaign.getCampaignOptions().get(CampaignOption.USE_PLANETARY_ACQUISITION)
                               && MekHQ.getMHQOptions().getInterstellarMapShowPlanetaryAcquisitionRadius()
                               && (conf.scale > MekHQ.getMHQOptions()
                                                      .getInterstellarMapShowPlanetaryAcquisitionRadiusMinimumZoom())) {
@@ -1233,7 +1425,7 @@ public class InterstellarMapPanel extends JPanel {
                                                         + (MHQConstants.MAX_JUMP_RADIUS
                                                                  *
                                                                  InterstellarMapPanel.this.campaign.getCampaignOptions()
-                                                                       .getMaxJumpsPlanetaryAcquisition()));
+                                                                       .get(CampaignOption.MAX_JUMPS_PLANETARY_ACQUISITION)));
                         final double acquisitionRadius = z - x;
                         g2.setPaint(MekHQ.getMHQOptions().getInterstellarMapPlanetaryAcquisitionRadiusColour());
                         g2.setStroke(CONFIGURABLE_RANGE_RING_STROKE);
@@ -1274,6 +1466,8 @@ public class InterstellarMapPanel extends JPanel {
                     paintStaticFactionLogoLayer(g2, atlas, factionLogoRenderKey,
                           visibleFactionLogoAlpha * FACTION_LOGO_OPACITY);
                 }
+
+                drawReachability(g2, size);
 
                 JumpPath activeJumpPath = getActiveJumpPath();
                 boolean showRouteActivation = isRouteActivationAnimating();
@@ -1337,10 +1531,10 @@ public class InterstellarMapPanel extends JPanel {
 
                 boolean isUseFactionStandingOutlawing =
                       campaign.getCampaignOptions().isUseFactionStandingOutlawedSafe();
-                Faction campaignFaction = campaign.getFaction();
+                Faction campaignFaction = campaign.getPlayerForce().getFaction();
                 FactionStandings factionStandings = campaign.getPlayerForce().getFactionStandings();
                 LocalDate today = campaign.getLocalDate();
-                List<AtBContract> activeAtBContracts = campaign.getActiveAtBContracts();
+                List<AbstractContract> activeAtBContracts = campaign.getActiveContracts();
 
                 FactionHints factionHints = FactionHints.getInstance();
 
@@ -1473,6 +1667,15 @@ public class InterstellarMapPanel extends JPanel {
                           revealedProposedRouteSystemCount, hoveredSystem, semanticZoom.routeBadgeAlpha());
                 }
 
+                if (!activeRouteSystems.isEmpty()) {
+                    drawRouteConstraints(g2, activeRouteSystems, cachedActiveRouteAssessment, size,
+                          activeRouteSystems.size(), RouteMarkerState.ACTIVE);
+                }
+                if (!showRouteActivation) {
+                    drawRouteConstraints(g2, getPathSystems(jumpPath), cachedProposedRouteAssessment, size,
+                          revealedProposedRouteSystemCount, RouteMarkerState.PLANNED);
+                }
+
                 // cycle through planets again and assign names - to make sure names go on
                 // outside
                 for (PlanetarySystem system : systems) {
@@ -1480,7 +1683,6 @@ public class InterstellarMapPanel extends JPanel {
                     if (isSystemVisible(system, !optEmptySystems.isSelected())
                               || (routeWaypoint && isSystemVisible(system, false))
                               || (system.equals(selectedSystem) && isSystemVisible(system, false))) {
-                        double x = map2scrX(system.getX());
                         double y = map2scrY(system.getY());
                         boolean isPriorityLabel = priorityLabelSystemIds.contains(system.getId())
                             || isSameSystem(system, hoveredSystem);
@@ -1508,6 +1710,8 @@ public class InterstellarMapPanel extends JPanel {
 
                 NavigationInstrumentLayout instrumentLayout = createNavigationInstrumentLayout(
                       getWidth(), getHeight(), conf.scale);
+                    drawReachabilityAnnotation(g2, size);
+                    drawMeasurement(g2, instrumentLayout);
                 drawNavigationInstrument(g2, instrumentLayout);
             }
         };
@@ -1604,6 +1808,66 @@ public class InterstellarMapPanel extends JPanel {
         optOperations.setSelected(true);
         optOperations.addActionListener(e -> startOperationsLayerAnimation());
         optionPanel.add(optOperations);
+          optReachability = createOptionCheckBox(resourceMap.getString("map.overlay.reachability.text"),
+              checkboxIcon, checkboxSelectedIcon);
+          String reachabilityTooltip = resourceMap.getString("map.overlay.reachability.toolTipText");
+          optReachability.setToolTipText(reachabilityTooltip);
+          optReachability.getAccessibleContext().setAccessibleName(optReachability.getText());
+          optReachability.getAccessibleContext().setAccessibleDescription(reachabilityTooltip);
+          optReachability.addActionListener(event -> {
+            refreshReachability();
+            repaint();
+          });
+          reachabilityHops = new JSpinner(new SpinnerNumberModel(1, 1,
+              NavigationRouteAnalysis.MAXIMUM_REACHABILITY_HOPS, 1));
+          reachabilityHops.setEditor(new JSpinner.NumberEditor(reachabilityHops, "0"));
+          Dimension hopSpinnerSize = new Dimension(UIUtil.scaleForGUI(44),
+              reachabilityHops.getPreferredSize().height);
+          reachabilityHops.setPreferredSize(hopSpinnerSize);
+          reachabilityHops.setMinimumSize(hopSpinnerSize);
+          reachabilityHops.setMaximumSize(hopSpinnerSize);
+          String hopLabelText = resourceMap.getString("map.overlay.reachability.hops.text");
+          String hopTooltip = resourceMap.getString("map.overlay.reachability.hops.toolTipText");
+          reachabilityHops.setToolTipText(hopTooltip);
+          reachabilityHops.getAccessibleContext().setAccessibleName(hopLabelText);
+          reachabilityHops.getAccessibleContext().setAccessibleDescription(hopTooltip);
+          reachabilityHops.addChangeListener(event -> {
+            if (optReachability.isSelected()) {
+                refreshReachability();
+                repaint();
+            }
+          });
+          JPanel reachabilityControl = new JPanel();
+          reachabilityControl.setLayout(new BoxLayout(reachabilityControl, BoxLayout.X_AXIS));
+          reachabilityControl.setOpaque(false);
+          reachabilityControl.setAlignmentX(Component.LEFT_ALIGNMENT);
+          reachabilityControl.setMaximumSize(new Dimension(Integer.MAX_VALUE,
+              Math.max(optReachability.getPreferredSize().height, hopSpinnerSize.height)));
+          reachabilityControl.add(optReachability);
+          reachabilityControl.add(Box.createHorizontalGlue());
+          JLabel hopLabel = new JLabel(hopLabelText);
+          hopLabel.setForeground(LAYER_CONTROL_TEXT);
+          hopLabel.setFont(hopLabel.getFont().deriveFont(Font.PLAIN, hopLabel.getFont().getSize2D() * 0.78f));
+          hopLabel.setLabelFor(reachabilityHops);
+          reachabilityControl.add(hopLabel);
+          reachabilityControl.add(Box.createRigidArea(new Dimension(UIUtil.scaleForGUI(4), 0)));
+          reachabilityControl.add(reachabilityHops);
+          optionPanel.add(reachabilityControl);
+          optMeasureDistance = createOptionCheckBox(resourceMap.getString("map.overlay.measure.text"),
+              checkboxIcon, checkboxSelectedIcon);
+          String measurementTooltip = resourceMap.getString("map.overlay.measure.toolTipText");
+          optMeasureDistance.setToolTipText(measurementTooltip);
+          optMeasureDistance.getAccessibleContext().setAccessibleName(optMeasureDistance.getText());
+          optMeasureDistance.getAccessibleContext().setAccessibleDescription(measurementTooltip);
+          optMeasureDistance.addActionListener(event -> {
+            measurementState = optMeasureDistance.isSelected()
+                ? MeasurementState.active()
+                : MeasurementState.inactive();
+            measurementHoverSystem = null;
+            cachedMeasurementAssessment = null;
+            repaint();
+          });
+          optionPanel.add(optMeasureDistance);
 
         optionView = new JViewport();
         optionView.setOpaque(false);
@@ -1962,6 +2226,10 @@ public class InterstellarMapPanel extends JPanel {
             case PLANNED_ROUTE -> paintLegendPlannedRoute(graphics);
             case ACTIVE_ROUTE -> paintLegendActiveRoute(graphics);
             case WAYPOINT_BADGE -> paintLegendWaypointBadge(graphics);
+            case REACHABILITY -> paintLegendReachability(graphics);
+            case ROUTE_CAUTION -> paintLegendRouteCaution(graphics);
+            case ROUTE_BLOCKED -> paintLegendRouteBlocked(graphics);
+            case MEASUREMENT -> paintLegendMeasurement(graphics);
             case CONTRACT_SEARCH_RADIUS -> paintLegendRangeRing(graphics,
                 MekHQ.getMHQOptions().getInterstellarMapContractSearchRadiusColour(),
                 CONFIGURABLE_RANGE_RING_STROKE);
@@ -2119,6 +2387,49 @@ public class InterstellarMapPanel extends JPanel {
         SystemMarkerLayout layout = SystemMarkerLayout.create(16, 7, 3,
               RouteMarkerState.PLANNED, false, false);
         drawRouteWaypointBadge(graphics, layout, PLANNED_ROUTE_COLOR, 2);
+    }
+
+    private static void paintLegendReachability(Graphics2D graphics) {
+        graphics.setStroke(new BasicStroke(1.8f));
+        graphics.setPaint(PLANNED_ROUTE_COLOR);
+        graphics.draw(createNavigationMarkerShape(NavigationMarkerShape.CIRCLE, 19, 19, 10));
+        graphics.setPaint(REACHABILITY_DEEP_COLOR);
+        graphics.draw(createNavigationMarkerShape(NavigationMarkerShape.SQUARE, 46, 19, 9));
+        graphics.setFont(graphics.getFont().deriveFont(Font.BOLD, 9.0f));
+        graphics.setPaint(PLANNED_ROUTE_COLOR);
+        graphics.drawString("1", 29, 12);
+        graphics.setPaint(REACHABILITY_DEEP_COLOR);
+        graphics.drawString("2", 56, 12);
+    }
+
+    private static void paintLegendRouteCaution(Graphics2D graphics) {
+        graphics.setPaint(NAVIGATION_CAUTION_COLOR);
+        graphics.setStroke(new BasicStroke(2.2f));
+        graphics.draw(createNavigationMarkerShape(NavigationMarkerShape.TRIANGLE, 32, 20, 11));
+    }
+
+    private static void paintLegendRouteBlocked(Graphics2D graphics) {
+        graphics.setPaint(NAVIGATION_BLOCKED_COLOR);
+        graphics.setStroke(new BasicStroke(3.0f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL,
+              0, new float[] { 5, 5 }, 0));
+        graphics.draw(new Line2D.Double(5, 19, 49, 19));
+        graphics.setStroke(new BasicStroke(2.2f));
+        graphics.draw(createNavigationMarkerShape(NavigationMarkerShape.DIAMOND, 52, 19, 8));
+    }
+
+    private static void paintLegendMeasurement(Graphics2D graphics) {
+        graphics.setPaint(MEASUREMENT_COLOR);
+        graphics.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
+              0, new float[] { 9, 4, 2, 4 }, 0));
+        graphics.draw(new Line2D.Double(12, 19, 52, 19));
+        graphics.setStroke(new BasicStroke(2.0f));
+        graphics.draw(createNavigationMarkerShape(NavigationMarkerShape.CIRCLE, 12, 19, 5));
+        graphics.draw(createNavigationMarkerShape(NavigationMarkerShape.DIAMOND, 52, 19, 5));
+    }
+
+    private static String getMapResource(String key) {
+        return ResourceBundle.getBundle("mekhq.resources.CampaignGUI", MekHQ.getMHQOptions().getLocale())
+                     .getString(key);
     }
 
     private static void paintLegendOperation(Graphics2D graphics) {
@@ -2740,7 +3051,67 @@ public class InterstellarMapPanel extends JPanel {
         this.campaign = c;
         refreshSystemsFromCampaign();
         settleTravelVisualState();
+        refreshNavigationAnalysis();
         repaint();
+    }
+
+    /** Refreshes immutable navigation snapshots after explicit campaign, route, date, or option changes. */
+    public void refreshNavigationAnalysis() {
+        refreshRouteAssessments();
+        refreshReachability();
+        refreshMeasurementAssessment();
+        repaint();
+    }
+
+    private void refreshRouteAssessments() {
+        cachedProposedRouteAssessment = assessPath(jumpPath);
+        cachedActiveRouteAssessment = assessPath(getActiveJumpPath());
+    }
+
+    private PathAssessment assessPath(@Nullable JumpPath path) {
+        if ((campaign == null) || (path == null) || (path.size() < 2)) {
+            return emptyPathAssessment();
+        }
+        PathAssessment assessment = campaign.assessNavigationPath(path.getSystems(), campaign.isUseCommandCircuit());
+        return assessment == null ? emptyPathAssessment() : assessment;
+    }
+
+    private void refreshReachability() {
+        if ((campaign == null) || !optReachability.isSelected()) {
+            cachedReachability = null;
+            return;
+        }
+        PlanetarySystem anchor = selectedSystem == null ? campaign.getCurrentSystem() : selectedSystem;
+        if (anchor == null) {
+            cachedReachability = null;
+            return;
+        }
+        cachedReachability = campaign.calculateNavigationReachability(anchor,
+              ((Number) reachabilityHops.getValue()).intValue(), campaign.isUseCommandCircuit());
+    }
+
+    private void refreshMeasurementAssessment() {
+        PlanetarySystem target = measurementState.end() == null
+              ? measurementHoverSystem
+              : measurementState.end();
+        if ((campaign == null) || (measurementState.start() == null) || (target == null)) {
+            cachedMeasurementAssessment = null;
+            return;
+        }
+        cachedMeasurementAssessment = campaign.assessNavigationLeg(measurementState.start(), target,
+              campaign.isUseCommandCircuit());
+    }
+
+    private void stopMeasuring() {
+        measurementState = MeasurementState.inactive();
+        measurementHoverSystem = null;
+        cachedMeasurementAssessment = null;
+        optMeasureDistance.setSelected(false);
+        repaint();
+    }
+
+    private static PathAssessment emptyPathAssessment() {
+        return new PathAssessment(List.of(), Severity.CLEAR);
     }
 
     private void refreshSystemsFromCampaign() {
@@ -2779,6 +3150,7 @@ public class InterstellarMapPanel extends JPanel {
         if (proposedRouteSystemIds.isEmpty()) {
             cachedProposedRouteSystemIds = List.of();
         }
+        refreshRouteAssessments();
         repaint();
     }
 
@@ -3833,15 +4205,15 @@ public class InterstellarMapPanel extends JPanel {
     }
 
     private Map<String, StrategicMarker> buildStrategicMarkers() {
-        return buildStrategicMarkers(campaign.getActiveMissions(false), campaign.getActiveScenarios(),
-              campaign::getMission);
+          return buildStrategicMarkers(campaign.getActiveContracts(), campaign.getActiveScenarios(),
+              campaign::getContract);
     }
 
-    static Map<String, StrategicMarker> buildStrategicMarkers(List<Mission> activeMissions,
-          List<Scenario> activeScenarios, java.util.function.IntFunction<Mission> missionLookup) {
+        static Map<String, StrategicMarker> buildStrategicMarkers(List<AbstractContract> activeMissions,
+            List<Scenario> activeScenarios, Function<java.util.UUID, AbstractContract> missionLookup) {
         Map<String, StrategicMarker> strategicMarkers = new HashMap<>();
-        for (Mission mission : activeMissions) {
-            PlanetarySystem system = mission.getSystem();
+          for (AbstractContract mission : activeMissions) {
+            PlanetarySystem system = mission.getTargetSystem();
             if ((system == null) || (system.getId() == null)) {
                 continue;
             }
@@ -3851,11 +4223,11 @@ public class InterstellarMapPanel extends JPanel {
         }
 
         for (Scenario scenario : activeScenarios) {
-            Mission mission = missionLookup.apply(scenario.getMissionId());
+            AbstractContract mission = missionLookup.apply(scenario.getMissionId());
             if (mission == null) {
                 continue;
             }
-            PlanetarySystem system = mission.getSystem();
+            PlanetarySystem system = mission.getTargetSystem();
             if ((system == null) || (system.getId() == null)) {
                 continue;
             }
@@ -4164,6 +4536,259 @@ public class InterstellarMapPanel extends JPanel {
                 arc.setArcByCenter(layout.centerX(), layout.centerY(), layout.navigationRadius(), 0, 360, Arc2D.OPEN);
         graphics.draw(arc);
         graphics.setStroke(oldStroke);
+    }
+
+    private void drawReachability(Graphics2D graphics, double systemSize) {
+        if (cachedReachability == null) {
+            return;
+        }
+
+        for (NavigationRouteAnalysis.ReachabilityEntry entry : cachedReachability.reachableSystems()) {
+            drawReachabilityEntry(graphics, entry, false, systemSize);
+        }
+        for (NavigationRouteAnalysis.ReachabilityEntry entry : cachedReachability.blockedFrontier()) {
+            drawReachabilityEntry(graphics, entry, true, systemSize);
+        }
+    }
+
+    private void drawReachabilityEntry(Graphics2D graphics, NavigationRouteAnalysis.ReachabilityEntry entry,
+          boolean blockedFrontier, double systemSize) {
+        PlanetarySystem system = entry.system();
+        double x = map2scrX(system.getX());
+        double y = map2scrY(system.getY());
+        double markerRadius = Math.max(6.0, systemSize * 1.35);
+        ReachabilityMarkerStyle style = reachabilityMarkerStyle(entry.minimumHops(),
+              entry.arrivalAssessment().severity(), blockedFrontier);
+        Color color = markerColor(style.tone());
+        Shape marker = createNavigationMarkerShape(style.shape(), x, y, markerRadius);
+        Stroke oldStroke = graphics.getStroke();
+        Paint oldPaint = graphics.getPaint();
+        Font oldFont = graphics.getFont();
+        try {
+            graphics.setPaint(withAlpha(color, blockedFrontier ? 225 : 185));
+            graphics.setStroke(reachabilityMarkerStroke(style.tone()));
+            graphics.draw(marker);
+            if (!blockedFrontier && (style.tone() != NavigationMarkerTone.CAUTION)) {
+                String shell = Integer.toString(entry.minimumHops());
+                Font shellFont = oldFont.deriveFont(Font.BOLD,
+                      Math.max(8.0f, Math.min(10.0f, oldFont.getSize2D() * 0.8f)));
+                graphics.setFont(shellFont);
+                graphics.setPaint(color);
+                graphics.drawString(shell, (float) (x + markerRadius + 2.0),
+                      (float) (y - markerRadius + graphics.getFontMetrics().getAscent()));
+            }
+        } finally {
+            graphics.setFont(oldFont);
+            graphics.setStroke(oldStroke);
+            graphics.setPaint(oldPaint);
+        }
+    }
+
+    private void drawReachabilityAnnotation(Graphics2D graphics, double systemSize) {
+        if (cachedReachability == null) {
+            return;
+        }
+        PlanetarySystem anchor = cachedReachability.anchor();
+        String annotation = MessageFormat.format(resourceMap.getString("map.reachability.anchor.format"),
+              anchor.getPrintableName(campaign.getLocalDate()), cachedReachability.maximumHops());
+        Font oldFont = graphics.getFont();
+        Paint oldPaint = graphics.getPaint();
+        Font annotationFont = oldFont.deriveFont(Font.BOLD,
+              Math.max(8.0f, Math.min(10.0f, oldFont.getSize2D() * 0.78f)));
+        graphics.setFont(annotationFont);
+        float x = (float) (map2scrX(anchor.getX()) + Math.max(9.0, systemSize * 1.8));
+        float y = (float) (map2scrY(anchor.getY()) - Math.max(8.0, systemSize * 1.4));
+        drawNavigationText(graphics, annotation, x, y, PLANNED_ROUTE_COLOR);
+        graphics.setFont(oldFont);
+        graphics.setPaint(oldPaint);
+    }
+
+    private void drawRouteConstraints(Graphics2D graphics, List<PlanetarySystem> routeSystems,
+          PathAssessment assessment, double systemSize, int visibleSystemCount, RouteMarkerState routeState) {
+        List<RouteConstraintMarker> markers = routeConstraintMarkers(routeSystems, assessment);
+        Stroke oldStroke = graphics.getStroke();
+        Paint oldPaint = graphics.getPaint();
+        try {
+            for (RouteConstraintMarker marker : markers) {
+                if ((marker.legIndex() + 2) > visibleSystemCount) {
+                    continue;
+                }
+                PlanetarySystem origin = routeSystems.get(marker.legIndex());
+                PlanetarySystem destination = marker.destination();
+                if (marker.brokenSegment()) {
+                    graphics.setPaint(NAVIGATION_BLOCKED_COLOR);
+                    graphics.setStroke(new BasicStroke(3.0f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL,
+                          0, new float[] { 5, 5 }, 0));
+                    graphics.draw(new Line2D.Double(map2scrX(origin.getX()), map2scrY(origin.getY()),
+                          map2scrX(destination.getX()), map2scrY(destination.getY())));
+                }
+
+                SystemMarkerLayout layout = createSystemMarkerLayout(destination, systemSize, routeState);
+                double markerRadius = Math.max(5.0, systemSize * 0.9);
+                Point2D.Double anchor = layout.diagonalAnchor(1.0, 1.0,
+                      layout.navigationRadius() + markerRadius + 2.0);
+                NavigationMarkerShape shape = marker.brokenSegment()
+                      ? NavigationMarkerShape.DIAMOND
+                      : NavigationMarkerShape.TRIANGLE;
+                graphics.setPaint(marker.brokenSegment() ? NAVIGATION_BLOCKED_COLOR : NAVIGATION_CAUTION_COLOR);
+                graphics.setStroke(new BasicStroke(2.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                graphics.draw(createNavigationMarkerShape(shape, anchor.x, anchor.y, markerRadius));
+            }
+        } finally {
+            graphics.setStroke(oldStroke);
+            graphics.setPaint(oldPaint);
+        }
+    }
+
+    private void drawMeasurement(Graphics2D graphics, NavigationInstrumentLayout instrumentLayout) {
+        if (!measurementState.enabled() || (measurementState.start() == null)) {
+            return;
+        }
+        PlanetarySystem start = measurementState.start();
+        PlanetarySystem target = measurementState.end() == null
+              ? measurementHoverSystem
+              : measurementState.end();
+        double startX = map2scrX(start.getX());
+        double startY = map2scrY(start.getY());
+        Stroke oldStroke = graphics.getStroke();
+        Paint oldPaint = graphics.getPaint();
+        Font oldFont = graphics.getFont();
+        try {
+            if (target != null) {
+                double targetX = map2scrX(target.getX());
+                double targetY = map2scrY(target.getY());
+                graphics.setPaint(withAlpha(MEASUREMENT_COLOR, 210));
+                graphics.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
+                      0, new float[] { 9, 4, 2, 4 }, 0));
+                graphics.draw(new Line2D.Double(startX, startY, targetX, targetY));
+                drawMeasurementEndpoint(graphics, startX, startY, "A", false);
+                drawMeasurementEndpoint(graphics, targetX, targetY, "B", true);
+                if (cachedMeasurementAssessment != null) {
+                    drawMeasurementLabel(graphics, cachedMeasurementAssessment,
+                          new Point((int) Math.round((startX + targetX) / 2.0),
+                                (int) Math.round((startY + targetY) / 2.0)), instrumentLayout);
+                }
+            } else {
+                drawMeasurementEndpoint(graphics, startX, startY, "A", false);
+            }
+        } finally {
+            graphics.setFont(oldFont);
+            graphics.setStroke(oldStroke);
+            graphics.setPaint(oldPaint);
+        }
+    }
+
+    private static void drawMeasurementEndpoint(Graphics2D graphics, double x, double y, String label,
+          boolean destination) {
+        double radius = Math.max(5.0, UIUtil.scaleForGUI(5));
+        graphics.setPaint(MEASUREMENT_COLOR);
+        graphics.setStroke(new BasicStroke(2.0f));
+        graphics.draw(createNavigationMarkerShape(destination ? NavigationMarkerShape.DIAMOND
+              : NavigationMarkerShape.CIRCLE, x, y, radius));
+        Font baseFont = graphics.getFont();
+        graphics.setFont(baseFont.deriveFont(Font.BOLD, Math.max(9.0f, baseFont.getSize2D() * 0.78f)));
+        graphics.drawString(label, (float) (x + radius + 3.0), (float) (y - radius - 1.0));
+        graphics.setFont(baseFont);
+    }
+
+    private void drawMeasurementLabel(Graphics2D graphics, LegAssessment assessment, Point preferredCenter,
+          NavigationInstrumentLayout instrumentLayout) {
+        NumberFormat numberFormat = NumberFormat.getNumberInstance(MekHQ.getMHQOptions().getLocale());
+        numberFormat.setMaximumFractionDigits(3);
+        numberFormat.setMinimumFractionDigits(0);
+        String distance = numberFormat.format(assessment.facts().distanceLy());
+        String jumps = NumberFormat.getIntegerInstance(MekHQ.getMHQOptions().getLocale())
+                             .format(assessment.facts().minimumStandardJumps());
+        String circuitSuffix = assessment.facts().commandCircuitAssumed()
+              ? resourceMap.getString("map.measurement.circuitSuffix.text")
+              : "";
+        String labelText = MessageFormat.format(resourceMap.getString("map.measurement.label.format"),
+              distance, jumps, measurementStatusText(assessment, numberFormat), circuitSuffix);
+        Font labelFont = graphics.getFont().deriveFont(Font.BOLD,
+              Math.max(9.0f, Math.min(11.0f, graphics.getFont().getSize2D() * 0.82f)));
+        graphics.setFont(labelFont);
+        FontMetrics metrics = graphics.getFontMetrics();
+        Dimension labelSize = new Dimension(metrics.stringWidth(labelText) + UIUtil.scaleForGUI(12),
+              metrics.getHeight() + UIUtil.scaleForGUI(6));
+        List<Rectangle> exclusions = new ArrayList<>();
+        if (instrumentLayout.visible()) {
+            exclusions.add(instrumentLayout.bounds().getBounds());
+        }
+        if (optionControl.isVisible()) {
+            exclusions.add(optionControl.getBounds());
+        }
+        Rectangle bounds = clampMeasurementLabel(new Rectangle(0, 0, getWidth(), getHeight()), labelSize,
+              preferredCenter, exclusions);
+        graphics.setPaint(withAlpha(MAP_BACKGROUND_BOTTOM, 225));
+        graphics.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
+        graphics.setPaint(MEASUREMENT_COLOR);
+        graphics.drawString(labelText, bounds.x + UIUtil.scaleForGUI(6),
+              bounds.y + UIUtil.scaleForGUI(3) + metrics.getAscent());
+    }
+
+    private String measurementStatusText(LegAssessment assessment, NumberFormat numberFormat) {
+        NavigationRouteAnalysis.FindingKind primaryFinding = assessment.findings().stream()
+              .filter(finding -> finding.severity() == Severity.BLOCKED)
+              .map(NavigationRouteAnalysis.Finding::kind)
+              .findFirst()
+              .orElseGet(() -> assessment.findings().stream()
+                    .filter(finding -> finding.severity() == Severity.CAUTION)
+                    .map(NavigationRouteAnalysis.Finding::kind)
+                    .findFirst()
+                    .orElse(null));
+        if (primaryFinding != null) {
+            String key = switch (primaryFinding) {
+                case OUT_OF_STANDARD_JUMP_RANGE -> "map.measurement.status.rangeBlocked.text";
+                case ACCESS_DENIED -> "map.measurement.status.accessBlocked.text";
+                case ABANDONED_DESTINATION_AVOIDED -> "map.measurement.status.emptyBlocked.text";
+                case ABANDONED_DESTINATION_ALLOWED -> "map.measurement.status.emptyCaution.text";
+                case RECHARGE_IMPOSSIBLE -> "map.measurement.status.rechargeBlocked.text";
+                default -> "map.measurement.status.blocked.text";
+            };
+            return resourceMap.getString(key);
+        }
+        return MessageFormat.format(resourceMap.getString("map.measurement.status.clear.format"),
+              numberFormat.format(assessment.facts().rechargeHours()),
+              assessment.facts().rechargeStationCount() > 0
+                    ? resourceMap.getString("map.measurement.stationSuffix.text")
+                    : "");
+    }
+
+    private static Shape createNavigationMarkerShape(NavigationMarkerShape markerShape, double centerX,
+          double centerY, double radius) {
+        return switch (markerShape) {
+            case CIRCLE -> new Ellipse2D.Double(centerX - radius, centerY - radius, radius * 2.0, radius * 2.0);
+            case SQUARE -> new Rectangle2D.Double(centerX - radius, centerY - radius, radius * 2.0, radius * 2.0);
+            case TRIANGLE -> createRegularPolygon(centerX, centerY, radius, 3, -Math.PI / 2.0);
+            case DIAMOND -> createRegularPolygon(centerX, centerY, radius, 4, 0.0);
+            case HEXAGON -> createRegularPolygon(centerX, centerY, radius, 6, 0.0);
+        };
+    }
+
+    private static Shape createRegularPolygon(double centerX, double centerY, double radius, int sides,
+          double rotation) {
+        GeneralPath polygon = new GeneralPath();
+        for (int vertex = 0; vertex < sides; vertex++) {
+            double angle = rotation + ((FULL_CIRCLE_RADIANS * vertex) / sides);
+            double x = centerX + (Math.cos(angle) * radius);
+            double y = centerY + (Math.sin(angle) * radius);
+            if (vertex == 0) {
+                polygon.moveTo(x, y);
+            } else {
+                polygon.lineTo(x, y);
+            }
+        }
+        polygon.closePath();
+        return polygon;
+    }
+
+    private static Color markerColor(NavigationMarkerTone tone) {
+        return switch (tone) {
+            case IMMEDIATE -> PLANNED_ROUTE_COLOR;
+            case DEEP -> REACHABILITY_DEEP_COLOR;
+            case CAUTION -> NAVIGATION_CAUTION_COLOR;
+            case BLOCKED -> NAVIGATION_BLOCKED_COLOR;
+        };
     }
 
     private void drawActiveRoute(Graphics2D graphics, Arc2D.Double arc, List<PlanetarySystem> routeSystems,
@@ -5274,6 +5899,10 @@ public class InterstellarMapPanel extends JPanel {
         selectedSystem = system;
         if (!selectionChanged) {
             return;
+        }
+
+        if (optReachability.isSelected()) {
+            refreshReachability();
         }
 
         if (animate && (system != null) && isDisplayable()) {

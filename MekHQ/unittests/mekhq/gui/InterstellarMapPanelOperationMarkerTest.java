@@ -45,13 +45,16 @@ import java.awt.image.BufferedImage;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
-import mekhq.campaign.mission.Mission;
-import mekhq.campaign.mission.Scenario;
+import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.mission.scenarios.Scenario;
 import org.junit.jupiter.api.Test;
 
 class InterstellarMapPanelOperationMarkerTest {
     private static final double DELTA = 0.000_001;
+    private static final UUID FIRST_MISSION_ID = new UUID(0, 101);
+    private static final UUID SECOND_MISSION_ID = new UUID(0, 102);
 
     @Test
     void semanticZoomKeepsOnlyUrgentOperationsVisibleAtAtlasZoom() {
@@ -91,17 +94,17 @@ class InterstellarMapPanelOperationMarkerTest {
 
     @Test
     void aggregationCountsMissionsOnceAndNeverInflatesTheBadgeWithScenarios() {
-        Mission firstMission = missionAt("system-a");
-        Mission secondMission = missionAt("system-a");
-        Scenario firstScenario = scenarioFor(101);
-        Scenario secondScenario = scenarioFor(101);
-        Scenario thirdScenario = scenarioFor(102);
+        AbstractContract firstMission = missionAt("system-a");
+        AbstractContract secondMission = missionAt("system-a");
+        Scenario firstScenario = scenarioFor(FIRST_MISSION_ID);
+        Scenario secondScenario = scenarioFor(FIRST_MISSION_ID);
+        Scenario thirdScenario = scenarioFor(SECOND_MISSION_ID);
 
         Map<String, InterstellarMapPanel.StrategicMarker> markers =
               InterstellarMapPanel.buildStrategicMarkers(
                     List.of(firstMission, secondMission),
                     List.of(firstScenario, secondScenario, thirdScenario),
-                    missionId -> missionId == 101 ? firstMission : secondMission);
+                    missionId -> FIRST_MISSION_ID.equals(missionId) ? firstMission : secondMission);
 
         assertEquals(1, markers.size(), "systems receive one flag regardless of operation count");
         assertEquals(new InterstellarMapPanel.StrategicMarker(2, 3), markers.get("system-a"));
@@ -109,8 +112,8 @@ class InterstellarMapPanelOperationMarkerTest {
 
     @Test
     void scenarioOnlyFallbackIsUrgentWithoutAZeroCountBadge() {
-        Mission resolvedMission = missionAt("system-a");
-        Scenario scenario = scenarioFor(101);
+        AbstractContract resolvedMission = missionAt("system-a");
+        Scenario scenario = scenarioFor(FIRST_MISSION_ID);
 
         InterstellarMapPanel.StrategicMarker marker = InterstellarMapPanel.buildStrategicMarkers(
               List.of(), List.of(scenario), missionId -> resolvedMission).get("system-a");
@@ -123,13 +126,13 @@ class InterstellarMapPanelOperationMarkerTest {
               pixels(render(new InterstellarMapPanel.StrategicMarker(2, 1)))));
     }
 
-    private static Mission missionAt(String systemId) {
-        Mission mission = mock(Mission.class, RETURNS_DEEP_STUBS);
-        when(mission.getSystem().getId()).thenReturn(systemId);
+    private static AbstractContract missionAt(String systemId) {
+        AbstractContract mission = mock(AbstractContract.class, RETURNS_DEEP_STUBS);
+        when(mission.getTargetSystem().getId()).thenReturn(systemId);
         return mission;
     }
 
-    private static Scenario scenarioFor(int missionId) {
+    private static Scenario scenarioFor(UUID missionId) {
         Scenario scenario = mock(Scenario.class);
         when(scenario.getMissionId()).thenReturn(missionId);
         return scenario;

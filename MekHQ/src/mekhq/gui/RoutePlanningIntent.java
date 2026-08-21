@@ -67,6 +67,32 @@ final class RoutePlanningIntent {
         return copyOf(jumpPath);
     }
 
+    boolean adopt(@Nullable JumpPath proposedPath) {
+        if ((origin == null) || (proposedPath == null) || requestedStops.isEmpty() || proposedPath.isEmpty()) {
+            return false;
+        }
+
+        List<PlanetarySystem> proposedSystems = proposedPath.getSystems();
+        if (!Objects.equals(origin, proposedPath.getFirstSystem())
+              || !Objects.equals(requestedStops.getLast(), proposedPath.getLastSystem())) {
+            return false;
+        }
+
+        int searchFrom = 0;
+        for (PlanetarySystem requestedStop : requestedStops) {
+            int stopIndex = indexOf(proposedSystems, requestedStop, searchFrom);
+            if (stopIndex < 0) {
+                return false;
+            }
+            searchFrom = stopIndex + 1;
+        }
+
+        JumpPath adoptedPath = copyOf(proposedPath);
+        adoptedPath.setTargetPlanet(jumpPath.getTargetPlanet());
+        jumpPath = adoptedPath;
+        return true;
+    }
+
     boolean plot(@Nullable PlanetarySystem proposedOrigin, @Nullable PlanetarySystem destination,
           SegmentPlanner planner) {
         if ((proposedOrigin == null) || (destination == null)) {
@@ -155,6 +181,7 @@ final class RoutePlanningIntent {
             }
             List<PlanetarySystem> segmentSystems = segment.getSystems();
             derivedPath.addSystems(segmentSystems.subList(derivedPath.isEmpty() ? 0 : 1, segmentSystems.size()));
+            derivedPath.setTargetPlanet(segment.getTargetPlanet());
             segmentOrigin = requestedStop;
         }
         return Optional.of(derivedPath);
