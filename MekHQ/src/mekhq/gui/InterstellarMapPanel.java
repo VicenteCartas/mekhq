@@ -71,7 +71,9 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.ResourceBundle;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -115,6 +117,61 @@ import mekhq.gui.dialog.PlanetarySystemEditorDialog;
  */
 public class InterstellarMapPanel extends JPanel {
     private static final MMLogger LOGGER = MMLogger.create(InterstellarMapPanel.class);
+
+    interface RoutePlanningHandler {
+        void plotRoute(PlanetarySystem destination);
+
+        void appendWaypoint(PlanetarySystem destination);
+
+        void trimRouteAt(PlanetarySystem destination);
+
+        void removeWaypoint(PlanetarySystem waypoint);
+
+        void clearPlannedRoute();
+
+        boolean hasPlannedRoute();
+
+        boolean canTrimRouteAt(PlanetarySystem system);
+
+        boolean isRequestedWaypoint(PlanetarySystem system);
+    }
+
+    private static final RoutePlanningHandler NO_ROUTE_PLANNING_HANDLER = new RoutePlanningHandler() {
+        @Override
+        public void plotRoute(PlanetarySystem destination) {
+        }
+
+        @Override
+        public void appendWaypoint(PlanetarySystem destination) {
+        }
+
+        @Override
+        public void trimRouteAt(PlanetarySystem destination) {
+        }
+
+        @Override
+        public void removeWaypoint(PlanetarySystem waypoint) {
+        }
+
+        @Override
+        public void clearPlannedRoute() {
+        }
+
+        @Override
+        public boolean hasPlannedRoute() {
+            return false;
+        }
+
+        @Override
+        public boolean canTrimRouteAt(PlanetarySystem system) {
+            return false;
+        }
+
+        @Override
+        public boolean isRequestedWaypoint(PlanetarySystem system) {
+            return false;
+        }
+    };
 
     private static final String CURRENT_LOCATION_ICON_PATH =
           "data/images/universe/default_jumpship_fleet.png";
@@ -709,6 +766,7 @@ public class InterstellarMapPanel extends JPanel {
     private final JPanel optionPanel;
     private final JButton optionButton;
     private final JButton mapLegendButton;
+    private final ResourceBundle resourceMap;
 
     // Map view options
     private final JRadioButton optFactions;
@@ -796,6 +854,7 @@ public class InterstellarMapPanel extends JPanel {
     private double systemHopProgress = 1.0;
     private Point lastMousePos = null;
     private int mouseMod = 0;
+    private RoutePlanningHandler routePlanningHandler = NO_ROUTE_PLANNING_HANDLER;
 
     private transient double minX;
     private transient double minY;
@@ -817,6 +876,8 @@ public class InterstellarMapPanel extends JPanel {
 
     public InterstellarMapPanel(Campaign campaign, CampaignGUI view) {
         this.campaign = campaign;
+        resourceMap = ResourceBundle.getBundle("mekhq.resources.CampaignGUI",
+              MekHQ.getMHQOptions().getLocale());
         systems = this.campaign.getSystems();
         hqView = view;
         jumpPath = new JumpPath();
@@ -891,6 +952,7 @@ public class InterstellarMapPanel extends JPanel {
             public void maybeShowPopup(MouseEvent e) {
                 if (e.isPopupTrigger()) {
                     final Point popupAnchor = new Point(e.getPoint());
+                    final PlanetarySystem popupSystem = findSystemAt(popupAnchor);
                     JPopupMenu popup = new JPopupMenu();
                     JMenuItem item = new JMenuItem("Zoom In");
                     item.addActionListener(ae -> zoom(1.5, popupAnchor));
@@ -924,6 +986,20 @@ public class InterstellarMapPanel extends JPanel {
                     });
                     centerM.add(item);
                     popup.add(centerM);
+                      popup.addSeparator();
+                      popup.add(createRoutePlanningMenuItem("map.route.plotHere", popupSystem != null,
+                          () -> routePlanningHandler.plotRoute(popupSystem)));
+                      popup.add(createRoutePlanningMenuItem("map.route.appendWaypoint", popupSystem != null,
+                          () -> routePlanningHandler.appendWaypoint(popupSystem)));
+                      popup.add(createRoutePlanningMenuItem("map.route.trimHere",
+                          (popupSystem != null) && routePlanningHandler.canTrimRouteAt(popupSystem),
+                          () -> routePlanningHandler.trimRouteAt(popupSystem)));
+                      popup.add(createRoutePlanningMenuItem("map.route.removeWaypoint",
+                          (popupSystem != null) && routePlanningHandler.isRequestedWaypoint(popupSystem),
+                          () -> routePlanningHandler.removeWaypoint(popupSystem)));
+                      popup.add(createRoutePlanningMenuItem("map.route.clear",
+                          routePlanningHandler.hasPlannedRoute(), routePlanningHandler::clearPlannedRoute));
+                      popup.addSeparator();
                     item = new JMenuItem("Cancel Current Trip");
                     item.setEnabled(null != InterstellarMapPanel.this.campaign.getPlayerForce()
                                                   .getForceDetachment()
@@ -977,7 +1053,7 @@ public class InterstellarMapPanel extends JPanel {
                             InterstellarMapPanel.this.campaign.getPlayerForce()
                                   .getDetachmentLocationManager()
                                   .moveToPlanetarySystem(InterstellarMapPanel.this.campaign, selectedSystem);
-                                                        setProposedJumpPath(new JumpPath());
+                                routePlanningHandler.clearPlannedRoute();
                             center(selectedSystem);
                         });
                     }
@@ -1045,31 +1121,10 @@ public class InterstellarMapPanel extends JPanel {
                             return;
                         }
                         if (e.isAltDown()) {
-                            // calculate a new jump path from the current location
-                            setProposedJumpPath(InterstellarMapPanel.this.campaign.calculateJumpPath(
-                                InterstellarMapPanel.this.campaign.getCurrentSystem(), target, false, false));
-                                                selectSystem(target, true);
-                            repaint();
-                            notifyListeners();
+                            routePlanningHandler.plotRoute(target);
                             return;
                         } else if (e.isShiftDown()) {
-                            // add to the existing jump path
-                            PlanetarySystem lastSystem = jumpPath.getLastSystem();
-                            if (null == lastSystem) {
-                                lastSystem = InterstellarMapPanel.this.campaign.getCurrentSystem();
-                            }
-                            JumpPath addPath = InterstellarMapPanel.this.campaign.calculateJumpPath(lastSystem,
-                                  target, false, false);
-                            if (!jumpPath.isEmpty()) {
-                                addPath.removeFirstSystem();
-                            }
-                            JumpPath extendedPath = new JumpPath();
-                            extendedPath.addSystems(jumpPath.getSystems());
-                            extendedPath.addSystems(addPath.getSystems());
-                            setProposedJumpPath(extendedPath);
-                            selectSystem(target, true);
-                            repaint();
-                            notifyListeners();
+                            routePlanningHandler.appendWaypoint(target);
                             return;
                         }
                         changeSelectedSystem(target);
@@ -3663,6 +3718,34 @@ public class InterstellarMapPanel extends JPanel {
         return nearestSystem;
     }
 
+    private PlanetarySystem findSystemAt(Point point) {
+        double systemSize = Math.clamp(1 + (5 * Math.log(conf.scale)), conf.minDotSize, conf.maxDotSize);
+        PlanetarySystem nearestSystem = null;
+        double nearestDistance = Math.max(10.0, systemSize * 2.5);
+        for (PlanetarySystem system : systems) {
+            if (!isSystemVisible(system, !optEmptySystems.isSelected())) {
+                continue;
+            }
+            double distance = Point2D.distance(point.x, point.y,
+                  map2scrX(system.getX()), map2scrY(system.getY()));
+            if (distance <= nearestDistance) {
+                nearestSystem = system;
+                nearestDistance = distance;
+            }
+        }
+        return nearestSystem;
+    }
+
+    private JMenuItem createRoutePlanningMenuItem(String resourceKey, boolean enabled, Runnable action) {
+        JMenuItem item = new JMenuItem(resourceMap.getString(resourceKey + ".text"));
+        item.setToolTipText(resourceMap.getString(resourceKey + ".toolTipText"));
+        item.getAccessibleContext().setAccessibleName(item.getText());
+        item.getAccessibleContext().setAccessibleDescription(item.getToolTipText());
+        item.setEnabled(enabled);
+        item.addActionListener(event -> action.run());
+        return item;
+    }
+
         private static void drawIntrinsicStar(Graphics2D graphics, Arc2D.Double arc, PlanetarySystem system,
                     double x, double y, double size, double ambientElapsedSeconds) {
         Color spectralColor = getSpectralColor(system.getStar());
@@ -4259,12 +4342,16 @@ public class InterstellarMapPanel extends JPanel {
         }
                 int waypointLimit = Math.min(path.size(), visibleSystemCount);
                 paintLayerWithAlpha(graphics, alpha, badgeGraphics -> {
+                    int waypointNumber = 1;
                     for (int waypointIndex = 1; waypointIndex < waypointLimit; waypointIndex++) {
-                PlanetarySystem waypoint = path.get(waypointIndex);
-                SystemMarkerLayout layout = createSystemMarkerLayout(waypoint, size, RouteMarkerState.PLANNED,
-                    hoveredSystem);
-                drawRouteWaypointBadge(badgeGraphics, layout, color, waypointIndex);
-            }
+                        PlanetarySystem waypoint = path.get(waypointIndex);
+                        if (!routePlanningHandler.isRequestedWaypoint(waypoint)) {
+                            continue;
+                        }
+                        SystemMarkerLayout layout = createSystemMarkerLayout(waypoint, size, RouteMarkerState.PLANNED,
+                              hoveredSystem);
+                        drawRouteWaypointBadge(badgeGraphics, layout, color, waypointNumber++);
+                    }
                 });
     }
 
@@ -5119,9 +5206,17 @@ public class InterstellarMapPanel extends JPanel {
         return jumpPath;
     }
 
+    void setRoutePlanningHandler(RoutePlanningHandler routePlanningHandler) {
+        this.routePlanningHandler = Objects.requireNonNull(routePlanningHandler);
+    }
+
+    void selectRouteTarget(PlanetarySystem target) {
+        selectSystem(target, true);
+        repaint();
+    }
+
     public void changeSelectedSystem(PlanetarySystem p) {
         selectSystem(p, true);
-        setProposedJumpPath(new JumpPath());
         notifyListeners();
     }
 
