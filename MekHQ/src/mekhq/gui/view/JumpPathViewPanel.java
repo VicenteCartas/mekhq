@@ -43,22 +43,31 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.text.NumberFormat;
+import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.FormatStyle;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.ResourceBundle;
 import java.util.Set;
+import java.util.TimeZone;
 import java.util.function.Consumer;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JFormattedTextField;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JSpinner;
+import javax.swing.SpinnerDateModel;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingConstants;
 
@@ -68,6 +77,7 @@ import mekhq.campaign.AbstractLocation;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.JumpPath;
 import mekhq.campaign.JumpPathItinerary;
+import mekhq.campaign.JumpPathSchedule;
 import mekhq.campaign.NavigationRouteAnalysis;
 import mekhq.campaign.NavigationRouteAnalysis.LegAssessment;
 import mekhq.campaign.NavigationRouteAnalysis.PathAssessment;
@@ -77,6 +87,9 @@ import mekhq.campaign.JumpPathItinerary.CircuitPlan;
 import mekhq.campaign.JumpPathItinerary.Plan;
 import mekhq.campaign.JumpPathItinerary.RequiredAcceleration;
 import mekhq.campaign.JumpPathItinerary.TimelineEntry;
+import mekhq.campaign.JumpPathSchedule.Dwell;
+import mekhq.campaign.JumpPathSchedule.Mode;
+import mekhq.campaign.JumpPathSchedule.Result;
 import mekhq.campaign.RouteAlternativesPlanner.AccessStatus;
 import mekhq.campaign.RouteAlternativesPlanner.CircuitCoverage;
 import mekhq.campaign.RouteAlternativesPlanner.Course;
@@ -117,14 +130,22 @@ public class JumpPathViewPanel extends JScrollablePanel {
     private static final double ACCELERATION_STEP_G = 0.1;
     private static final double MINIMUM_DESIRED_DAYS = 0.1;
     private static final double MAXIMUM_DESIRED_DAYS = 100000.0;
+    private static final int MAXIMUM_DWELL_HOURS = 24000;
 
     private final JumpPath path;
     private final Campaign campaign;
     private final Locale locale;
     private final ResourceBundle resourceMap;
     private final List<Course> routeCourses;
+    private final List<PlanetarySystem> requestedStops;
+    private final List<Integer> dwellHoursByRequestedStop;
     private final Consumer<Course> courseSelectionHandler;
     private Plan itineraryPlan;
+    private Result schedule;
+    private Mode scheduleMode;
+    private LocalDateTime earliestFeasibleDeparture;
+    private LocalDateTime departureAnchor;
+    private LocalDateTime arrivalDeadline;
     private CircuitPlan circuitPlan;
     private PathAssessment navigationAssessment;
     private CircuitPlan customCircuitPlan = CircuitPlan.custom(Set.of());
@@ -133,21 +154,37 @@ public class JumpPathViewPanel extends JScrollablePanel {
     private JLabel rechargeValue;
     private JLabel totalTimeValue;
     private JLabel requiredAccelerationValue;
+    private JLabel scheduleAnchorLabel;
+    private JLabel scheduleAnchorValue;
+    private JLabel scheduleDepartureValue;
+    private JLabel scheduleArrivalValue;
+    private JLabel scheduleDwellValue;
+    private JLabel scheduleStatusValue;
     private JPanel itinerarySection;
     private JPanel circuitDepartures;
     private JSpinner accelerationSpinner;
     private JSpinner desiredDurationSpinner;
+    private JSpinner scheduleAnchorSpinner;
+    private boolean adjustingScheduleAnchor;
 
     public JumpPathViewPanel(JumpPath p, Campaign c) {
-        this(p, c, List.of(), course -> { });
+        this(p, c, List.of(), List.of(), course -> { });
     }
 
     public JumpPathViewPanel(JumpPath p, Campaign c, List<Course> routeCourses,
           Consumer<Course> courseSelectionHandler) {
+        this(p, c, routeCourses, List.of(), courseSelectionHandler);
+    }
+
+    public JumpPathViewPanel(JumpPath p, Campaign c, List<Course> routeCourses,
+          List<PlanetarySystem> requestedStops, Consumer<Course> courseSelectionHandler) {
         super();
         this.path = p;
         this.campaign = c;
         this.routeCourses = List.copyOf(routeCourses);
+        this.requestedStops = List.copyOf(requestedStops);
+        dwellHoursByRequestedStop = new ArrayList<>(requestedStops.size());
+        requestedStops.forEach(stop -> dwellHoursByRequestedStop.add(0));
         this.courseSelectionHandler = courseSelectionHandler;
         locale = MekHQ.getMHQOptions().getLocale();
         resourceMap = ResourceBundle.getBundle("mekhq.resources.JumpPathViewPanel", locale);
@@ -161,6 +198,11 @@ public class JumpPathViewPanel extends JScrollablePanel {
 
         circuitPlan = initialCircuitPlan(path, routeCourses, isUseCommandCircuit());
         itineraryPlan = calculatePlan(JumpPathItinerary.DEFAULT_ACCELERATION_G);
+        earliestFeasibleDeparture = campaign.getLocalDate().atStartOfDay();
+        departureAnchor = earliestFeasibleDeparture;
+        scheduleMode = Mode.DEPART_AT;
+        schedule = calculateSchedule();
+        arrivalDeadline = schedule.arrival();
         navigationAssessment = calculateNavigationAssessment();
         add(createHeader());
         add(createSummary());
@@ -171,6 +213,7 @@ public class JumpPathViewPanel extends JScrollablePanel {
             add(createCircuitPlanner());
         }
         add(createAccelerationPlanner());
+        add(createSchedulePlanner());
         itinerarySection = createItinerary();
         add(itinerarySection);
     }
@@ -457,12 +500,152 @@ public class JumpPathViewPanel extends JScrollablePanel {
         return planner;
     }
 
+    private JPanel createSchedulePlanner() {
+        JPanel planner = createSection("section.schedule.text");
+        JComboBox<String> modeSelector = new JComboBox<>(new String[] {
+              resourceMap.getString("schedule.departAt.text"),
+              resourceMap.getString("schedule.arriveBy.text")
+        });
+        modeSelector.setSelectedIndex(scheduleMode.ordinal());
+        modeSelector.setBackground(DOSSIER_CONTROL_BACKGROUND);
+        modeSelector.setForeground(DOSSIER_TEXT);
+        modeSelector.setToolTipText(resourceMap.getString("schedule.mode.tooltip"));
+        modeSelector.getAccessibleContext().setAccessibleName(resourceMap.getString("schedule.mode.text"));
+        modeSelector.getAccessibleContext().setAccessibleDescription(modeSelector.getToolTipText());
+        modeSelector.setPreferredSize(new Dimension(UIUtil.scaleForGUI(142), modeSelector.getPreferredSize().height));
+        addPlannerControl(planner, 1, resourceMap.getString("schedule.mode.text"),
+              resourceMap.getString("schedule.mode.tooltip"), modeSelector);
+
+        scheduleAnchorSpinner = new JSpinner(new SpinnerDateModel(toDate(departureAnchor), null, null,
+              Calendar.HOUR_OF_DAY));
+        configureScheduleAnchorSpinner();
+        addPlannerControl(planner, 2, resourceMap.getString("schedule.anchor.text"),
+              resourceMap.getString("schedule.anchor.tooltip"), scheduleAnchorSpinner);
+
+        int row = 3;
+        for (Dwell dwell : schedule.dwells()) {
+            String label = format(resourceMap.getString("schedule.dwell.label.format"),
+                  dwell.requestedStopIndex() + 1, dwell.system().getPrintableName(campaign.getLocalDate()));
+            String tooltip = resourceMap.getString("schedule.dwell.tooltip");
+            JSpinner dwellSpinner = new JSpinner(new SpinnerNumberModel(
+                dwellHoursByRequestedStop.get(dwell.requestedStopIndex()).intValue(),
+                0, MAXIMUM_DWELL_HOURS, 1));
+            configureNumberSpinner(dwellSpinner, "0", label, tooltip);
+            addPlannerControl(planner, row++, label, tooltip, dwellSpinner);
+            dwellSpinner.addChangeListener(event -> {
+                dwellHoursByRequestedStop.set(dwell.requestedStopIndex(),
+                      ((Number) dwellSpinner.getValue()).intValue());
+                refreshPlanPresentation();
+            });
+        }
+        if (schedule.dwells().isEmpty()) {
+            JLabel none = new JLabel(resourceMap.getString("schedule.noDwells.text"));
+            none.setForeground(DOSSIER_MUTED_TEXT);
+            none.setFont(none.getFont().deriveFont(Font.PLAIN, none.getFont().getSize2D() * 0.78f));
+            GridBagConstraints constraints = createFullWidthConstraints(row++);
+            constraints.insets = new Insets(3, 0, 4, 0);
+            planner.add(none, constraints);
+        }
+
+        scheduleAnchorValue = new JLabel();
+        scheduleDepartureValue = new JLabel();
+        scheduleArrivalValue = new JLabel();
+        scheduleDwellValue = new JLabel();
+        scheduleStatusValue = new JLabel();
+        scheduleAnchorLabel = addScheduleResult(planner, row++, "schedule.selectedAnchor.text", scheduleAnchorValue);
+        addScheduleResult(planner, row++, "schedule.departure.text", scheduleDepartureValue);
+        addScheduleResult(planner, row++, "schedule.arrival.text", scheduleArrivalValue);
+        addScheduleResult(planner, row++, "schedule.totalDwell.text", scheduleDwellValue);
+        addScheduleResult(planner, row, "schedule.status.text", scheduleStatusValue);
+        refreshSchedulePresentation();
+
+        modeSelector.addActionListener(event -> {
+            Mode selectedMode = Mode.values()[modeSelector.getSelectedIndex()];
+            if (selectedMode == scheduleMode) {
+                return;
+            }
+            if (selectedMode == Mode.ARRIVE_BY) {
+                arrivalDeadline = schedule.arrival();
+            } else {
+                departureAnchor = schedule.departure();
+            }
+            scheduleMode = selectedMode;
+            updateScheduleAnchorControl();
+            refreshPlanPresentation();
+        });
+        scheduleAnchorSpinner.addChangeListener(event -> {
+            if (adjustingScheduleAnchor) {
+                return;
+            }
+            LocalDateTime selectedAnchor = fromDate((Date) scheduleAnchorSpinner.getValue());
+            if (scheduleMode == Mode.DEPART_AT) {
+                departureAnchor = selectedAnchor;
+            } else {
+                arrivalDeadline = selectedAnchor;
+            }
+            refreshPlanPresentation();
+        });
+        return planner;
+    }
+
+    private JLabel addScheduleResult(JPanel planner, int row, String labelKey, JLabel value) {
+        JPanel result = createBandPanel();
+        result.setLayout(new GridBagLayout());
+        JLabel label = createPlannerLabel(labelKey);
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.gridx = 0;
+        constraints.gridy = 0;
+        constraints.weightx = 0.42;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.anchor = GridBagConstraints.WEST;
+        result.add(label, constraints);
+
+        value.setForeground(DOSSIER_TEXT);
+        value.setFont(value.getFont().deriveFont(Font.BOLD, value.getFont().getSize2D() * 0.82f));
+        value.setHorizontalAlignment(SwingConstants.TRAILING);
+        constraints = new GridBagConstraints();
+        constraints.gridx = 1;
+        constraints.gridy = 0;
+        constraints.weightx = 0.58;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.anchor = GridBagConstraints.EAST;
+        result.add(value, constraints);
+
+        constraints = createFullWidthConstraints(row);
+        constraints.insets = new Insets(2, 0, 2, 0);
+        planner.add(result, constraints);
+        return label;
+    }
+
+    private void configureScheduleAnchorSpinner() {
+        JSpinner.DateEditor editor = new JSpinner.DateEditor(scheduleAnchorSpinner,
+              resourceMap.getString("schedule.datePattern.text"));
+        editor.getFormat().setTimeZone(TimeZone.getTimeZone("UTC"));
+        scheduleAnchorSpinner.setEditor(editor);
+        scheduleAnchorSpinner.setBorder(BorderFactory.createLineBorder(DOSSIER_DIVIDER));
+        scheduleAnchorSpinner.setPreferredSize(new Dimension(UIUtil.scaleForGUI(176),
+              scheduleAnchorSpinner.getPreferredSize().height));
+        String label = resourceMap.getString("schedule.anchor.text");
+        String tooltip = resourceMap.getString("schedule.anchor.tooltip");
+        scheduleAnchorSpinner.setToolTipText(tooltip);
+        scheduleAnchorSpinner.getAccessibleContext().setAccessibleName(label);
+        scheduleAnchorSpinner.getAccessibleContext().setAccessibleDescription(tooltip);
+        JFormattedTextField textField = editor.getTextField();
+        textField.setBackground(DOSSIER_CONTROL_BACKGROUND);
+        textField.setForeground(DOSSIER_TEXT);
+        textField.setCaretColor(DOSSIER_ACCENT);
+        textField.setHorizontalAlignment(SwingConstants.TRAILING);
+        textField.setToolTipText(tooltip);
+    }
+
     private void configureSpinner(JSpinner spinner, String pattern, String labelKey, String tooltipKey) {
+        configureNumberSpinner(spinner, pattern, resourceMap.getString(labelKey), resourceMap.getString(tooltipKey));
+    }
+
+    private void configureNumberSpinner(JSpinner spinner, String pattern, String label, String tooltip) {
         spinner.setEditor(new JSpinner.NumberEditor(spinner, pattern));
         spinner.setBorder(BorderFactory.createLineBorder(DOSSIER_DIVIDER));
         spinner.setPreferredSize(new Dimension(UIUtil.scaleForGUI(88), spinner.getPreferredSize().height));
-        String label = resourceMap.getString(labelKey);
-        String tooltip = resourceMap.getString(tooltipKey);
         spinner.setToolTipText(tooltip);
         spinner.getAccessibleContext().setAccessibleName(label);
         spinner.getAccessibleContext().setAccessibleDescription(tooltip);
@@ -477,11 +660,17 @@ public class JumpPathViewPanel extends JScrollablePanel {
     }
 
     private void addPlannerInput(JPanel planner, int row, String labelKey, String tooltipKey, JSpinner spinner) {
+        addPlannerControl(planner, row, resourceMap.getString(labelKey), resourceMap.getString(tooltipKey), spinner);
+    }
+
+    private void addPlannerControl(JPanel planner, int row, String labelText, String tooltip, JComponent control) {
         JPanel input = createBandPanel();
         input.setLayout(new GridBagLayout());
-        JLabel label = createPlannerLabel(labelKey);
-        label.setLabelFor(spinner);
-        label.setToolTipText(resourceMap.getString(tooltipKey));
+        JLabel label = new JLabel(labelText);
+        label.setForeground(DOSSIER_MUTED_TEXT);
+        label.setFont(label.getFont().deriveFont(Font.BOLD, label.getFont().getSize2D() * 0.8f));
+        label.setLabelFor(control);
+        label.setToolTipText(tooltip);
 
         GridBagConstraints constraints = new GridBagConstraints();
         constraints.gridx = 0;
@@ -495,7 +684,7 @@ public class JumpPathViewPanel extends JScrollablePanel {
         constraints.gridx = 1;
         constraints.gridy = 0;
         constraints.anchor = GridBagConstraints.EAST;
-        input.add(spinner, constraints);
+        input.add(control, constraints);
 
         constraints = createFullWidthConstraints(row);
         constraints.insets = new Insets(3, 0, 3, 0);
@@ -529,10 +718,12 @@ public class JumpPathViewPanel extends JScrollablePanel {
     }
 
     private void refreshPlanPresentation() {
+        schedule = calculateSchedule();
         startingTransitValue.setText(formatDays(itineraryPlan.startingTransitDays()));
         endingTransitValue.setText(formatDays(itineraryPlan.endingTransitDays()));
         rechargeValue.setText(formatDays(itineraryPlan.rechargeDays()));
-        totalTimeValue.setText(formatDays(itineraryPlan.totalDays()));
+        totalTimeValue.setText(formatDays(itineraryPlan.totalDays() + (schedule.totalDwellHours() / 24.0)));
+        refreshSchedulePresentation();
         populateItinerary(itinerarySection);
         itinerarySection.revalidate();
         itinerarySection.repaint();
@@ -549,10 +740,11 @@ public class JumpPathViewPanel extends JScrollablePanel {
             itinerary.remove(1);
         }
 
-        LocalDate currentDate = itineraryPlan.startDate();
+        LocalDate currentDate = schedule.departure().toLocalDate();
         Color routeColor = isActiveRoute() ? DOSSIER_ACTIVE : DOSSIER_ACCENT;
 
-        for (TimelineEntry entry : itineraryPlan.entries()) {
+        for (JumpPathSchedule.Entry scheduledEntry : schedule.entries()) {
+            TimelineEntry entry = scheduledEntry.itineraryEntry();
             JPanel waypoint = createBandPanel();
             waypoint.setLayout(new GridBagLayout());
             if (entry.sequence() > 1) {
@@ -614,26 +806,37 @@ public class JumpPathViewPanel extends JScrollablePanel {
             }
             if (entry.origin()) {
                 addTimelineEvent(waypoint, eventRow++, resourceMap.getString("timeline.originStart.text"),
-                    formatTimelineMoment(currentDate, entry.arrivalElapsedDays(), locale, resourceMap));
+                    formatScheduleMoment(scheduledEntry.arrival(), locale));
                 addTimelineEvent(waypoint, eventRow++,
                     format(resourceMap.getString("timeline.jumpDeparture.format"),
                         formatDuration(itineraryPlan.startingTransitDays())),
-                    formatTimelineMoment(currentDate, entry.departureElapsedDays(), locale, resourceMap));
+                    formatScheduleMoment(scheduledEntry.departure(), locale));
             } else {
                 addTimelineEvent(waypoint, eventRow++, resourceMap.getString("timeline.jumpArrival.text"),
-                    formatTimelineMoment(currentDate, entry.arrivalElapsedDays(), locale, resourceMap));
+                    formatScheduleMoment(scheduledEntry.arrival(), locale));
             }
             if (!entry.origin() && !entry.destination()) {
-                addTimelineEvent(waypoint, eventRow++,
-                    format(resourceMap.getString("timeline.rechargeDeparture.format"),
-                        formatHours(entry.rechargeHours(), locale, resourceMap)),
-                    formatTimelineMoment(currentDate, entry.departureElapsedDays(), locale, resourceMap));
+                if (scheduledEntry.dwellHours() > 0) {
+                    addTimelineEvent(waypoint, eventRow++,
+                        format(resourceMap.getString("timeline.rechargeComplete.format"),
+                            formatHours(entry.rechargeHours(), locale, resourceMap)),
+                        formatScheduleMoment(scheduledEntry.readyForDeparture(), locale));
+                    addTimelineEvent(waypoint, eventRow++,
+                        format(resourceMap.getString("timeline.dwellDeparture.format"),
+                            formatHours(scheduledEntry.dwellHours(), locale, resourceMap)),
+                        formatScheduleMoment(scheduledEntry.departure(), locale));
+                } else {
+                    addTimelineEvent(waypoint, eventRow++,
+                        format(resourceMap.getString("timeline.rechargeDeparture.format"),
+                            formatHours(entry.rechargeHours(), locale, resourceMap)),
+                        formatScheduleMoment(scheduledEntry.departure(), locale));
+                }
             }
             if (entry.destination()) {
                 addTimelineEvent(waypoint, eventRow,
                     format(resourceMap.getString("timeline.endpointArrival.format"),
                         formatDuration(entry.endpointTransitDays())),
-                    formatTimelineMoment(currentDate, entry.endpointArrivalElapsedDays(), locale, resourceMap));
+                    formatScheduleMoment(scheduledEntry.endpointArrival(), locale));
             }
 
             constraints = createFullWidthConstraints(entry.sequence());
@@ -803,6 +1006,43 @@ public class JumpPathViewPanel extends JScrollablePanel {
               getFleetSystem(currentLocation), getCurrentTransit(currentLocation), circuitPlan);
     }
 
+    private Result calculateSchedule() {
+        LocalDateTime anchor = scheduleMode == Mode.DEPART_AT ? departureAnchor : arrivalDeadline;
+        return JumpPathSchedule.calculate(itineraryPlan, requestedStops, dwellHoursByRequestedStop,
+              scheduleMode, anchor, earliestFeasibleDeparture);
+    }
+
+    private void refreshSchedulePresentation() {
+        if (scheduleAnchorValue == null) {
+            return;
+        }
+        scheduleAnchorLabel.setText(resourceMap.getString(schedule.mode() == Mode.DEPART_AT
+              ? "schedule.departureAnchor.text"
+              : "schedule.arrivalDeadline.text"));
+        scheduleAnchorValue.setText(formatScheduleMoment(schedule.anchor(), locale));
+        scheduleDepartureValue.setText(formatScheduleMoment(schedule.departure(), locale));
+        scheduleArrivalValue.setText(formatScheduleMoment(schedule.arrival(), locale));
+        scheduleDwellValue.setText(formatHours(schedule.totalDwellHours(), locale, resourceMap));
+        scheduleStatusValue.setText(scheduleStatusText(schedule, locale, resourceMap));
+        scheduleStatusValue.setForeground(schedule.feasible() ? DOSSIER_ACCENT : DOSSIER_ACTIVE);
+        scheduleStatusValue.getAccessibleContext().setAccessibleName(scheduleStatusValue.getText());
+    }
+
+    private void updateScheduleAnchorControl() {
+        adjustingScheduleAnchor = true;
+        LocalDateTime anchor = scheduleMode == Mode.DEPART_AT ? departureAnchor : arrivalDeadline;
+        scheduleAnchorSpinner.setValue(toDate(anchor));
+        adjustingScheduleAnchor = false;
+    }
+
+    private static Date toDate(LocalDateTime dateTime) {
+        return Date.from(dateTime.toInstant(ZoneOffset.UTC));
+    }
+
+    private static LocalDateTime fromDate(Date date) {
+        return LocalDateTime.ofInstant(date.toInstant(), ZoneOffset.UTC).withSecond(0).withNano(0);
+    }
+
     static boolean isCourseSelected(JumpPath path, Course course) {
         List<PlanetarySystem> pathSystems = path.getSystems();
         List<PlanetarySystem> courseSystems = course.systems();
@@ -866,6 +1106,26 @@ public class JumpPathViewPanel extends JScrollablePanel {
         String sign = (roundedHours < 0) ? "-" : "+";
         return format(resources.getString("timeline.moment.format"), date, sign,
               formatHours(Math.abs(roundedHours), locale, resources));
+    }
+
+    static String formatScheduleMoment(LocalDateTime moment, Locale locale) {
+        return DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
+                     .withLocale(locale)
+                     .format(moment);
+    }
+
+    static String scheduleStatusText(Result schedule, Locale locale, ResourceBundle resources) {
+        if (schedule.feasible()) {
+            return resources.getString(schedule.mode() == Mode.DEPART_AT
+                  ? "schedule.status.forecast.text"
+                  : "schedule.status.feasible.text");
+        }
+        long missedHours = Math.max(1,
+              (Duration.between(schedule.departure(), schedule.earliestFeasibleDeparture()).toMinutes() + 59) / 60);
+        return format(resources.getString(schedule.mode() == Mode.DEPART_AT
+                    ? "schedule.status.departureUnavailable.format"
+                    : "schedule.status.missed.format"),
+              formatHours(missedHours, locale, resources));
     }
 
     private static String formatHours(long totalHours, Locale locale, ResourceBundle resources) {

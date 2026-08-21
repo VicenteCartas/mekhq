@@ -1265,11 +1265,12 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
 
     private JumpPathViewPanel createJumpPathViewPanel(JumpPath path) {
         List<Course> courses = List.of();
-        if (!routePlanningIntent.getJumpPath().isEmpty() && !routePlanningIntent.getRequestedStops().isEmpty()) {
+        List<PlanetarySystem> requestedStops = routePlanningIntent.getRequestedStops();
+        if (!routePlanningIntent.getJumpPath().isEmpty() && !requestedStops.isEmpty()) {
             courses = getCampaign().calculateRouteAlternatives(routePlanningIntent.getOrigin(),
-                  routePlanningIntent.getRequestedStops());
+                  requestedStops);
         }
-        return new JumpPathViewPanel(path, getCampaign(), courses, this::adoptRouteAlternative);
+        return new JumpPathViewPanel(path, getCampaign(), courses, requestedStops, this::adoptRouteAlternative);
     }
 
     private void showDossier(PlanetarySystem system, int planetPosition) {

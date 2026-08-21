@@ -36,12 +36,15 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.ResourceBundle;
 
 import mekhq.campaign.JumpPath;
 import mekhq.campaign.JumpPathItinerary.CircuitMode;
+import mekhq.campaign.JumpPathSchedule.Mode;
+import mekhq.campaign.JumpPathSchedule.Result;
 import mekhq.campaign.NavigationRouteAnalysis.Finding;
 import mekhq.campaign.NavigationRouteAnalysis.FindingKind;
 import mekhq.campaign.NavigationRouteAnalysis.LegAssessment;
@@ -70,6 +73,25 @@ class JumpPathViewPanelTest {
         assertEquals("Dec 31, 3024 | D-2h",
               JumpPathViewPanel.formatTimelineMoment(START_DATE, -2.0 / 24.0, Locale.US, RESOURCES));
     }
+
+        @Test
+        void scheduleMomentUsesLocalizedAbsoluteDateAndTime() {
+          assertEquals("Jan 3, 3025, 2:30\u202fPM",
+          JumpPathViewPanel.formatScheduleMoment(START_DATE.atTime(14, 30).plusDays(2), Locale.US));
+        }
+
+        @Test
+        void scheduleStatusDistinguishesFeasibleForecastAndMissedDeadline() {
+        LocalDateTime earliest = START_DATE.atStartOfDay();
+        Result forecast = new Result(Mode.DEPART_AT, earliest, earliest, earliest,
+          earliest.plusDays(4), 0, true, List.of(), List.of());
+        Result missed = new Result(Mode.ARRIVE_BY, earliest.plusDays(4), earliest,
+          earliest.minusHours(5), earliest.plusDays(4), 0, false, List.of(), List.of());
+
+        assertEquals("FORECAST READY", JumpPathViewPanel.scheduleStatusText(forecast, Locale.US, RESOURCES));
+        assertEquals("DEADLINE MISSED BY 5h",
+          JumpPathViewPanel.scheduleStatusText(missed, Locale.US, RESOURCES));
+        }
 
         @Test
         void courseSelectionComparesStableSystemIds() {
