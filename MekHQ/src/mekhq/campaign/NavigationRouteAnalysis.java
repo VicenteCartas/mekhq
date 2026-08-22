@@ -161,6 +161,11 @@ public final class NavigationRouteAnalysis {
 
     public static LegAssessment assessLeg(PlanetarySystem origin, PlanetarySystem destination, LocalDate date,
           boolean useCommandCircuit, Policy policy) {
+          return assessLeg(origin, destination, date, useCommandCircuit, policy, false);
+        }
+
+        private static LegAssessment assessLeg(PlanetarySystem origin, PlanetarySystem destination, LocalDate date,
+            boolean useCommandCircuit, Policy policy, boolean requestedDestination) {
         Objects.requireNonNull(date);
         Objects.requireNonNull(policy);
 
@@ -182,10 +187,13 @@ public final class NavigationRouteAnalysis {
             findings.add(new Finding(FindingKind.ACCESS_DENIED, Severity.BLOCKED));
         }
         if (abandoned) {
-            findings.add(new Finding(policy.isAvoidingAbandonedSystems()
+            boolean avoided = policy.isAvoidingAbandonedSystems()
+                                    && (!requestedDestination
+                                              || !policy.isRequestedDestinationAllowed(destination));
+            findings.add(new Finding(avoided
                                            ? FindingKind.ABANDONED_DESTINATION_AVOIDED
                                            : FindingKind.ABANDONED_DESTINATION_ALLOWED,
-                  policy.isAvoidingAbandonedSystems() ? Severity.BLOCKED : Severity.CAUTION));
+                  avoided ? Severity.BLOCKED : Severity.CAUTION));
         }
         if (Double.isFinite(rechargeHours)) {
             findings.add(new Finding(FindingKind.RECHARGE_DURATION, Severity.INFO));
@@ -208,24 +216,44 @@ public final class NavigationRouteAnalysis {
 
     public static PathAssessment assessPath(List<PlanetarySystem> systems, LocalDate date,
           boolean useCommandCircuit, Policy policy) {
-                return assessPath(systems, date, destinationIndex -> useCommandCircuit, policy);
-        }
+        return assessPath(systems, List.of(), date, destinationIndex -> useCommandCircuit, policy);
+    }
 
-        public static PathAssessment assessPath(List<PlanetarySystem> systems, LocalDate date,
-                    IntPredicate useCommandCircuitAtDestination, Policy policy) {
+    public static PathAssessment assessPath(List<PlanetarySystem> systems, LocalDate date,
+          IntPredicate useCommandCircuitAtDestination, Policy policy) {
+        return assessPath(systems, List.of(), date, useCommandCircuitAtDestination, policy);
+    }
+
+    public static PathAssessment assessPath(List<PlanetarySystem> systems,
+          List<PlanetarySystem> requestedStops, LocalDate date,
+          IntPredicate useCommandCircuitAtDestination, Policy policy) {
         Objects.requireNonNull(systems);
+        Objects.requireNonNull(requestedStops);
         Objects.requireNonNull(date);
-                Objects.requireNonNull(useCommandCircuitAtDestination);
+        Objects.requireNonNull(useCommandCircuitAtDestination);
         Objects.requireNonNull(policy);
         if (systems.size() < 2) {
             return new PathAssessment(List.of(), Severity.CLEAR);
         }
 
-        Policy segmentPolicy = policy.forSegment(systems.getFirst(), systems.getLast());
+        List<PlanetarySystem> effectiveStops = requestedStops.isEmpty()
+                                                        ? List.of(systems.getLast())
+                                                        : List.copyOf(requestedStops);
+        int requestedStopIndex = 0;
+        PlanetarySystem segmentOrigin = systems.getFirst();
+        Policy segmentPolicy = policy.forSegment(segmentOrigin, effectiveStops.getFirst());
         List<LegAssessment> legs = new ArrayList<>(systems.size() - 1);
         for (int index = 1; index < systems.size(); index++) {
-            legs.add(assessLeg(systems.get(index - 1), systems.get(index), date,
-                  useCommandCircuitAtDestination.test(index), segmentPolicy));
+            PlanetarySystem destination = systems.get(index);
+            boolean requestedDestination = requestedStopIndex < effectiveStops.size()
+                                                 && sameSystem(destination,
+                                                       effectiveStops.get(requestedStopIndex));
+            legs.add(assessLeg(systems.get(index - 1), destination, date,
+                  useCommandCircuitAtDestination.test(index), segmentPolicy, requestedDestination));
+            if (requestedDestination && (++requestedStopIndex < effectiveStops.size())) {
+                segmentOrigin = destination;
+                segmentPolicy = policy.forSegment(segmentOrigin, effectiveStops.get(requestedStopIndex));
+            }
         }
         return new PathAssessment(legs, overallSeverity(legs.stream().map(LegAssessment::severity).toList()));
     }
@@ -319,5 +347,9 @@ public final class NavigationRouteAnalysis {
 
     private static String systemId(PlanetarySystem system) {
         return Objects.requireNonNull(system.getId());
+    }
+
+    private static boolean sameSystem(PlanetarySystem first, PlanetarySystem second) {
+        return Objects.equals(systemId(first), systemId(second));
     }
 }

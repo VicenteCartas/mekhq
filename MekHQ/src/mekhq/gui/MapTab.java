@@ -60,6 +60,7 @@ import java.awt.event.KeyEvent;
 import java.util.List;
 import java.util.Objects;
 import java.util.ResourceBundle;
+import java.util.function.Consumer;
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.JCheckBoxMenuItem;
@@ -83,7 +84,11 @@ import megamek.common.ui.FastJScrollPane;
 import mekhq.MekHQ;
 import mekhq.campaign.AbstractLocation;
 import mekhq.campaign.JumpPath;
+import mekhq.campaign.NavigationRouteAnalysis.PathAssessment;
+import mekhq.campaign.NavigationRouteAnalysis.Severity;
 import mekhq.campaign.RouteAlternativesPlanner.Course;
+import mekhq.campaign.RouteAlternativesPlanner.PlanningResult;
+import mekhq.campaign.RouteAlternativesPlanner.PlanningStatus;
 import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.events.NewDayEvent;
 import mekhq.campaign.events.OptionsChangedEvent;
@@ -94,6 +99,7 @@ import mekhq.campaign.unit.Unit;
 import mekhq.campaign.universe.Planet;
 import mekhq.campaign.universe.PlanetarySystem;
 import mekhq.campaign.utilities.JumpBlockers;
+import mekhq.gui.RoutePlanningIntent.ChangeResult;
 import mekhq.gui.baseComponents.FramedCommandButton;
 import mekhq.gui.baseComponents.FramedCommandButtonStyle.ButtonColors;
 import mekhq.gui.baseComponents.FramedCommandButtonStyle.ButtonStateColors;
@@ -150,6 +156,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
     private FramedCommandButton btnToggleInspector;
     private FramedCommandButton btnToggleFocus;
     private FramedCommandButton btnToggleRouteTray;
+    private FramedCommandButton btnRoutingOptions;
     private FramedCommandButton btnJumpFees;
     private FramedCommandButton btnCalculateJumpPath;
     private FramedCommandButton btnBeginTransit;
@@ -202,12 +209,25 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
           return isWhatIfRoute(proposedPath, campaignCurrentSystem) ? 0.0 : campaignTransitProgress;
         }
 
-        static boolean canBeginTransit(JumpPath proposedPath, PlanetarySystem campaignCurrentSystem,
-            JumpPath activePath) {
+                static boolean canBeginTransit(JumpPath proposedPath, PlanetarySystem campaignCurrentSystem,
+                        JumpPath activePath, PathAssessment routeAssessment) {
           return (proposedPath != null) && !proposedPath.isEmpty() && (proposedPath.getJumps() > 0)
               && Objects.equals(proposedPath.getFirstSystem(), campaignCurrentSystem)
-              && ((activePath == null) || activePath.isEmpty());
+                            && ((activePath == null) || activePath.isEmpty()) && (routeAssessment != null)
+                            && (routeAssessment.severity() != Severity.BLOCKED);
         }
+
+    static void dispatchRoutePlanningFeedback(ChangeResult changeResult,
+          Consumer<PlanningStatus> feedbackHandler) {
+        Objects.requireNonNull(changeResult);
+        Objects.requireNonNull(feedbackHandler);
+        switch (changeResult) {
+            case ACCESS_DENIED -> feedbackHandler.accept(PlanningStatus.ACCESS_DENIED);
+            case NO_ROUTE -> feedbackHandler.accept(PlanningStatus.NO_ROUTE);
+            default -> {
+            }
+        }
+    }
     //endregion Constructors
 
     @Override
@@ -342,26 +362,27 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         constraints.insets = new Insets(0, 0, 0, PADDING);
         navigationHud.add(suggestPlanet, constraints);
 
-          FramedCommandButton centerOnFleet = createHudButton("mapHud.centerOnFleet.text",
+            FramedCommandButton centerOnFleet = createHudButton("mapHud.centerOnFleet.text",
               "mapHud.centerOnFleet.toolTipText");
         centerOnFleet.addActionListener(event -> panMap.centerOnCurrentSystem());
         constraints = new GridBagConstraints();
-        constraints.gridx = 2;
+            constraints.gridx = 2;
         constraints.gridy = 0;
         constraints.anchor = GridBagConstraints.EAST;
         constraints.insets = new Insets(0, 0, 0, PADDING);
         navigationHud.add(centerOnFleet, constraints);
 
-          FramedCommandButton routingOptions = createHudButton("mapHud.routingOptions.text",
+        btnRoutingOptions = createHudButton("mapHud.routingOptions.text",
               "mapHud.routingOptions.toolTipText");
         JPopupMenu routingMenu = createRoutingMenu();
-        routingOptions.addActionListener(event -> routingMenu.show(routingOptions, 0, routingOptions.getHeight()));
+        btnRoutingOptions.addActionListener(event ->
+              routingMenu.show(btnRoutingOptions, 0, btnRoutingOptions.getHeight()));
         constraints = new GridBagConstraints();
         constraints.gridx = 3;
         constraints.gridy = 0;
         constraints.anchor = GridBagConstraints.EAST;
         constraints.insets = new Insets(0, 0, 0, PADDING);
-        navigationHud.add(routingOptions, constraints);
+        navigationHud.add(btnRoutingOptions, constraints);
 
         btnToggleInspector = createHudButton("mapHud.inspector.hide.text",
               "mapHud.inspector.hide.toolTipText");
@@ -498,8 +519,8 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         avoidAbandonedSystems.setToolTipText(wordWrap(
               resourceMap.getString("chkAvoidAbandonedSystems.toolTipText")));
         avoidAbandonedSystems.setSelected(getCampaign().getPlayerForce().isAvoidingEmptySystems());
-        avoidAbandonedSystems.addActionListener(event -> getCampaign().getPlayerForce()
-              .setIsAvoidingEmptySystems(avoidAbandonedSystems.isSelected()));
+        avoidAbandonedSystems.addActionListener(event ->
+              getCampaign().getPlayerForce().setIsAvoidingEmptySystems(avoidAbandonedSystems.isSelected()));
         routingMenu.add(avoidAbandonedSystems);
 
         JCheckBoxMenuItem useCommandCircuits = new JCheckBoxMenuItem(
@@ -781,7 +802,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
               || ((routeTransitionTimer != null) && routeTransitionTimer.isRunning())) {
             return;
         }
-        btnCalculateJumpPath.setEnabled((resolveRouteField(suggestRouteOrigin) != null)
+          btnCalculateJumpPath.setEnabled((resolveRouteField(suggestRouteOrigin) != null)
               && (resolveRouteField(suggestRouteDestination) != null));
     }
 
@@ -848,6 +869,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         }
 
           boolean isPlannedRoute = hasProposedPath;
+          PathAssessment proposedRouteAssessment = isPlannedRoute ? assessPlannedRoute(proposedPath) : null;
           boolean whatIfRoute = isPlannedRoute
               && isWhatIfRoute(proposedPath, getCampaign().getCurrentSystem());
           RouteStripState routeState = whatIfRoute ? RouteStripState.WHAT_IF_ROUTE
@@ -889,7 +911,8 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         }
 
           boolean beginTransitEnabled = isPlannedRoute
-              && canBeginTransit(proposedPath, getCampaign().getCurrentSystem(), activePath);
+              && canBeginTransit(proposedPath, getCampaign().getCurrentSystem(), activePath,
+                    proposedRouteAssessment);
           return new RouteStripSnapshot(routeState,
               statusText,
               isPlannedRoute ? PLANNED_ROUTE_COLOR : ACTIVE_ROUTE_COLOR,
@@ -1048,10 +1071,10 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         boolean routeDetailsVisible = layoutState.isRouteTrayExpanded();
         lblRouteCost.setVisible(routeDetailsVisible && snapshot.costVisible());
         btnCalculateJumpPath.setVisible(routeDetailsVisible && snapshot.plotCourseVisible());
-        btnCalculateJumpPath.setEnabled(enableActions && snapshot.plotCourseEnabled());
+                    btnCalculateJumpPath.setEnabled(enableActions && snapshot.plotCourseEnabled());
         btnBeginTransit.setVisible(routeDetailsVisible);
-        btnBeginTransit.setEnabled(enableActions && snapshot.beginTransitEnabled());
-          String beginTransitDescription = snapshot.state() == RouteStripState.WHAT_IF_ROUTE
+                    btnBeginTransit.setEnabled(enableActions && snapshot.beginTransitEnabled());
+                        String beginTransitDescription = snapshot.state() == RouteStripState.WHAT_IF_ROUTE
               ? resourceMap.getString("routePlanner.beginTransitWhatIf.toolTipText")
               : resourceMap.getString("btnBeginTransit.toolTipText");
           btnBeginTransit.setToolTipText(beginTransitDescription);
@@ -1103,17 +1126,17 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
 
     @Override
     public void appendWaypoint(PlanetarySystem destination) {
-        boolean routeChanged;
+        ChangeResult routeChange;
         if (routePlanningIntent.getJumpPath().isEmpty()) {
             PlanetarySystem origin = resolveRouteField(suggestRouteOrigin);
             if (origin == null) {
                 origin = routePlanningIntent.getOrigin();
             }
-            routeChanged = routePlanningIntent.plot(origin, destination, this::calculateRouteSegment);
+            routeChange = routePlanningIntent.plot(origin, destination, this::calculateRouteSegment);
         } else {
-            routeChanged = routePlanningIntent.append(destination, this::calculateRouteSegment);
+            routeChange = routePlanningIntent.append(destination, this::calculateRouteSegment);
         }
-        applyRoutePlanningChange(routeChanged, destination);
+        applyRoutePlanningChange(routeChange, destination);
     }
 
     @Override
@@ -1151,12 +1174,18 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         return routePlanningIntent.isRequestedStop(system);
     }
 
-    private JumpPath calculateRouteSegment(PlanetarySystem origin, PlanetarySystem destination) {
-        return getCampaign().calculateJumpPath(origin, destination, false, false);
+    private PlanningResult calculateRouteSegment(PlanetarySystem origin, PlanetarySystem destination) {
+        return getCampaign().calculateJumpPathForPlanning(origin, destination);
     }
 
-    private void applyRoutePlanningChange(boolean routeChanged, PlanetarySystem selection) {
-        if (!routeChanged) {
+    private PathAssessment assessPlannedRoute(JumpPath path) {
+        return getCampaign().assessNavigationPath(path.getSystems(), routePlanningIntent.getRequestedStops(),
+              destinationIndex -> getCampaign().isUseCommandCircuit());
+    }
+
+    private void applyRoutePlanningChange(ChangeResult routeChange, PlanetarySystem selection) {
+        dispatchRoutePlanningFeedback(routeChange, getCampaign()::showRoutePlanningFailure);
+        if (!routeChange.changed()) {
             return;
         }
         panMap.setJumpPath(routePlanningIntent.getJumpPath());
@@ -1171,7 +1200,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
     private void adoptRouteAlternative(Course course) {
         JumpPath alternative = course.toJumpPath();
         if (routePlanningIntent.adopt(alternative)) {
-            applyRoutePlanningChange(true, alternative.getLastSystem());
+            applyRoutePlanningChange(ChangeResult.CHANGED, alternative.getLastSystem());
         }
     }
 
@@ -1181,7 +1210,8 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
                                                    .getForceDetachment()
                                                    .getCurrentLocation();
         JumpPath activePath = (currentLocation == null) ? null : currentLocation.getJumpPath();
-                if (!canBeginTransit(jumpPath, getCampaign().getCurrentSystem(), activePath)) {
+        PathAssessment routeAssessment = assessPlannedRoute(jumpPath);
+        if (!canBeginTransit(jumpPath, getCampaign().getCurrentSystem(), activePath, routeAssessment)) {
             return;
         }
 
@@ -1274,10 +1304,10 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
     }
 
     private void showDossier(PlanetarySystem system, int planetPosition) {
-        DossierIdentity dossierIdentity = new DossierIdentity(system.getId(), planetPosition);
+          DossierIdentity dossierIdentity = new DossierIdentity(system.getId(), planetPosition);
         boolean animateReveal = presentedDossierIdentity != null &&
                                       !presentedDossierIdentity.equals(dossierIdentity);
-        scrollPlanetView.setViewportView(new PlanetViewPanel(system, getCampaign(), planetPosition, animateReveal));
+            scrollPlanetView.setViewportView(new PlanetViewPanel(system, getCampaign(), planetPosition, animateReveal));
         presentedDossierIdentity = dossierIdentity;
         SwingUtilities.invokeLater(() -> scrollPlanetView.getVerticalScrollBar().setValue(0));
     }

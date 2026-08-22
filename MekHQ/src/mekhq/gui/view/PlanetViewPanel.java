@@ -248,11 +248,11 @@ public class PlanetViewPanel extends JScrollablePanel {
                   format("summary.jumpPoint.value", planet.getTimeToJumpPoint(1)), false);
             if (planet.getSourcedHPG(currentDate) != null) {
                 addMetric(summary, metricIndex++, "summary.hpg.text",
-                      String.valueOf(planet.getSourcedHPG(currentDate).getValue()), false);
+                    String.valueOf(planet.getSourcedHPG(currentDate).getValue()), false);
             }
             if (planet.getPopulation(currentDate) != null) {
                 String population = NumberFormat.getIntegerInstance(MekHQ.getMHQOptions().getLocale())
-                                          .format(planet.getPopulation(currentDate));
+                                .format(planet.getPopulation(currentDate));
                 addMetric(summary, metricIndex++, "summary.population.text", population, false);
             }
             addMetric(summary, metricIndex++, "summary.hiringHall.text", getHiringHallText(planet), false);
@@ -422,7 +422,7 @@ public class PlanetViewPanel extends JScrollablePanel {
         section.addRow("lblHiringHall.text", new JLabel(getHiringHallText(planet)));
 
         // Academies
-        List<Academy> filteredAcademies = system.getFilteredAcademies(campaign);
+    List<Academy> filteredAcademies = system.getFilteredAcademies(campaign);
         if (!filteredAcademies.isEmpty()) {
             JTextPane txtAcademies = createHtmlTextPane(
                   MarkdownRenderer.getRenderedHtml(system.getAcademiesForSystem(filteredAcademies)));

@@ -73,11 +73,45 @@ public final class RouteAlternativesPlanner {
         BLOCKED
     }
 
+    /** Outcome of planning one requested route segment. */
+    public enum PlanningStatus {
+        ROUTE_FOUND,
+        ACCESS_DENIED,
+        NO_ROUTE
+    }
+
+    /** A route segment or the deterministic reason one could not be returned. */
+    public record PlanningResult(JumpPath path, PlanningStatus status) {
+        public PlanningResult {
+            Objects.requireNonNull(path);
+            Objects.requireNonNull(status);
+            if ((status == PlanningStatus.ROUTE_FOUND) == path.isEmpty()) {
+                throw new IllegalArgumentException("Planning status must match path availability");
+            }
+        }
+
+        public static PlanningResult found(JumpPath path) {
+            return new PlanningResult(path, PlanningStatus.ROUTE_FOUND);
+        }
+
+        public static PlanningResult failed(PlanningStatus status) {
+            return new PlanningResult(new JumpPath(), status);
+        }
+
+        public boolean routeFound() {
+            return status == PlanningStatus.ROUTE_FOUND;
+        }
+    }
+
     /** Supplies the route graph and campaign-specific filtering without owning mutable campaign options. */
     public interface RoutePolicy {
         Collection<PlanetarySystem> getNeighbors(PlanetarySystem system);
 
         boolean isSystemAllowed(PlanetarySystem system);
+
+        default boolean isRequestedDestinationAllowed(PlanetarySystem system) {
+            return isSystemAllowed(system);
+        }
 
         boolean canTraverse(PlanetarySystem origin, PlanetarySystem destination);
 
@@ -198,12 +232,65 @@ public final class RouteAlternativesPlanner {
         return path;
     }
 
+    static PlanningResult planFastestSegmentWithFallback(PlanetarySystem origin, PlanetarySystem destination,
+          LocalDate date, boolean useCommandCircuit, RoutePolicy strictPolicy, RoutePolicy fallbackPolicy) {
+        JumpPath strictPath = planFastestSegment(origin, destination, date, useCommandCircuit, strictPolicy);
+        if (!strictPath.isEmpty()) {
+            return PlanningResult.found(strictPath);
+        }
+
+        JumpPath fallbackPath = planFastestSegment(origin, destination, date, useCommandCircuit, fallbackPolicy);
+        if (!fallbackPath.isEmpty()) {
+            return PlanningResult.found(fallbackPath);
+        }
+
+        // This path is evidence for failure classification only and is never returned to the caller.
+        JumpPath accessIndependentPath = planFastestSegment(origin, destination, date, useCommandCircuit,
+              withoutAccessRestrictions(strictPolicy));
+        if (accessIndependentPath.isEmpty()) {
+            accessIndependentPath = planFastestSegment(origin, destination, date, useCommandCircuit,
+                  withoutAccessRestrictions(fallbackPolicy));
+        }
+        return PlanningResult.failed(accessIndependentPath.isEmpty()
+                                           ? PlanningStatus.NO_ROUTE
+                                           : PlanningStatus.ACCESS_DENIED);
+    }
+
+    private static RoutePolicy withoutAccessRestrictions(RoutePolicy delegate) {
+        return new RoutePolicy() {
+            @Override
+            public Collection<PlanetarySystem> getNeighbors(PlanetarySystem system) {
+                return delegate.getNeighbors(system);
+            }
+
+            @Override
+            public boolean isSystemAllowed(PlanetarySystem system) {
+                return delegate.isSystemAllowed(system);
+            }
+
+            @Override
+            public boolean isRequestedDestinationAllowed(PlanetarySystem system) {
+                return delegate.isRequestedDestinationAllowed(system);
+            }
+
+            @Override
+            public boolean canTraverse(PlanetarySystem origin, PlanetarySystem destination) {
+                return true;
+            }
+
+            @Override
+            public RoutePolicy forSegment(PlanetarySystem origin, PlanetarySystem destination) {
+                return withoutAccessRestrictions(delegate.forSegment(origin, destination));
+            }
+        };
+    }
+
     private static List<PlanetarySystem> findSegment(PlanetarySystem origin, PlanetarySystem destination,
           LocalDate date, boolean useCommandCircuit, Objective objective, RoutePolicy policy) {
         if (sameSystem(origin, destination)) {
             return List.of(origin);
         }
-        if (!policy.isSystemAllowed(destination)) {
+        if (!policy.isRequestedDestinationAllowed(destination)) {
             return List.of();
         }
 
@@ -231,7 +318,7 @@ public final class RouteAlternativesPlanner {
             neighbors.sort(Comparator.comparing(RouteAlternativesPlanner::systemKey));
             for (PlanetarySystem neighbor : neighbors) {
                 if ((neighbor == null) || containsSystem(current.systems(), neighbor)
-                      || !policy.isSystemAllowed(neighbor)
+                                            || (!sameSystem(neighbor, destination) && !policy.isSystemAllowed(neighbor))
                       || !policy.canTraverse(current.system(), neighbor)) {
                     continue;
                 }

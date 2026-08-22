@@ -36,7 +36,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import mekhq.campaign.JumpPath;
+import mekhq.campaign.NavigationRouteAnalysis.PathAssessment;
+import mekhq.campaign.NavigationRouteAnalysis.Severity;
+import mekhq.campaign.RouteAlternativesPlanner.PlanningStatus;
 import mekhq.campaign.universe.PlanetarySystem;
 import org.junit.jupiter.api.Test;
 
@@ -49,7 +55,7 @@ class MapTabRoutePlanningTest {
 
         assertTrue(MapTab.isWhatIfRoute(proposedPath, fleetSystem));
         assertEquals(0.0, MapTab.getProposedRouteTransitProgress(proposedPath, fleetSystem, 4.5));
-        assertFalse(MapTab.canBeginTransit(proposedPath, fleetSystem, null));
+        assertFalse(MapTab.canBeginTransit(proposedPath, fleetSystem, null, assessment(Severity.CLEAR)));
     }
 
     @Test
@@ -59,7 +65,7 @@ class MapTabRoutePlanningTest {
 
         assertFalse(MapTab.isWhatIfRoute(proposedPath, fleetSystem));
         assertEquals(4.5, MapTab.getProposedRouteTransitProgress(proposedPath, fleetSystem, 4.5));
-        assertTrue(MapTab.canBeginTransit(proposedPath, fleetSystem, null));
+        assertTrue(MapTab.canBeginTransit(proposedPath, fleetSystem, null, assessment(Severity.CLEAR)));
     }
 
     @Test
@@ -68,7 +74,32 @@ class MapTabRoutePlanningTest {
         JumpPath proposedPath = path(fleetSystem, new PlanetarySystem("Proposed Destination"));
         JumpPath activePath = path(fleetSystem, new PlanetarySystem("Active Destination"));
 
-        assertFalse(MapTab.canBeginTransit(proposedPath, fleetSystem, activePath));
+        assertFalse(MapTab.canBeginTransit(proposedPath, fleetSystem, activePath, assessment(Severity.CLEAR)));
+    }
+
+    @Test
+    void routeAssessmentBlocksTransitButAllowsCautionOnlyRoutes() {
+        PlanetarySystem fleetSystem = new PlanetarySystem("Fleet System");
+        JumpPath proposedPath = path(fleetSystem, new PlanetarySystem("Destination"));
+
+        assertFalse(MapTab.canBeginTransit(proposedPath, fleetSystem, null, null));
+        assertFalse(MapTab.canBeginTransit(proposedPath, fleetSystem, null, assessment(Severity.BLOCKED)));
+        assertTrue(MapTab.canBeginTransit(proposedPath, fleetSystem, null, assessment(Severity.CAUTION)));
+    }
+
+    @Test
+    void failedPlanningDispatchesExplicitFeedbackWithoutNotifyingForSuccess() {
+        List<PlanningStatus> feedback = new ArrayList<>();
+
+        MapTab.dispatchRoutePlanningFeedback(RoutePlanningIntent.ChangeResult.CHANGED, feedback::add);
+        MapTab.dispatchRoutePlanningFeedback(RoutePlanningIntent.ChangeResult.ACCESS_DENIED, feedback::add);
+        MapTab.dispatchRoutePlanningFeedback(RoutePlanningIntent.ChangeResult.NO_ROUTE, feedback::add);
+
+        assertEquals(List.of(PlanningStatus.ACCESS_DENIED, PlanningStatus.NO_ROUTE), feedback);
+    }
+
+    private static PathAssessment assessment(Severity severity) {
+        return new PathAssessment(List.of(), severity);
     }
 
     private static JumpPath path(PlanetarySystem... systems) {

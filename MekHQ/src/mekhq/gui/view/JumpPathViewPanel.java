@@ -37,6 +37,7 @@ import static java.text.MessageFormat.format;
 import static mekhq.campaign.personnel.skills.SkillType.EXP_REGULAR;
 
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.GridBagConstraints;
@@ -51,6 +52,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.FormatStyle;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -79,6 +81,7 @@ import mekhq.campaign.JumpPath;
 import mekhq.campaign.JumpPathItinerary;
 import mekhq.campaign.JumpPathSchedule;
 import mekhq.campaign.NavigationRouteAnalysis;
+import mekhq.campaign.PiratePointAnalysis;
 import mekhq.campaign.NavigationRouteAnalysis.LegAssessment;
 import mekhq.campaign.NavigationRouteAnalysis.PathAssessment;
 import mekhq.campaign.NavigationRouteAnalysis.Severity;
@@ -90,12 +93,21 @@ import mekhq.campaign.JumpPathItinerary.TimelineEntry;
 import mekhq.campaign.JumpPathSchedule.Dwell;
 import mekhq.campaign.JumpPathSchedule.Mode;
 import mekhq.campaign.JumpPathSchedule.Result;
+import mekhq.campaign.PiratePointAnalysis.DifficultyFacts;
+import mekhq.campaign.PiratePointAnalysis.Facts;
+import mekhq.campaign.PiratePointAnalysis.Input;
+import mekhq.campaign.PiratePointAnalysis.Modifier;
+import mekhq.campaign.PiratePointAnalysis.ModifierCategory;
 import mekhq.campaign.RouteAlternativesPlanner.AccessStatus;
 import mekhq.campaign.RouteAlternativesPlanner.CircuitCoverage;
 import mekhq.campaign.RouteAlternativesPlanner.Course;
 import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.mission.utilities.TransportCostCalculations;
+import mekhq.campaign.personnel.Person;
+import mekhq.campaign.personnel.skills.Skill;
+import mekhq.campaign.personnel.skills.SkillType;
+import mekhq.campaign.universe.Planet;
 import mekhq.campaign.universe.PlanetarySystem;
 import mekhq.campaign.universe.factionStanding.FactionStandingUtilities;
 import mekhq.gui.baseComponents.FramedCommandButton;
@@ -131,6 +143,13 @@ public class JumpPathViewPanel extends JScrollablePanel {
     private static final double MINIMUM_DESIRED_DAYS = 0.1;
     private static final double MAXIMUM_DESIRED_DAYS = 100000.0;
     private static final int MAXIMUM_DWELL_HOURS = 24000;
+    private static final double MILLION_KILOMETERS = 1_000_000.0;
+    private static final double MAXIMUM_ASSUMED_DISTANCE_MILLIONS_KM = 1_000_000.0;
+    private static final int DEFAULT_MANUAL_TARGET_NUMBER = 8;
+    private static final int MINIMUM_TARGET_NUMBER = -100;
+    private static final int MAXIMUM_TARGET_NUMBER = 100;
+    private static final int MINIMUM_ASSUMED_MODIFIER = -100;
+    private static final int MAXIMUM_ASSUMED_MODIFIER = 100;
 
     private final JumpPath path;
     private final Campaign campaign;
@@ -166,6 +185,23 @@ public class JumpPathViewPanel extends JScrollablePanel {
     private JSpinner desiredDurationSpinner;
     private JSpinner scheduleAnchorSpinner;
     private boolean adjustingScheduleAnchor;
+    private JComboBox<String> piratePointModeSelector;
+    private JComboBox<NavigationSource> navigationSourceSelector;
+    private JSpinner piratePointDistanceSpinner;
+    private JSpinner detectionRadiusSpinner;
+    private JSpinner piratePointTargetSpinner;
+    private int manualPiratePointTarget = DEFAULT_MANUAL_TARGET_NUMBER;
+    private boolean adjustingPiratePointTarget;
+    private final List<ModifierControl> piratePointModifierControls = new ArrayList<>();
+    private final List<JLabel> piratePointControlLabels = new ArrayList<>();
+    private final List<JLabel> piratePointResultLabels = new ArrayList<>();
+    private ApproachLabels standardPointLabels;
+    private ApproachLabels piratePointLabels;
+    private JLabel piratePointTargetValue;
+    private JLabel piratePointOddsValue;
+    private JLabel piratePointTransitDifferenceLabel;
+    private JLabel piratePointTransitDifferenceValue;
+    private JLabel piratePointAdjustedArrivalValue;
 
     public JumpPathViewPanel(JumpPath p, Campaign c) {
         this(p, c, List.of(), List.of(), course -> { });
@@ -214,6 +250,7 @@ public class JumpPathViewPanel extends JScrollablePanel {
         }
         add(createAccelerationPlanner());
         add(createSchedulePlanner());
+        add(createPiratePointPlanner());
         itinerarySection = createItinerary();
         add(itinerarySection);
     }
@@ -588,6 +625,378 @@ public class JumpPathViewPanel extends JScrollablePanel {
         return planner;
     }
 
+    private JPanel createPiratePointPlanner() {
+        JPanel planner = createSection("section.piratePoint.text");
+        Planet destination = destinationPlanet(path);
+        boolean endpointAvailable = destination != null;
+        int row = 1;
+
+        piratePointModeSelector = new JComboBox<>(new String[] {
+              resourceMap.getString("pirate.mode.standard.text"),
+              resourceMap.getString("pirate.mode.assumed.text")
+        });
+        configureComboBox(piratePointModeSelector, "pirate.mode.text", "pirate.mode.tooltip", 190);
+        addPlannerControl(planner, row++, resourceMap.getString("pirate.mode.text"),
+              resourceMap.getString("pirate.mode.tooltip"), piratePointModeSelector);
+
+        List<NavigationSource> navigationSources = navigationSources();
+        navigationSourceSelector = new JComboBox<>(navigationSources.toArray(NavigationSource[]::new));
+        configureComboBox(navigationSourceSelector, "pirate.skillSource.text", "pirate.skillSource.tooltip", 300);
+          piratePointControlLabels.add(addPlannerControl(planner, row++,
+              resourceMap.getString("pirate.skillSource.text"),
+              resourceMap.getString("pirate.skillSource.tooltip"), navigationSourceSelector));
+
+        piratePointTargetSpinner = new JSpinner(new SpinnerNumberModel(DEFAULT_MANUAL_TARGET_NUMBER,
+              MINIMUM_TARGET_NUMBER, MAXIMUM_TARGET_NUMBER, 1));
+        configureSpinner(piratePointTargetSpinner, "0", "pirate.baseTarget.text", "pirate.baseTarget.tooltip");
+          piratePointControlLabels.add(addPlannerInput(planner, row++, "pirate.baseTarget.text",
+              "pirate.baseTarget.tooltip", piratePointTargetSpinner));
+
+          double initialPiratePointDistance = initialPiratePointDistanceMillionsKm(endpointAvailable
+              ? destination.getDistanceToJumpPoint()
+              : 0.0);
+          piratePointDistanceSpinner = new JSpinner(new SpinnerNumberModel(initialPiratePointDistance,
+              0.0, MAXIMUM_ASSUMED_DISTANCE_MILLIONS_KM, 1.0));
+        configureSpinner(piratePointDistanceSpinner, "0.0", "pirate.distanceAssumption.text",
+              "pirate.distanceAssumption.tooltip");
+          piratePointControlLabels.add(addPlannerInput(planner, row++, "pirate.distanceAssumption.text",
+              "pirate.distanceAssumption.tooltip", piratePointDistanceSpinner));
+
+        detectionRadiusSpinner = new JSpinner(new SpinnerNumberModel(0.0, 0.0,
+              MAXIMUM_ASSUMED_DISTANCE_MILLIONS_KM, 1.0));
+        configureSpinner(detectionRadiusSpinner, "0.0", "pirate.detectionAssumption.text",
+              "pirate.detectionAssumption.tooltip");
+          piratePointControlLabels.add(addPlannerInput(planner, row++, "pirate.detectionAssumption.text",
+              "pirate.detectionAssumption.tooltip", detectionRadiusSpinner));
+
+        for (ModifierCategory category : ModifierCategory.values()) {
+            addPiratePointModifier(planner, row++, category);
+        }
+
+        JPanel comparison = createBandPanel();
+        comparison.setLayout(new GridBagLayout());
+        standardPointLabels = createApproachColumn(comparison, 0, "pirate.standardPoint.text");
+        piratePointLabels = createApproachColumn(comparison, 1, "pirate.assumedPoint.text");
+        GridBagConstraints constraints = createFullWidthConstraints(row++);
+        constraints.insets = new Insets(7, 0, 5, 0);
+        planner.add(comparison, constraints);
+
+        piratePointTargetValue = new JLabel();
+        piratePointOddsValue = new JLabel();
+        piratePointTransitDifferenceValue = new JLabel();
+        piratePointAdjustedArrivalValue = new JLabel();
+          piratePointResultLabels.add(addScheduleResult(planner, row++, "pirate.target.text",
+              piratePointTargetValue));
+          piratePointResultLabels.add(addScheduleResult(planner, row++, "pirate.odds.text",
+              piratePointOddsValue));
+        piratePointTransitDifferenceLabel = addScheduleResult(planner, row++, "pirate.transitSaved.text",
+              piratePointTransitDifferenceValue);
+          piratePointResultLabels.add(piratePointTransitDifferenceLabel);
+          piratePointResultLabels.add(addScheduleResult(planner, row, "pirate.adjustedArrival.text",
+              piratePointAdjustedArrivalValue));
+
+        piratePointModeSelector.setEnabled(endpointAvailable);
+
+        piratePointModeSelector.addActionListener(event -> refreshPiratePointPresentation());
+        navigationSourceSelector.addActionListener(event -> {
+            NavigationSource source = (NavigationSource) navigationSourceSelector.getSelectedItem();
+            adjustingPiratePointTarget = true;
+            if ((source == null) || source.manual()) {
+                piratePointTargetSpinner.setValue(manualPiratePointTarget);
+            } else {
+                piratePointTargetSpinner.setValue(source.targetNumber());
+            }
+            adjustingPiratePointTarget = false;
+            refreshPiratePointPresentation();
+        });
+        piratePointTargetSpinner.addChangeListener(event -> {
+            if (!adjustingPiratePointTarget) {
+                manualPiratePointTarget = ((Number) piratePointTargetSpinner.getValue()).intValue();
+                refreshPiratePointPresentation();
+            }
+        });
+        piratePointDistanceSpinner.addChangeListener(event -> refreshPiratePointPresentation());
+        detectionRadiusSpinner.addChangeListener(event -> refreshPiratePointPresentation());
+        refreshPiratePointPresentation();
+        return planner;
+    }
+
+    private <T> void configureComboBox(JComboBox<T> comboBox, String labelKey, String tooltipKey, int width) {
+        comboBox.setBackground(DOSSIER_CONTROL_BACKGROUND);
+        comboBox.setForeground(DOSSIER_TEXT);
+        comboBox.setToolTipText(resourceMap.getString(tooltipKey));
+        comboBox.getAccessibleContext().setAccessibleName(resourceMap.getString(labelKey));
+        comboBox.getAccessibleContext().setAccessibleDescription(comboBox.getToolTipText());
+        comboBox.setPreferredSize(new Dimension(UIUtil.scaleForGUI(width), comboBox.getPreferredSize().height));
+    }
+
+    private List<NavigationSource> navigationSources() {
+        List<NavigationSource> sources = new ArrayList<>();
+        for (var unit : campaign.getUnits()) {
+            if ((unit.getEntity() == null) || !unit.getEntity().isJumpShip()) {
+                continue;
+            }
+            Person navigator = unit.getNavigator();
+            if (navigator == null) {
+                continue;
+            }
+            Skill navigation = navigator.getSkill(SkillType.S_NAVIGATION);
+            if (navigation == null) {
+                continue;
+            }
+            int targetNumber = navigation.getFinalSkillValue(navigator.getSkillModifierData());
+            sources.add(new NavigationSource(format(resourceMap.getString("pirate.skillSource.navigator.format"),
+                  navigator.getFullName(), unit.getName(), targetNumber), targetNumber, false));
+        }
+        sources.sort(Comparator.comparing(NavigationSource::label));
+        sources.addFirst(new NavigationSource(resourceMap.getString("pirate.skillSource.manual.text"),
+              DEFAULT_MANUAL_TARGET_NUMBER, true));
+        return List.copyOf(sources);
+    }
+
+    private void addPiratePointModifier(JPanel planner, int row, ModifierCategory category) {
+        String label = resourceMap.getString(modifierLabelKey(category));
+        String tooltip = resourceMap.getString("pirate.modifier.tooltip");
+        JCheckBox enabled = new JCheckBox(label, false);
+        enabled.setBackground(DOSSIER_BACKGROUND);
+        enabled.setForeground(DOSSIER_TEXT);
+        enabled.setOpaque(true);
+        enabled.setToolTipText(tooltip);
+        enabled.getAccessibleContext().setAccessibleName(label);
+        enabled.getAccessibleContext().setAccessibleDescription(tooltip);
+
+        JSpinner value = new JSpinner(new SpinnerNumberModel(0, MINIMUM_ASSUMED_MODIFIER,
+              MAXIMUM_ASSUMED_MODIFIER, 1));
+        configureNumberSpinner(value, "+0;-0", label, tooltip);
+
+        JPanel input = createBandPanel();
+        input.setLayout(new GridBagLayout());
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.gridx = 0;
+        constraints.gridy = 0;
+        constraints.weightx = 1.0;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.anchor = GridBagConstraints.WEST;
+        input.add(enabled, constraints);
+        constraints = new GridBagConstraints();
+        constraints.gridx = 1;
+        constraints.gridy = 0;
+        constraints.anchor = GridBagConstraints.EAST;
+        input.add(value, constraints);
+        constraints = createFullWidthConstraints(row);
+        constraints.insets = new Insets(2, 0, 2, 0);
+        planner.add(input, constraints);
+
+        piratePointModifierControls.add(new ModifierControl(category, enabled, value));
+        enabled.addActionListener(event -> refreshPiratePointPresentation());
+        value.addChangeListener(event -> refreshPiratePointPresentation());
+    }
+
+    private String modifierLabelKey(ModifierCategory category) {
+        return switch (category) {
+            case POINT_GEOMETRY -> "pirate.modifier.geometry.text";
+            case NAVIGATION_DATA -> "pirate.modifier.navigationData.text";
+            case VESSEL_CREW_CONDITION -> "pirate.modifier.vesselCrew.text";
+            case OTHER_SITUATION -> "pirate.modifier.other.text";
+        };
+    }
+
+    private ApproachLabels createApproachColumn(JPanel comparison, int column, String headingKey) {
+        JPanel approach = createBandPanel();
+        approach.setLayout(new GridBagLayout());
+        JLabel heading = new JLabel(resourceMap.getString(headingKey));
+        heading.setForeground(column == 0 ? DOSSIER_TEXT : DOSSIER_ACTIVE);
+        heading.setFont(heading.getFont().deriveFont(Font.BOLD, heading.getFont().getSize2D() * 0.8f));
+        GridBagConstraints constraints = createFullWidthConstraints(0);
+        constraints.insets = new Insets(0, 0, 3, 0);
+        approach.add(heading, constraints);
+
+        JLabel distance = addApproachFact(approach, 1, "pirate.distance.text");
+        JLabel transit = addApproachFact(approach, 2, "pirate.transit.text");
+        JLabel exposure = addApproachFact(approach, 3, "pirate.exposure.text");
+        JLabel detection = addApproachFact(approach, 4, "pirate.detection.text");
+
+        constraints = new GridBagConstraints();
+        constraints.gridx = column;
+        constraints.gridy = 0;
+        constraints.weightx = 0.5;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.anchor = GridBagConstraints.NORTHWEST;
+        constraints.insets = new Insets(0, column == 0 ? 0 : HORIZONTAL_PADDING / 2, 0,
+              column == 0 ? HORIZONTAL_PADDING / 2 : 0);
+        comparison.add(approach, constraints);
+        return new ApproachLabels(approach, distance, transit, exposure, detection);
+    }
+
+    private JLabel addApproachFact(JPanel approach, int row, String labelKey) {
+        JLabel label = createPlannerLabel(labelKey);
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.gridx = 0;
+        constraints.gridy = row;
+        constraints.weightx = 0.45;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.anchor = GridBagConstraints.WEST;
+        constraints.insets = new Insets(1, 0, 1, 5);
+        approach.add(label, constraints);
+
+        JLabel value = new JLabel();
+        value.setForeground(DOSSIER_TEXT);
+        value.setFont(value.getFont().deriveFont(Font.BOLD, value.getFont().getSize2D() * 0.78f));
+        value.setHorizontalAlignment(SwingConstants.TRAILING);
+        constraints = new GridBagConstraints();
+        constraints.gridx = 1;
+        constraints.gridy = row;
+        constraints.weightx = 0.55;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.anchor = GridBagConstraints.EAST;
+        constraints.insets = new Insets(1, 0, 1, 0);
+        approach.add(value, constraints);
+        return value;
+    }
+
+    private void refreshPiratePointPresentation() {
+        if (piratePointTargetValue == null) {
+            return;
+        }
+        Planet destination = destinationPlanet(path);
+        updatePiratePointControlState(destination != null);
+        if (destination == null) {
+            setApproachUnavailable(standardPointLabels);
+            setApproachUnavailable(piratePointLabels);
+            setPiratePointResultUnavailable();
+            return;
+        }
+
+        double accelerationG = ((Number) accelerationSpinner.getValue()).doubleValue();
+        double pirateDistanceKm = ((Number) piratePointDistanceSpinner.getValue()).doubleValue()
+                                         * MILLION_KILOMETERS;
+        double detectionRadiusKm = ((Number) detectionRadiusSpinner.getValue()).doubleValue()
+                                         * MILLION_KILOMETERS;
+        List<Modifier> modifiers = piratePointModifierControls.stream()
+                                             .map(control -> new Modifier(control.category(),
+                                                   ((Number) control.value().getValue()).intValue(),
+                                                   control.enabled().isSelected()))
+                                             .toList();
+        Facts facts;
+        try {
+            facts = PiratePointAnalysis.analyze(new Input(destination.getDistanceToJumpPoint(), pirateDistanceKm,
+                  detectionRadiusKm, accelerationG,
+                  ((Number) piratePointTargetSpinner.getValue()).intValue(), modifiers));
+        } catch (IllegalArgumentException exception) {
+            setApproachUnavailable(standardPointLabels);
+            setApproachUnavailable(piratePointLabels);
+            setPiratePointResultUnavailable();
+            return;
+        }
+
+        updateApproachLabels(standardPointLabels, facts.standardPoint());
+        updateApproachLabels(piratePointLabels, facts.piratePoint());
+        DifficultyFacts difficulty = facts.difficulty();
+        piratePointTargetValue.setText(format(resourceMap.getString("pirate.target.format"),
+              difficulty.targetNumber(), formatSignedNumber(difficulty.enabledModifierTotal())));
+        piratePointOddsValue.setText(format2d6Odds(difficulty, locale, resourceMap));
+        boolean transitAdded = facts.transitAddedDays() > 0.0;
+        piratePointTransitDifferenceLabel.setText(resourceMap.getString(transitAdded
+              ? "pirate.transitAdded.text"
+              : "pirate.transitSaved.text"));
+        piratePointTransitDifferenceValue.setText(formatDuration(transitAdded
+              ? facts.transitAddedDays()
+              : facts.transitSavingsDays()));
+        piratePointAdjustedArrivalValue.setText(formatScheduleMoment(adjustedArrival(schedule, itineraryPlan,
+              facts, isPiratePointAssumptionEnabled(piratePointModeSelector.getSelectedIndex(), true)), locale));
+    }
+
+    private void updatePiratePointControlState(boolean endpointAvailable) {
+        boolean assumptionsEnabled = isPiratePointAssumptionEnabled(piratePointModeSelector.getSelectedIndex(),
+              endpointAvailable);
+        piratePointModeSelector.setEnabled(endpointAvailable);
+        navigationSourceSelector.setEnabled(assumptionsEnabled);
+        NavigationSource source = (NavigationSource) navigationSourceSelector.getSelectedItem();
+        piratePointTargetSpinner.setEnabled(assumptionsEnabled && ((source == null) || source.manual()));
+        piratePointDistanceSpinner.setEnabled(assumptionsEnabled);
+        detectionRadiusSpinner.setEnabled(assumptionsEnabled);
+        piratePointControlLabels.forEach(label -> label.setEnabled(assumptionsEnabled));
+        for (ModifierControl control : piratePointModifierControls) {
+            control.enabled().setEnabled(assumptionsEnabled);
+            control.value().setEnabled(assumptionsEnabled && control.enabled().isSelected());
+        }
+        for (Component component : piratePointLabels.panel().getComponents()) {
+            component.setEnabled(assumptionsEnabled);
+        }
+        piratePointResultLabels.forEach(label -> label.setEnabled(assumptionsEnabled));
+        List.of(piratePointTargetValue, piratePointOddsValue, piratePointTransitDifferenceValue,
+              piratePointAdjustedArrivalValue).forEach(value -> value.setEnabled(assumptionsEnabled));
+    }
+
+    private void updateApproachLabels(ApproachLabels labels, PiratePointAnalysis.ApproachFacts facts) {
+        labels.distance().setText(format(resourceMap.getString("pirate.distance.format"),
+              formatNumber(facts.distanceKm() / MILLION_KILOMETERS, 2)));
+        labels.transit().setText(formatDuration(facts.transitDays()));
+        labels.exposure().setText(formatDuration(facts.exposureDays()));
+        labels.detection().setText(resourceMap.getString(facts.emergenceInsideDetectionEnvelope()
+              ? "pirate.detection.inside.text"
+              : "pirate.detection.outside.text"));
+        labels.detection().setForeground(facts.emergenceInsideDetectionEnvelope() ? DOSSIER_ACTIVE : DOSSIER_ACCENT);
+    }
+
+    private void setApproachUnavailable(ApproachLabels labels) {
+        String unavailable = resourceMap.getString("pirate.unavailable.text");
+        labels.distance().setText(unavailable);
+        labels.transit().setText(unavailable);
+        labels.exposure().setText(unavailable);
+        labels.detection().setText(unavailable);
+        labels.detection().setForeground(DOSSIER_MUTED_TEXT);
+    }
+
+    private void setPiratePointResultUnavailable() {
+        String unavailable = resourceMap.getString("pirate.unavailable.text");
+        piratePointTargetValue.setText(unavailable);
+        piratePointOddsValue.setText(unavailable);
+        piratePointTransitDifferenceValue.setText(unavailable);
+        piratePointAdjustedArrivalValue.setText(unavailable);
+    }
+
+    static Planet destinationPlanet(JumpPath path) {
+        if (path.getTargetPlanet() != null) {
+            return path.getTargetPlanet();
+        }
+        List<PlanetarySystem> systems = path.getSystems();
+        return systems.isEmpty() ? null : systems.getLast().getPrimaryPlanet();
+    }
+
+    static boolean isPiratePointAssumptionEnabled(int selectedModeIndex, boolean endpointAvailable) {
+        return endpointAvailable && (selectedModeIndex == 1);
+    }
+
+    static double initialPiratePointDistanceMillionsKm(double standardDistanceKm) {
+        if (!Double.isFinite(standardDistanceKm) || (standardDistanceKm <= 0.0)) {
+            return 0.0;
+        }
+        return Math.min(MAXIMUM_ASSUMED_DISTANCE_MILLIONS_KM, standardDistanceKm / MILLION_KILOMETERS);
+    }
+
+    static LocalDateTime adjustedArrival(Result schedule, Plan itinerary, Facts facts, boolean usePiratePoint) {
+        if (!usePiratePoint) {
+            return schedule.arrival();
+        }
+        double adjustedItineraryDays = itinerary.totalDays() - itinerary.endingTransitDays()
+                                             + facts.piratePoint().transitDays();
+        long adjustedHours = Math.round(adjustedItineraryDays * 24.0) + schedule.totalDwellHours();
+        return schedule.departure().plusHours(adjustedHours);
+    }
+
+    static String format2d6Odds(DifficultyFacts difficulty, Locale locale, ResourceBundle resources) {
+        NumberFormat percentage = NumberFormat.getNumberInstance(locale);
+        percentage.setMaximumFractionDigits(1);
+        percentage.setMinimumFractionDigits(0);
+        return format(resources.getString("pirate.odds.format"), difficulty.successfulOutcomes(),
+              percentage.format(difficulty.successProbability() * 100.0));
+    }
+
+    private String formatSignedNumber(int value) {
+        return value >= 0 ? "+" + value : Integer.toString(value);
+    }
+
     private JLabel addScheduleResult(JPanel planner, int row, String labelKey, JLabel value) {
         JPanel result = createBandPanel();
         result.setLayout(new GridBagLayout());
@@ -659,11 +1068,13 @@ public class JumpPathViewPanel extends JScrollablePanel {
         }
     }
 
-    private void addPlannerInput(JPanel planner, int row, String labelKey, String tooltipKey, JSpinner spinner) {
-        addPlannerControl(planner, row, resourceMap.getString(labelKey), resourceMap.getString(tooltipKey), spinner);
+    private JLabel addPlannerInput(JPanel planner, int row, String labelKey, String tooltipKey, JSpinner spinner) {
+        return addPlannerControl(planner, row, resourceMap.getString(labelKey),
+              resourceMap.getString(tooltipKey), spinner);
     }
 
-    private void addPlannerControl(JPanel planner, int row, String labelText, String tooltip, JComponent control) {
+    private JLabel addPlannerControl(JPanel planner, int row, String labelText, String tooltip,
+          JComponent control) {
         JPanel input = createBandPanel();
         input.setLayout(new GridBagLayout());
         JLabel label = new JLabel(labelText);
@@ -689,6 +1100,7 @@ public class JumpPathViewPanel extends JScrollablePanel {
         constraints = createFullWidthConstraints(row);
         constraints.insets = new Insets(3, 0, 3, 0);
         planner.add(input, constraints);
+        return label;
     }
 
     private JLabel createPlannerLabel(String labelKey) {
@@ -724,6 +1136,7 @@ public class JumpPathViewPanel extends JScrollablePanel {
         rechargeValue.setText(formatDays(itineraryPlan.rechargeDays()));
         totalTimeValue.setText(formatDays(itineraryPlan.totalDays() + (schedule.totalDwellHours() / 24.0)));
         refreshSchedulePresentation();
+        refreshPiratePointPresentation();
         populateItinerary(itinerarySection);
         itinerarySection.revalidate();
         itinerarySection.repaint();
@@ -894,7 +1307,8 @@ public class JumpPathViewPanel extends JScrollablePanel {
         }
 
         private PathAssessment calculateNavigationAssessment() {
-          PathAssessment assessment = campaign.assessNavigationPath(path.getSystems(), circuitPlan::usesCircuitAt);
+                    PathAssessment assessment = campaign.assessNavigationPath(path.getSystems(), requestedStops,
+                            circuitPlan::usesCircuitAt);
           return assessment == null ? new PathAssessment(List.of(), Severity.CLEAR) : assessment;
         }
 
@@ -1144,5 +1558,19 @@ public class JumpPathViewPanel extends JScrollablePanel {
     private String getSystemName(PlanetarySystem system, LocalDate currentDate) {
         return (system == null) ? resourceMap.getString("dossier.unknownSystem.text")
                      : system.getPrintableName(currentDate);
+    }
+
+    private record NavigationSource(String label, int targetNumber, boolean manual) {
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
+    private record ModifierControl(ModifierCategory category, JCheckBox enabled, JSpinner value) {
+    }
+
+    private record ApproachLabels(JPanel panel, JLabel distance, JLabel transit, JLabel exposure,
+                                  JLabel detection) {
     }
 }

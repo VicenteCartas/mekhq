@@ -35,16 +35,28 @@ package mekhq.gui;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 
 import jakarta.annotation.Nullable;
 import mekhq.campaign.JumpPath;
+import mekhq.campaign.RouteAlternativesPlanner.PlanningResult;
+import mekhq.campaign.RouteAlternativesPlanner.PlanningStatus;
 import mekhq.campaign.universe.PlanetarySystem;
 
 final class RoutePlanningIntent {
     @FunctionalInterface
     interface SegmentPlanner {
-        JumpPath calculate(PlanetarySystem origin, PlanetarySystem destination);
+        PlanningResult calculate(PlanetarySystem origin, PlanetarySystem destination);
+    }
+
+    enum ChangeResult {
+        CHANGED,
+        NO_CHANGE,
+        ACCESS_DENIED,
+        NO_ROUTE;
+
+        boolean changed() {
+            return this == CHANGED;
+        }
     }
 
     private @Nullable PlanetarySystem origin;
@@ -93,39 +105,44 @@ final class RoutePlanningIntent {
         return true;
     }
 
-    boolean plot(@Nullable PlanetarySystem proposedOrigin, @Nullable PlanetarySystem destination,
+    ChangeResult plot(@Nullable PlanetarySystem proposedOrigin, @Nullable PlanetarySystem destination,
           SegmentPlanner planner) {
         if ((proposedOrigin == null) || (destination == null)) {
-            return false;
+            return ChangeResult.NO_CHANGE;
         }
         return replace(proposedOrigin, List.of(destination), planner);
     }
 
-    boolean append(@Nullable PlanetarySystem destination, SegmentPlanner planner) {
+    ChangeResult append(@Nullable PlanetarySystem destination, SegmentPlanner planner) {
         if ((origin == null) || (destination == null)) {
-            return false;
+            return ChangeResult.NO_CHANGE;
         }
         List<PlanetarySystem> proposedStops = new ArrayList<>(requestedStops);
         proposedStops.add(destination);
         return replace(origin, proposedStops, planner);
     }
 
-    boolean removeRequestedStop(@Nullable PlanetarySystem stop, SegmentPlanner planner) {
+    ChangeResult removeRequestedStop(@Nullable PlanetarySystem stop, SegmentPlanner planner) {
         if ((origin == null) || (stop == null) || !requestedStops.contains(stop)) {
-            return false;
+            return ChangeResult.NO_CHANGE;
         }
         List<PlanetarySystem> proposedStops = new ArrayList<>(requestedStops);
         proposedStops.remove(stop);
+        if (proposedStops.isEmpty()) {
+            requestedStops = List.of();
+            jumpPath = new JumpPath();
+            return ChangeResult.CHANGED;
+        }
         return replace(origin, proposedStops, planner);
     }
 
-    boolean trimAt(@Nullable PlanetarySystem destination, SegmentPlanner planner) {
+    ChangeResult trimAt(@Nullable PlanetarySystem destination, SegmentPlanner planner) {
         if ((origin == null) || (destination == null)) {
-            return false;
+            return ChangeResult.NO_CHANGE;
         }
         int trimIndex = jumpPath.getSystems().indexOf(destination);
         if (trimIndex <= 0) {
-            return false;
+            return ChangeResult.NO_CHANGE;
         }
 
         List<PlanetarySystem> proposedStops = new ArrayList<>();
@@ -156,35 +173,50 @@ final class RoutePlanningIntent {
         jumpPath = new JumpPath();
     }
 
-    private boolean replace(PlanetarySystem proposedOrigin, List<PlanetarySystem> proposedStops,
+    private ChangeResult replace(PlanetarySystem proposedOrigin, List<PlanetarySystem> proposedStops,
           SegmentPlanner planner) {
-        Optional<JumpPath> proposedPath = derive(proposedOrigin, proposedStops, planner);
-        if (proposedPath.isEmpty()) {
-            return false;
+        PlanningResult proposedPath = derive(proposedOrigin, proposedStops, planner);
+        if (!proposedPath.routeFound()) {
+            return changeResultFor(proposedPath.status());
         }
         origin = proposedOrigin;
         requestedStops = List.copyOf(proposedStops);
-        jumpPath = proposedPath.get();
-        return true;
+        jumpPath = proposedPath.path();
+        return ChangeResult.CHANGED;
     }
 
-    private static Optional<JumpPath> derive(PlanetarySystem origin, List<PlanetarySystem> requestedStops,
+    private static PlanningResult derive(PlanetarySystem origin, List<PlanetarySystem> requestedStops,
           SegmentPlanner planner) {
         JumpPath derivedPath = new JumpPath();
         PlanetarySystem segmentOrigin = origin;
         for (PlanetarySystem requestedStop : requestedStops) {
-            JumpPath segment = planner.calculate(segmentOrigin, requestedStop);
-            if ((segment == null) || segment.isEmpty()
+            PlanningResult segmentResult = planner.calculate(segmentOrigin, requestedStop);
+            if (segmentResult == null) {
+                return PlanningResult.failed(PlanningStatus.NO_ROUTE);
+            }
+            if (!segmentResult.routeFound()) {
+                return segmentResult;
+            }
+            JumpPath segment = segmentResult.path();
+            if (segment.isEmpty()
                   || !Objects.equals(segmentOrigin, segment.getFirstSystem())
                   || !Objects.equals(requestedStop, segment.getLastSystem())) {
-                return Optional.empty();
+                return PlanningResult.failed(PlanningStatus.NO_ROUTE);
             }
             List<PlanetarySystem> segmentSystems = segment.getSystems();
             derivedPath.addSystems(segmentSystems.subList(derivedPath.isEmpty() ? 0 : 1, segmentSystems.size()));
             derivedPath.setTargetPlanet(segment.getTargetPlanet());
             segmentOrigin = requestedStop;
         }
-        return Optional.of(derivedPath);
+        return PlanningResult.found(derivedPath);
+    }
+
+    private static ChangeResult changeResultFor(PlanningStatus status) {
+        return switch (status) {
+            case ACCESS_DENIED -> ChangeResult.ACCESS_DENIED;
+            case NO_ROUTE -> ChangeResult.NO_ROUTE;
+            case ROUTE_FOUND -> ChangeResult.NO_CHANGE;
+        };
     }
 
     private static int indexOf(List<PlanetarySystem> systems, PlanetarySystem target, int fromIndex) {

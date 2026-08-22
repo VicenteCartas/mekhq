@@ -207,6 +207,51 @@ class NavigationRouteAnalysisTest {
                                                .toList());
     }
 
+        @Test
+        void requestedEmptyStopsAreCautionsWhileAutomaticEmptyIntermediatesRemainBlocked() {
+          PlanetarySystem origin = system("ORIGIN");
+          PlanetarySystem automaticEmpty = system("AUTOMATIC_EMPTY");
+          PlanetarySystem requestedEmpty = system("REQUESTED_EMPTY");
+          Policy policy = policy(Map.of(), Set.of(automaticEmpty, requestedEmpty), true, Set.of(),
+              Set.of(requestedEmpty));
+
+          NavigationRouteAnalysis.PathAssessment assessment = NavigationRouteAnalysis.assessPath(
+              List.of(origin, automaticEmpty, requestedEmpty), List.of(requestedEmpty), TEST_DATE,
+              falseIndex -> false, policy);
+
+          assertEquals(List.of(Severity.BLOCKED, Severity.CAUTION), assessment.legs().stream()
+                                                 .map(LegAssessment::severity)
+                                                 .toList());
+          assertEquals(List.of(FindingKind.ABANDONED_DESTINATION_AVOIDED,
+              FindingKind.ABANDONED_DESTINATION_ALLOWED), assessment.legs().stream()
+                                            .map(leg -> leg.findings().stream()
+                                                        .filter(finding -> finding.kind()
+                                                            == FindingKind.ABANDONED_DESTINATION_AVOIDED
+                                                            || finding.kind()
+                                                                == FindingKind.ABANDONED_DESTINATION_ALLOWED)
+                                                        .findFirst()
+                                                        .orElseThrow()
+                                                        .kind())
+                                            .toList());
+        }
+
+        @Test
+        void explicitlyRequestedEmptyWaypointIsAnAllowedCaution() {
+          PlanetarySystem origin = system("ORIGIN");
+          PlanetarySystem requestedEmptyWaypoint = system("REQUESTED_EMPTY_WAYPOINT");
+          PlanetarySystem destination = system("DESTINATION");
+          Policy policy = policy(Map.of(), Set.of(requestedEmptyWaypoint), true, Set.of(),
+              Set.of(requestedEmptyWaypoint));
+
+          NavigationRouteAnalysis.PathAssessment assessment = NavigationRouteAnalysis.assessPath(
+              List.of(origin, requestedEmptyWaypoint, destination),
+              List.of(requestedEmptyWaypoint, destination), TEST_DATE, destinationIndex -> false, policy);
+
+          assertEquals(List.of(Severity.CAUTION, Severity.CLEAR), assessment.legs().stream()
+                                                 .map(LegAssessment::severity)
+                                                 .toList());
+        }
+
     private static List<FindingKind> blockingKinds(LegAssessment assessment) {
         return assessment.findings().stream()
                      .filter(finding -> finding.severity() == Severity.BLOCKED)
@@ -230,6 +275,12 @@ class NavigationRouteAnalysisTest {
 
     private static Policy policy(Map<PlanetarySystem, List<PlanetarySystem>> graph,
           Set<PlanetarySystem> abandonedSystems, boolean avoidAbandoned, Set<Leg> deniedLegs) {
+          return policy(graph, abandonedSystems, avoidAbandoned, deniedLegs, Set.of());
+        }
+
+        private static Policy policy(Map<PlanetarySystem, List<PlanetarySystem>> graph,
+            Set<PlanetarySystem> abandonedSystems, boolean avoidAbandoned, Set<Leg> deniedLegs,
+            Set<PlanetarySystem> allowedRequestedDestinations) {
         return new Policy() {
             @Override
             public Collection<PlanetarySystem> getNeighbors(PlanetarySystem system) {
@@ -239,6 +290,11 @@ class NavigationRouteAnalysisTest {
             @Override
             public boolean isSystemAllowed(PlanetarySystem system) {
                 return !avoidAbandoned || !abandonedSystems.contains(system);
+            }
+
+            @Override
+            public boolean isRequestedDestinationAllowed(PlanetarySystem system) {
+                return isSystemAllowed(system) || allowedRequestedDestinations.contains(system);
             }
 
             @Override

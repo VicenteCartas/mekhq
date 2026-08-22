@@ -42,6 +42,8 @@ import java.util.List;
 import java.util.Map;
 
 import mekhq.campaign.JumpPath;
+import mekhq.campaign.RouteAlternativesPlanner.PlanningResult;
+import mekhq.campaign.RouteAlternativesPlanner.PlanningStatus;
 import mekhq.campaign.universe.Planet;
 import mekhq.campaign.universe.PlanetarySystem;
 import org.junit.jupiter.api.Test;
@@ -55,14 +57,14 @@ class RoutePlanningIntentTest {
         PlanetarySystem destination = system("Destination");
         RoutePlanningIntent intent = new RoutePlanningIntent(origin);
 
-        assertTrue(intent.plot(origin, destination,
-              planner(Map.of(new Leg(origin, destination), List.of(origin, intermediate, destination)))));
+                assertTrue(intent.plot(origin, destination,
+              planner(Map.of(new Leg(origin, destination), List.of(origin, intermediate, destination)))).changed());
 
         assertIterableEquals(List.of(destination), intent.getRequestedStops());
         assertFalse(intent.isRequestedStop(intermediate));
         assertTrue(intent.canTrimAt(intermediate));
         assertFalse(intent.canTrimAt(origin));
-        assertFalse(intent.removeRequestedStop(intermediate, planner(Map.of())));
+        assertFalse(intent.removeRequestedStop(intermediate, planner(Map.of())).changed());
         assertIterableEquals(List.of(origin, intermediate, destination), intent.getJumpPath().getSystems());
     }
 
@@ -78,8 +80,8 @@ class RoutePlanningIntentTest {
               new Leg(origin, firstStop), List.of(origin, firstIntermediate, firstStop),
               new Leg(firstStop, destination), List.of(firstStop, secondIntermediate, destination)));
 
-        assertTrue(intent.plot(origin, firstStop, planner));
-        assertTrue(intent.append(destination, planner));
+        assertTrue(intent.plot(origin, firstStop, planner).changed());
+        assertTrue(intent.append(destination, planner).changed());
 
         assertIterableEquals(List.of(firstStop, destination), intent.getRequestedStops());
         assertIterableEquals(List.of(origin, firstIntermediate, firstStop, secondIntermediate, destination),
@@ -98,13 +100,33 @@ class RoutePlanningIntentTest {
               new Leg(firstStop, destination), List.of(firstStop, destination),
               new Leg(origin, destination), List.of(origin, replacementIntermediate, destination)));
 
-        assertTrue(intent.plot(origin, firstStop, planner));
-        assertTrue(intent.append(destination, planner));
-        assertTrue(intent.removeRequestedStop(firstStop, planner));
+        assertTrue(intent.plot(origin, firstStop, planner).changed());
+        assertTrue(intent.append(destination, planner).changed());
+        assertTrue(intent.removeRequestedStop(firstStop, planner).changed());
 
         assertIterableEquals(List.of(destination), intent.getRequestedStops());
         assertIterableEquals(List.of(origin, replacementIntermediate, destination),
               intent.getJumpPath().getSystems());
+    }
+
+    @Test
+    void removingOnlyRequestedStopClearsRouteWithoutPlanning() {
+        PlanetarySystem origin = system("Origin");
+        PlanetarySystem destination = system("Destination");
+        RoutePlanningIntent intent = new RoutePlanningIntent(origin);
+        RoutePlanningIntent.SegmentPlanner removalPlanner = Mockito.mock(RoutePlanningIntent.SegmentPlanner.class);
+
+        assertEquals(RoutePlanningIntent.ChangeResult.CHANGED,
+              intent.plot(origin, destination,
+                    (segmentOrigin, segmentDestination) -> PlanningResult.found(
+                          pathOf(segmentOrigin, segmentDestination))));
+        assertEquals(RoutePlanningIntent.ChangeResult.CHANGED,
+              intent.removeRequestedStop(destination, removalPlanner));
+
+        assertSame(origin, intent.getOrigin());
+        assertTrue(intent.getRequestedStops().isEmpty());
+        assertTrue(intent.getJumpPath().isEmpty());
+        Mockito.verifyNoInteractions(removalPlanner);
     }
 
     @Test
@@ -119,9 +141,9 @@ class RoutePlanningIntentTest {
               new Leg(firstStop, destination), List.of(firstStop, trimTarget, destination),
               new Leg(firstStop, trimTarget), List.of(firstStop, trimTarget)));
 
-        assertTrue(intent.plot(origin, firstStop, planner));
-        assertTrue(intent.append(destination, planner));
-        assertTrue(intent.trimAt(trimTarget, planner));
+        assertTrue(intent.plot(origin, firstStop, planner).changed());
+        assertTrue(intent.append(destination, planner).changed());
+        assertTrue(intent.trimAt(trimTarget, planner).changed());
 
         assertIterableEquals(List.of(firstStop, trimTarget), intent.getRequestedStops());
         assertIterableEquals(List.of(origin, firstStop, trimTarget), intent.getJumpPath().getSystems());
@@ -136,10 +158,27 @@ class RoutePlanningIntentTest {
         RoutePlanningIntent.SegmentPlanner initialPlanner = planner(
               Map.of(new Leg(origin, firstStop), List.of(origin, firstStop)));
 
-        assertTrue(intent.plot(origin, firstStop, initialPlanner));
-        assertFalse(intent.append(unreachable, initialPlanner));
+        assertTrue(intent.plot(origin, firstStop, initialPlanner).changed());
+        assertEquals(RoutePlanningIntent.ChangeResult.NO_ROUTE, intent.append(unreachable, initialPlanner));
 
         assertSame(origin, intent.getOrigin());
+        assertIterableEquals(List.of(firstStop), intent.getRequestedStops());
+        assertIterableEquals(List.of(origin, firstStop), intent.getJumpPath().getSystems());
+    }
+
+    @Test
+    void accessDeniedSegmentLeavesExistingIntentUnchangedAndSurfacesReason() {
+        PlanetarySystem origin = system("Origin");
+        PlanetarySystem firstStop = system("First Stop");
+        PlanetarySystem denied = system("Denied");
+        RoutePlanningIntent intent = new RoutePlanningIntent(origin);
+
+        assertTrue(intent.plot(origin, firstStop,
+              (segmentOrigin, destination) -> PlanningResult.found(pathOf(segmentOrigin, destination))).changed());
+
+        assertEquals(RoutePlanningIntent.ChangeResult.ACCESS_DENIED,
+              intent.append(denied, (segmentOrigin, destination) ->
+                    PlanningResult.failed(PlanningStatus.ACCESS_DENIED)));
         assertIterableEquals(List.of(firstStop), intent.getRequestedStops());
         assertIterableEquals(List.of(origin, firstStop), intent.getJumpPath().getSystems());
     }
@@ -157,11 +196,11 @@ class RoutePlanningIntentTest {
             if (segmentDestination == destination) {
                 segment.setTargetPlanet(targetPlanet);
             }
-            return segment;
+            return PlanningResult.found(segment);
         };
 
-        assertTrue(intent.plot(origin, requestedStop, initialPlanner));
-        assertTrue(intent.append(destination, initialPlanner));
+        assertTrue(intent.plot(origin, requestedStop, initialPlanner).changed());
+        assertTrue(intent.append(destination, initialPlanner).changed());
         assertTrue(intent.adopt(pathOf(origin, alternativeIntermediate, requestedStop, destination)));
 
         assertSame(origin, intent.getOrigin());
@@ -178,12 +217,12 @@ class RoutePlanningIntentTest {
         PlanetarySystem secondStop = system("Second Stop");
         PlanetarySystem destination = system("Destination");
         RoutePlanningIntent intent = new RoutePlanningIntent(origin);
-        RoutePlanningIntent.SegmentPlanner initialPlanner = (segmentOrigin, segmentDestination) ->
-              pathOf(segmentOrigin, segmentDestination);
+                RoutePlanningIntent.SegmentPlanner initialPlanner = (segmentOrigin, segmentDestination) ->
+              PlanningResult.found(pathOf(segmentOrigin, segmentDestination));
 
-        assertTrue(intent.plot(origin, firstStop, initialPlanner));
-        assertTrue(intent.append(secondStop, initialPlanner));
-        assertTrue(intent.append(destination, initialPlanner));
+                assertTrue(intent.plot(origin, firstStop, initialPlanner).changed());
+                assertTrue(intent.append(secondStop, initialPlanner).changed());
+                assertTrue(intent.append(destination, initialPlanner).changed());
         List<PlanetarySystem> originalSystems = intent.getJumpPath().getSystems();
 
         assertFalse(intent.adopt(pathOf(origin, secondStop, firstStop, destination)));
@@ -216,8 +255,9 @@ class RoutePlanningIntentTest {
             List<PlanetarySystem> systems = segments.get(new Leg(origin, destination));
             if (systems != null) {
                 path.addSystems(systems);
+                return PlanningResult.found(path);
             }
-            return path;
+            return PlanningResult.failed(PlanningStatus.NO_ROUTE);
         };
     }
 

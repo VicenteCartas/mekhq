@@ -33,7 +33,11 @@ package mekhq.gui.view;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -43,6 +47,7 @@ import java.util.ResourceBundle;
 
 import mekhq.campaign.JumpPath;
 import mekhq.campaign.JumpPathItinerary.CircuitMode;
+import mekhq.campaign.JumpPathItinerary.Plan;
 import mekhq.campaign.JumpPathSchedule.Mode;
 import mekhq.campaign.JumpPathSchedule.Result;
 import mekhq.campaign.NavigationRouteAnalysis.Finding;
@@ -50,10 +55,14 @@ import mekhq.campaign.NavigationRouteAnalysis.FindingKind;
 import mekhq.campaign.NavigationRouteAnalysis.LegAssessment;
 import mekhq.campaign.NavigationRouteAnalysis.LegFacts;
 import mekhq.campaign.NavigationRouteAnalysis.Severity;
+import mekhq.campaign.PiratePointAnalysis.ApproachFacts;
+import mekhq.campaign.PiratePointAnalysis.DifficultyFacts;
+import mekhq.campaign.PiratePointAnalysis.Facts;
 import mekhq.campaign.RouteAlternativesPlanner.AccessStatus;
 import mekhq.campaign.RouteAlternativesPlanner.CircuitCoverage;
 import mekhq.campaign.RouteAlternativesPlanner.Course;
 import mekhq.campaign.RouteAlternativesPlanner.CourseKind;
+import mekhq.campaign.universe.Planet;
 import mekhq.campaign.universe.PlanetarySystem;
 import org.junit.jupiter.api.Test;
 
@@ -121,6 +130,58 @@ class JumpPathViewPanelTest {
               JumpPathViewPanel.initialCircuitPlan(path, List.of(circuitCourse), false).mode());
           assertEquals(CircuitMode.NONE,
               JumpPathViewPanel.initialCircuitPlan(path, List.of(), false).mode());
+        }
+
+        @Test
+        void destinationApproachPrefersRouteTargetThenFallsBackToPrimaryPlanet() {
+          Planet targetPlanet = mock(Planet.class);
+          Planet primaryPlanet = mock(Planet.class);
+          PlanetarySystem destination = mock(PlanetarySystem.class);
+          when(destination.getId()).thenReturn("Destination");
+          when(destination.getPrimaryPlanet()).thenReturn(primaryPlanet);
+          JumpPath path = pathOf(new PlanetarySystem("Origin"), destination);
+
+          assertSame(primaryPlanet, JumpPathViewPanel.destinationPlanet(path));
+          path.setTargetPlanet(targetPlanet);
+          assertSame(targetPlanet, JumpPathViewPanel.destinationPlanet(path));
+          assertNull(JumpPathViewPanel.destinationPlanet(new JumpPath()));
+        }
+
+        @Test
+        void piratePointOddsShowExactTwoD6OutcomesAndLocalizedPercentage() {
+          DifficultyFacts difficulty = new DifficultyFacts(8, 0, 8, 15, 36);
+
+          assertEquals("15/36 (41.7%)",
+              JumpPathViewPanel.format2d6Odds(difficulty, Locale.US, RESOURCES));
+        }
+
+        @Test
+        void adjustedArrivalChangesOnlyForOptedInPiratePointMode() {
+          LocalDateTime departure = START_DATE.atStartOfDay();
+          Plan itinerary = new Plan(START_DATE, 1.0, 0.0, 1.0, 4.0, 2.0, 7.0, List.of());
+          Result schedule = new Result(Mode.DEPART_AT, departure, departure, departure,
+              departure.plusDays(8), 24, true, List.of(), List.of());
+          DifficultyFacts difficulty = new DifficultyFacts(8, 0, 8, 15, 36);
+          Facts facts = new Facts(new ApproachFacts(1000.0, 4.0, false, 0.0),
+              new ApproachFacts(100.0, 1.0, false, 0.0), difficulty, 3.0, 0.0, -3.0);
+
+          assertEquals(schedule.arrival(), JumpPathViewPanel.adjustedArrival(schedule, itinerary, facts, false));
+          assertEquals(departure.plusDays(5),
+              JumpPathViewPanel.adjustedArrival(schedule, itinerary, facts, true));
+        }
+
+        @Test
+        void piratePointControlsRequireAnEndpointAndExplicitAssumedMode() {
+          assertFalse(JumpPathViewPanel.isPiratePointAssumptionEnabled(0, true));
+          assertFalse(JumpPathViewPanel.isPiratePointAssumptionEnabled(1, false));
+          assertTrue(JumpPathViewPanel.isPiratePointAssumptionEnabled(1, true));
+        }
+
+        @Test
+        void piratePointDistanceStartsAtCanonicalStandardDistance() {
+          assertEquals(12.5, JumpPathViewPanel.initialPiratePointDistanceMillionsKm(12_500_000.0));
+          assertEquals(0.0, JumpPathViewPanel.initialPiratePointDistanceMillionsKm(Double.NaN));
+          assertEquals(0.0, JumpPathViewPanel.initialPiratePointDistanceMillionsKm(-1.0));
         }
 
           @Test

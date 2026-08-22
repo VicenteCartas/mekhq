@@ -78,7 +78,6 @@ import java.time.format.TextStyle;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.WeekFields;
 import java.util.*;
-import java.util.Map.Entry;
 import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
 import javax.swing.ImageIcon;
@@ -4027,6 +4026,38 @@ public class Campaign implements ITechManager {
     }
 
     /**
+     * Calculates a user-planned route without relaxing access restrictions. If avoiding abandoned systems leaves no
+     * route, the returned explanation route may include abandoned intermediate systems.
+     *
+     * @param start the starting planetary system
+     * @param end   the explicitly requested destination
+     *
+     * @return the strict route when available, otherwise an abandoned-system fallback or a failure status
+     */
+    public RouteAlternativesPlanner.PlanningResult calculateJumpPathForPlanning(PlanetarySystem start,
+          PlanetarySystem end) {
+        return RouteAlternativesPlanner.planFastestSegmentWithFallback(start, end, getLocalDate(),
+              isUseCommandCircuit(), createNavigationPolicy(false, false), createNavigationPolicy(false, true));
+    }
+
+    /** Displays the applicable feedback when a requested route cannot be plotted. */
+    public void showRoutePlanningFailure(RouteAlternativesPlanner.PlanningStatus status) {
+        if (status == RouteAlternativesPlanner.PlanningStatus.ROUTE_FOUND) {
+            return;
+        }
+
+        String resourcePrefix = status == RouteAlternativesPlanner.PlanningStatus.ACCESS_DENIED
+                                      ? "unableToEnterSystem.outlawed"
+                                      : "unableToEnterSystem.noRoute";
+        new ImmersiveDialogSimple(this, getPlayerForce().getHumanResources()
+                                              .getSeniorAdminPerson(AdministratorSpecialization.TRANSPORT,
+                                                    getCampaignOptions(), getPlayerForce().isClanForce(),
+                                                    getLocalDate()), null,
+              String.format(resources.getString(resourcePrefix + ".ic"), getCommanderAddress()), null,
+              resources.getString(resourcePrefix + ".ooc"), null, false);
+    }
+
+    /**
      * Calculates dialog-free route comparisons under the same policy used by the navigation map.
      *
      * @param origin         first system in every course
@@ -4066,6 +4097,13 @@ public class Campaign implements ITechManager {
                 IntPredicate useCommandCircuitAtDestination) {
               return NavigationRouteAnalysis.assessPath(systems, getLocalDate(), useCommandCircuitAtDestination,
                   createNavigationPolicy(false, false));
+            }
+
+            /** Assesses path legs while preserving explicitly requested stop semantics. */
+            public NavigationRouteAnalysis.PathAssessment assessNavigationPath(List<PlanetarySystem> systems,
+                List<PlanetarySystem> requestedStops, IntPredicate useCommandCircuitAtDestination) {
+                return NavigationRouteAnalysis.assessPath(systems, requestedStops, getLocalDate(),
+                    useCommandCircuitAtDestination, createNavigationPolicy(false, false));
             }
 
         /** Computes bounded minimum-hop navigation shells and their blocked frontier. */
@@ -4113,20 +4151,6 @@ public class Campaign implements ITechManager {
             return jumpPath;
         }
 
-        // Shortcuts to ensure we're not processing a lot of data when we're unable to reach the target system
-        if (!skipEmptySystemCheck && getPlayerForce().isAvoidingEmptySystems()
-                  && end.getPopulation(currentDay) == 0) {
-            new ImmersiveDialogSimple(this, getPlayerForce().getHumanResources()
-                                                  .getSeniorAdminPerson(AdministratorSpecialization.TRANSPORT,
-                                                        getCampaignOptions(),
-                                                        getPlayerForce().isClanForce(),
-                                                        getLocalDate()), null,
-                  String.format(resources.getString("unableToEnterSystem.abandoned.ic"), getCommanderAddress()),
-                  null, resources.getString("unableToEnterSystem.abandoned.ooc"), null, false);
-
-            return new JumpPath();
-        }
-
         List<AbstractContract> activeAtBContracts = getActiveContracts();
 
         FactionHints factionHints = FactionHints.getInstance();
@@ -4135,14 +4159,7 @@ public class Campaign implements ITechManager {
                   getPlayerForce().getFactionStandings(),
                   start, end, currentDay, activeAtBContracts, factionHints);
             if (!canAccessSystem) {
-                new ImmersiveDialogSimple(this, getPlayerForce().getHumanResources()
-                                                      .getSeniorAdminPerson(AdministratorSpecialization.TRANSPORT,
-                                                            getCampaignOptions(),
-                                                            getPlayerForce().isClanForce(),
-                                                            getLocalDate()), null,
-                      String.format(resources.getString("unableToEnterSystem.outlawed.ic"), getCommanderAddress()),
-                      null, resources.getString("unableToEnterSystem.outlawed.ooc"), null, false);
-
+                showRoutePlanningFailure(RouteAlternativesPlanner.PlanningStatus.ACCESS_DENIED);
                 return new JumpPath();
             }
         }
@@ -4179,6 +4196,11 @@ public class Campaign implements ITechManager {
             }
 
             @Override
+            public boolean isRequestedDestinationAllowed(PlanetarySystem system) {
+                return true;
+            }
+
+            @Override
             public boolean canTraverse(PlanetarySystem origin, PlanetarySystem destination) {
                 return skipAccessCheck || escapingOutlawedOrigin
                              || !campaignOptions.isUseFactionStandingOutlawedSafe()
@@ -4200,7 +4222,7 @@ public class Campaign implements ITechManager {
 
             @Override
             public boolean isAbandoned(PlanetarySystem system) {
-                return system.getPopulation(currentDay) == 0;
+                return !system.isConnector() && (system.getPopulation(currentDay) == 0);
             }
 
             @Override

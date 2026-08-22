@@ -1152,18 +1152,23 @@ public class InterstellarMapPanel extends JPanel {
                     centerM.add(item);
                     popup.add(centerM);
                       popup.addSeparator();
-                      popup.add(createRoutePlanningMenuItem("map.route.plotHere", popupSystem != null,
+                      popup.add(createRoutePlanningMenuItem("map.route.plotHere",
+                          popupSystem != null,
                           () -> routePlanningHandler.plotRoute(popupSystem)));
-                      popup.add(createRoutePlanningMenuItem("map.route.appendWaypoint", popupSystem != null,
+                      popup.add(createRoutePlanningMenuItem("map.route.appendWaypoint",
+                          popupSystem != null,
                           () -> routePlanningHandler.appendWaypoint(popupSystem)));
                       popup.add(createRoutePlanningMenuItem("map.route.trimHere",
-                          (popupSystem != null) && routePlanningHandler.canTrimRouteAt(popupSystem),
+                          (popupSystem != null)
+                              && routePlanningHandler.canTrimRouteAt(popupSystem),
                           () -> routePlanningHandler.trimRouteAt(popupSystem)));
                       popup.add(createRoutePlanningMenuItem("map.route.removeWaypoint",
-                          (popupSystem != null) && routePlanningHandler.isRequestedWaypoint(popupSystem),
+                          (popupSystem != null)
+                              && routePlanningHandler.isRequestedWaypoint(popupSystem),
                           () -> routePlanningHandler.removeWaypoint(popupSystem)));
                       popup.add(createRoutePlanningMenuItem("map.route.clear",
-                          routePlanningHandler.hasPlannedRoute(), routePlanningHandler::clearPlannedRoute));
+                          routePlanningHandler.hasPlannedRoute(),
+                          routePlanningHandler::clearPlannedRoute));
                       popup.addSeparator();
                     item = new JMenuItem("Cancel Current Trip");
                     item.setEnabled(null != InterstellarMapPanel.this.campaign.getPlayerForce()
@@ -1211,7 +1216,8 @@ public class InterstellarMapPanel extends JPanel {
                     popup.add(item);
                     JMenu menuGM = new JMenu("GM Mode");
                     item = new JMenuItem("Move to selected planet");
-                    item.setEnabled((selectedSystem != null) && InterstellarMapPanel.this.campaign.isGM());
+                      item.setEnabled((selectedSystem != null)
+                          && InterstellarMapPanel.this.campaign.isGM());
                     if (selectedSystem != null) {
                         // only add if there is a planet to center on
                         item.addActionListener(evt -> {
@@ -1243,7 +1249,8 @@ public class InterstellarMapPanel extends JPanel {
                      */
 
                     item = new JMenuItem("Edit System (GM)...");
-                    item.setEnabled((selectedSystem != null) && InterstellarMapPanel.this.campaign.isGM());
+                                            item.setEnabled((selectedSystem != null)
+                          && InterstellarMapPanel.this.campaign.isGM());
                     if (selectedSystem != null) {
                         final PlanetarySystem editTarget = selectedSystem;
                         item.addActionListener(evt -> openPlanetarySystemEditor(editTarget));
@@ -1364,6 +1371,7 @@ public class InterstellarMapPanel extends JPanel {
         mapPanel = new JPanel() {
             @Override
             protected void paintComponent(Graphics g) {
+                now = InterstellarMapPanel.this.campaign.getLocalDate();
                 refreshTravelVisualState();
                 Graphics2D g2 = (Graphics2D) g;
                 double ambientElapsedSeconds = (System.nanoTime() - ambientAnimationEpochNanos)
@@ -1386,7 +1394,6 @@ public class InterstellarMapPanel extends JPanel {
                 minY = scr2mapY(getHeight() + size * 2.0);
                 maxX = scr2mapX(getWidth() + size * 2.0);
                 maxY = scr2mapY(-size * 2.0);
-                now = InterstellarMapPanel.this.campaign.getLocalDate();
                     TerritoryAtlas atlas = getPreparedTerritoryAtlas(now);
                     TerritoryRenderKey territoryRenderKey = atlas == null ? null
                         : new TerritoryRenderKey(renderViewKey, now, cartographyDataRevision);
@@ -3064,15 +3071,25 @@ public class InterstellarMapPanel extends JPanel {
     }
 
     private void refreshRouteAssessments() {
-        cachedProposedRouteAssessment = assessPath(jumpPath);
-        cachedActiveRouteAssessment = assessPath(getActiveJumpPath());
+        cachedProposedRouteAssessment = assessPath(jumpPath, true);
+        cachedActiveRouteAssessment = assessPath(getActiveJumpPath(), false);
     }
 
-    private PathAssessment assessPath(@Nullable JumpPath path) {
+    private PathAssessment assessPath(@Nullable JumpPath path, boolean includeRequestedStops) {
         if ((campaign == null) || (path == null) || (path.size() < 2)) {
             return emptyPathAssessment();
         }
-        PathAssessment assessment = campaign.assessNavigationPath(path.getSystems(), campaign.isUseCommandCircuit());
+        List<PlanetarySystem> requestedStops = includeRequestedStops
+                                                     ? path.getSystems().stream()
+                                                           .skip(1)
+                                                           .filter(routePlanningHandler::isRequestedWaypoint)
+                                                           .toList()
+                                                     : List.of();
+        PathAssessment assessment = requestedStops.isEmpty()
+                                              ? campaign.assessNavigationPath(path.getSystems(),
+                                                    campaign.isUseCommandCircuit())
+                                              : campaign.assessNavigationPath(path.getSystems(), requestedStops,
+                                                    destinationIndex -> campaign.isUseCommandCircuit());
         return assessment == null ? emptyPathAssessment() : assessment;
     }
 
@@ -4328,7 +4345,7 @@ public class InterstellarMapPanel extends JPanel {
     private void drawFactionOverlay(Graphics2D graphics, Arc2D.Double arc, PlanetarySystem system,
           SystemMarkerLayout layout, boolean systemEmpty, Map<Faction, String> capitals,
             double ownershipAlpha, double sharedSystemAlpha, double capitalAlpha, double serviceAlpha) {
-        Set<Faction> factions = system.getFactionSet(now);
+                Set<Faction> factions = system.getFactionSet(now);
         if ((factions == null) || factions.isEmpty() || systemEmpty) {
             if (optEmptySystems.isSelected()) {
                 drawAnalyticalOverlay(graphics, arc, layout, Color.DARK_GRAY, ownershipAlpha);
