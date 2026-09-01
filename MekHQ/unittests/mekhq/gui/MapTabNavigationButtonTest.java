@@ -34,8 +34,10 @@ package mekhq.gui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import javax.swing.JButton;
 import javax.swing.SwingUtilities;
 
 import mekhq.gui.baseComponents.FramedCommandButton;
@@ -57,6 +59,25 @@ class MapTabNavigationButtonTest {
             assertFalse(button.isBorderPainted());
             assertFalse(button.isFocusPainted());
             assertTrue(button.getMargin().left > button.getMargin().top);
+        });
+    }
+
+    @Test
+    void inspectorToggleFactoryCreatesStableAccessibleIconButtons() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JButton collapse = MapTab.createInspectorToggleButton(true, "Collapse tooltip", "Collapse context");
+            JButton expand = MapTab.createInspectorToggleButton(false, "Expand tooltip", "Expand context");
+
+            assertNotNull(collapse.getIcon());
+            assertNotNull(expand.getIcon());
+            assertEquals(collapse.getPreferredSize(), collapse.getMinimumSize());
+            assertEquals(collapse.getPreferredSize(), collapse.getMaximumSize());
+            assertEquals(collapse.getPreferredSize(), expand.getPreferredSize());
+            assertEquals(collapse.getPreferredSize().width, collapse.getPreferredSize().height);
+            assertEquals("Collapse tooltip", collapse.getToolTipText());
+            assertEquals("Collapse context", collapse.getAccessibleContext().getAccessibleName());
+            assertEquals("Collapse tooltip", collapse.getAccessibleContext().getAccessibleDescription());
+            assertTrue(collapse.isFocusable());
         });
     }
 }

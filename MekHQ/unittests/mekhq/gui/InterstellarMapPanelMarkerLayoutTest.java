@@ -36,9 +36,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.Graphics2D;
+import java.awt.geom.Arc2D;
 import java.awt.geom.Point2D;
 import java.awt.geom.Rectangle2D;
+import java.awt.image.BufferedImage;
+import java.util.List;
 
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -47,24 +54,76 @@ class InterstellarMapPanelMarkerLayoutTest {
     private static final double CENTER_Y = 82.75;
     private static final double DELTA = 0.000_001;
 
-    @ParameterizedTest
-    @ValueSource(doubles = { 3.0, 7.5, 12.0 })
-    void transientMarkerStateDoesNotMoveStableGeometry(double markerSize) {
-        InterstellarMapPanel.SystemMarkerLayout baseline = createLayout(markerSize,
-              InterstellarMapPanel.RouteMarkerState.NONE, false, false);
+    @Test
+    void factionOwnershipRingCoversFullCircleAndDividesSharedSystemsEqually() {
+        Color red = new Color(232, 112, 84);
+        Color blue = new Color(88, 170, 230);
+        Color green = new Color(114, 196, 126);
 
-        for (InterstellarMapPanel.RouteMarkerState routeState : InterstellarMapPanel.RouteMarkerState.values()) {
-            for (boolean selected : new boolean[] { false, true }) {
-                for (boolean hovered : new boolean[] { false, true }) {
-                    assertStableGeometry(baseline, createLayout(markerSize, routeState, selected, hovered));
-                }
-            }
+        BufferedImage singleFaction = renderOwnershipRing(List.of(red));
+        for (double angle : new double[] { 0, 90, 180, 270 }) {
+            assertEquals(red.getRGB(), sampleRing(singleFaction, angle));
+        }
+
+        BufferedImage shared = renderOwnershipRing(List.of(red, blue, green));
+        assertEquals(red.getRGB(), sampleRing(shared, 30));
+        assertEquals(blue.getRGB(), sampleRing(shared, -90));
+        assertEquals(green.getRGB(), sampleRing(shared, 150));
+        for (double angle : new double[] { 0, 60, 120, 180, 240, 300 }) {
+            assertTrue((sampleRing(shared, angle) >>> 24) > 0, "ownership ring must have no angular gaps");
+        }
+    }
+
+    @Test
+    void analyticalLayerRingCoversFullCircle() {
+        Color layerColor = new Color(33, 144, 140);
+        BufferedImage image = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = image.createGraphics();
+        InterstellarMapPanel.drawAnalyticalOverlay(graphics, new Arc2D.Double(),
+              InterstellarMapPanel.SystemMarkerLayout.create(32, 32, 7.2,
+                    InterstellarMapPanel.RouteMarkerState.NONE, false, false), layerColor, 1.0);
+        graphics.dispose();
+
+        for (double angle : new double[] { 0, 45, 90, 135, 180, 225, 270, 315 }) {
+            assertEquals(layerColor.getRGB(), sampleRing(image, angle));
         }
     }
 
     @ParameterizedTest
-    @ValueSource(doubles = { 3.0, 7.5, 12.0 })
-    void routeRadiiRemainDistinctAndOutsideSelection(double markerSize) {
+    @ValueSource(doubles = { 3.0, 7.5, 12.0, 18.0, 25.0 })
+        void positionedMarkersFollowTheOutermostVisibleEnvelope(double markerSize) {
+          InterstellarMapPanel.SystemMarkerLayout plain = createLayout(markerSize,
+              InterstellarMapPanel.RouteMarkerState.NONE, false, false);
+          InterstellarMapPanel.SystemMarkerLayout selected = createLayout(markerSize,
+              InterstellarMapPanel.RouteMarkerState.NONE, true, false);
+          InterstellarMapPanel.SystemMarkerLayout hovered = createLayout(markerSize,
+              InterstellarMapPanel.RouteMarkerState.NONE, false, true);
+          InterstellarMapPanel.SystemMarkerLayout planned = createLayout(markerSize,
+              InterstellarMapPanel.RouteMarkerState.PLANNED, false, false);
+          InterstellarMapPanel.SystemMarkerLayout active = createLayout(markerSize,
+              InterstellarMapPanel.RouteMarkerState.ACTIVE, false, false);
+
+        assertEquals(plain.externalOrbitRadius(), selected.externalOrbitRadius(), DELTA);
+        assertEquals(plain.externalOrbitRadius(), hovered.externalOrbitRadius(), DELTA);
+        assertEquals(plain.hoveredRadius() + 0.55, plain.orthogonalExternalOrbitRadius(), DELTA);
+        assertEquals(plain.orthogonalExternalOrbitRadius(), selected.orthogonalExternalOrbitRadius(), DELTA);
+        assertEquals(plain.orthogonalExternalOrbitRadius(), hovered.orthogonalExternalOrbitRadius(), DELTA);
+          assertTrue(hovered.externalOrbitRadius() < planned.externalOrbitRadius());
+          assertEquals(planned.externalOrbitRadius(), active.externalOrbitRadius(), DELTA);
+        assertEquals(planned.externalOrbitRadius(), planned.orthogonalExternalOrbitRadius(), DELTA);
+        assertEquals(plain.capitalAnchor(0, 1).y, selected.capitalAnchor(0, 1).y, DELTA);
+        assertEquals(plain.capitalAnchor(0, 1).y, hovered.capitalAnchor(0, 1).y, DELTA);
+        assertEquals(plain.gmEditedAnchor().y, selected.gmEditedAnchor().y, DELTA);
+        assertEquals(plain.gmEditedAnchor().y, hovered.gmEditedAnchor().y, DELTA);
+          assertTrue(plain.capitalAnchor(0, 1).y > planned.capitalAnchor(0, 1).y,
+              "a capital moves inward when no navigation wrapper is visible");
+          assertTrue(plain.gmEditedAnchor().y < planned.gmEditedAnchor().y,
+              "the GM pencil moves inward when no navigation wrapper is visible");
+    }
+
+    @ParameterizedTest
+    @ValueSource(doubles = { 3.0, 7.5, 12.0, 18.0, 25.0 })
+    void selectionHoverAndNavigationUseCompactNonOverlappingOrbits(double markerSize) {
         InterstellarMapPanel.SystemMarkerLayout none = createLayout(markerSize,
               InterstellarMapPanel.RouteMarkerState.NONE, false, false);
         InterstellarMapPanel.SystemMarkerLayout planned = createLayout(markerSize,
@@ -73,26 +132,29 @@ class InterstellarMapPanelMarkerLayoutTest {
               InterstellarMapPanel.RouteMarkerState.ACTIVE, false, false);
 
         assertEquals(0.0, none.navigationRadius(), DELTA);
-        assertTrue(planned.navigationRadius() > planned.selectedRadius());
-        assertTrue(active.navigationRadius() > planned.navigationRadius());
-          assertTrue(active.navigationRadius() - active.hoveredRadius() >= 2.5,
-              "active route ring must clear hover brackets");
+            assertEquals(3.0, planned.selectedRadius() - planned.ownershipRadius(), DELTA);
+            assertEquals(3.0, planned.hoveredRadius() - planned.selectedRadius(), DELTA);
+            double hoverBracketEnvelope = Math.hypot(planned.hoveredRadius(), planned.hoveredRadius()) + 0.55;
+            assertEquals(3.0, planned.navigationRadius() - 1.25 - hoverBracketEnvelope, DELTA);
+            assertEquals(planned.navigationRadius(), active.navigationRadius(), DELTA);
     }
 
     @ParameterizedTest
-    @ValueSource(doubles = { 3.0, 7.5, 12.0 })
+    @ValueSource(doubles = { 3.0, 7.5, 12.0, 18.0, 25.0 })
     void sharedCapitalBandStaysAtTwelveOClockAndClearOfJumpShip(double markerSize) {
         InterstellarMapPanel.SystemMarkerLayout layout = createLayout(markerSize,
               InterstellarMapPanel.RouteMarkerState.ACTIVE, true, true);
         Point2D.Double ship = layout.shipAnchor();
         Rectangle2D.Double shipBounds = new Rectangle2D.Double(ship.x - 17.0, ship.y - 17.0, 34.0, 34.0);
+          assertEquals(CENTER_X, layout.capitalAnchor(0, 1).x, DELTA,
+              "a single capital stays horizontally centered over its system");
 
         for (int markerCount : new int[] { 2, 3 }) {
             Rectangle2D.Double previousBounds = null;
             double capitalY = layout.capitalAnchor(0, markerCount).y;
             for (int markerIndex = 0; markerIndex < markerCount; markerIndex++) {
                 Point2D.Double capital = layout.capitalAnchor(markerIndex, markerCount);
-                Rectangle2D.Double capitalBounds = InterstellarMapPanel.nationalCapitalMarkerBounds(
+                    Rectangle2D.Double capitalBounds = InterstellarMapPanel.capitalBandMarkerBounds(
                       capital, markerSize);
 
                 assertEquals(capitalY, capital.y, DELTA);
@@ -108,33 +170,76 @@ class InterstellarMapPanelMarkerLayoutTest {
         }
     }
 
+        @ParameterizedTest
+        @ValueSource(doubles = { 3.0, 7.5, 12.0, 18.0, 25.0 })
+        void positionedMarkersUseDistinctOuterSlotsAtEveryZoom(double markerSize) {
+          InterstellarMapPanel.SystemMarkerLayout layout = createLayout(markerSize,
+              InterstellarMapPanel.RouteMarkerState.PLANNED, false, false);
+          double waypointRadius = 9.0;
+          double routeStatusRadius = Math.max(5.0, markerSize * 0.9);
+          Point2D.Double waypoint = layout.routeBadgeAnchor(18.0);
+          Point2D.Double routeStatus = layout.routeStatusAnchor(routeStatusRadius);
+
+          assertTrue(layout.capitalAnchor(0, 1).y < CENTER_Y, "capital stays above");
+          assertTrue(layout.operationAnchor().x < CENTER_X, "operation stays upper-left");
+          assertTrue(layout.operationAnchor().y < CENTER_Y, "operation stays upper-left");
+          assertTrue(layout.shipAnchor().x > CENTER_X, "fleet stays upper-right");
+          assertTrue(layout.shipAnchor().y < CENTER_Y, "fleet stays upper-right");
+          assertTrue(waypoint.x > CENTER_X, "waypoint stays lower-right");
+          assertTrue(waypoint.y > CENTER_Y, "waypoint stays lower-right");
+          assertTrue(routeStatus.x > CENTER_X, "route status stays right");
+          assertEquals(CENTER_Y, routeStatus.y, DELTA, "route status stays at right-middle");
+          assertTrue(routeStatus.y < waypoint.y, "route status stays above the waypoint slot");
+          assertTrue(Point2D.distance(routeStatus.x, routeStatus.y, waypoint.x, waypoint.y)
+              > routeStatusRadius + waypointRadius + 3.0,
+              "route status and waypoint slots must not overlap");
+          assertEquals(routeStatus.x + routeStatusRadius + 3.0,
+              layout.routeStatusLabelX(routeStatusRadius), DELTA,
+              "warned destination labels start beyond the route-status marker");
+        }
+
     private static InterstellarMapPanel.SystemMarkerLayout createLayout(double markerSize,
           InterstellarMapPanel.RouteMarkerState routeState, boolean selected, boolean hovered) {
         return InterstellarMapPanel.SystemMarkerLayout.create(CENTER_X, CENTER_Y, markerSize,
               routeState, selected, hovered);
     }
 
-    private static void assertStableGeometry(InterstellarMapPanel.SystemMarkerLayout expected,
-          InterstellarMapPanel.SystemMarkerLayout actual) {
-        assertEquals(expected.ownershipRadius(), actual.ownershipRadius(), DELTA, "ownership radius");
-        assertEquals(expected.selectedRadius(), actual.selectedRadius(), DELTA, "selected radius");
-        assertEquals(expected.hoveredRadius(), actual.hoveredRadius(), DELTA, "hovered radius");
-        assertEquals(expected.externalOrbitRadius(), actual.externalOrbitRadius(), DELTA, "external orbit");
-        assertEquals(expected.labelX(), actual.labelX(), DELTA, "label X");
-        assertEquals(expected.overrideRadius(), actual.overrideRadius(), DELTA, "override radius");
-        assertPointEquals(expected.operationAnchor(), actual.operationAnchor(), "operation anchor");
-        assertPointEquals(expected.serviceAnchor(), actual.serviceAnchor(), "service anchor");
-        assertPointEquals(expected.routeBadgeAnchor(18.0), actual.routeBadgeAnchor(18.0), "route badge anchor");
-        assertPointEquals(expected.routeBadgeAnchor(28.0), actual.routeBadgeAnchor(28.0), "large route badge anchor");
-        assertPointEquals(expected.shipAnchor(), actual.shipAnchor(), "ship anchor");
-        for (int capitalIndex = 0; capitalIndex < 3; capitalIndex++) {
-            assertPointEquals(expected.capitalAnchor(capitalIndex, 3), actual.capitalAnchor(capitalIndex, 3),
-                  "capital anchor " + capitalIndex);
+    @Test
+    void waypointGlyphsAreOpticallyCenteredInTheirBadge() {
+        BufferedImage image = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = image.createGraphics();
+        graphics.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
+
+        for (String text : List.of("1", "2", "8", "10", "12")) {
+            Point2D.Double baseline = InterstellarMapPanel.centeredGlyphBaseline(graphics, text, 32, 32);
+            Rectangle2D visualBounds = graphics.getFont()
+                  .createGlyphVector(graphics.getFontRenderContext(), text)
+                  .getVisualBounds();
+            Rectangle2D positionedBounds = new Rectangle2D.Double(
+                  baseline.x + visualBounds.getX(), baseline.y + visualBounds.getY(),
+                  visualBounds.getWidth(), visualBounds.getHeight());
+
+            assertEquals(32.0, positionedBounds.getCenterX(), DELTA, text + " horizontal center");
+            assertEquals(32.0, positionedBounds.getCenterY(), DELTA, text + " vertical center");
         }
+        graphics.dispose();
     }
 
-    private static void assertPointEquals(Point2D.Double expected, Point2D.Double actual, String message) {
-        assertEquals(expected.x, actual.x, DELTA, message + " X");
-        assertEquals(expected.y, actual.y, DELTA, message + " Y");
+    private static BufferedImage renderOwnershipRing(List<Color> colors) {
+        BufferedImage image = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = image.createGraphics();
+        InterstellarMapPanel.drawFactionOwnershipRing(graphics, new Arc2D.Double(),
+              InterstellarMapPanel.SystemMarkerLayout.create(32, 32, 7.2,
+                    InterstellarMapPanel.RouteMarkerState.NONE, false, false), colors);
+        graphics.dispose();
+        return image;
     }
+
+    private static int sampleRing(BufferedImage image, double angleDegrees) {
+        double radians = Math.toRadians(angleDegrees);
+        int x = 32 + (int) Math.round(10 * Math.cos(radians));
+        int y = 32 - (int) Math.round(10 * Math.sin(radians));
+        return image.getRGB(x, y);
+    }
+
 }

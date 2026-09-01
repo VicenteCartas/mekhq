@@ -52,58 +52,31 @@ class MapTabLayoutStateTest {
     }
 
     @Test
-    void startsWithInspectorAndRouteTrayExpanded() {
+    void startsWithContextInspectorExpanded() {
         MapTabLayoutState state = new MapTabLayoutState();
 
-        assertTrue(state.isInspectorExpanded());
-        assertTrue(state.isRouteTrayExpanded());
-        assertTrue(state.isTutorialVisible());
-        assertFalse(state.isFocusMode());
+        assertTrue(state.isContextInspectorExpanded());
     }
 
     @Test
-    void independentTogglesDoNotAffectEachOther() {
+    void contextInspectorCanBeCollapsedAndExpanded() {
         MapTabLayoutState state = new MapTabLayoutState();
 
-        state.toggleInspector();
-        assertFalse(state.isInspectorExpanded());
-        assertTrue(state.isRouteTrayExpanded());
+        state.toggleContextInspector();
+        assertFalse(state.isContextInspectorExpanded());
 
-        state.toggleRouteTray();
-        assertFalse(state.isInspectorExpanded());
-        assertFalse(state.isRouteTrayExpanded());
+        state.toggleContextInspector();
+        assertTrue(state.isContextInspectorExpanded());
     }
 
     @Test
-    void leavingFocusRestoresExactIndependentStates() {
+    void explicitRevealExpandsCollapsedInspector() {
         MapTabLayoutState state = new MapTabLayoutState();
-        state.toggleInspector();
+        state.toggleContextInspector();
 
-        state.toggleFocusMode();
-        assertTrue(state.isFocusMode());
-        assertFalse(state.isInspectorExpanded());
-        assertFalse(state.isRouteTrayExpanded());
-        assertFalse(state.isTutorialVisible());
+        state.revealContextInspector();
 
-        state.toggleFocusMode();
-        assertFalse(state.isFocusMode());
-        assertFalse(state.isInspectorExpanded());
-        assertTrue(state.isRouteTrayExpanded());
-        assertTrue(state.isTutorialVisible());
-    }
-
-    @Test
-    void focusDoesNotRewriteIndependentStates() {
-        MapTabLayoutState state = new MapTabLayoutState();
-        state.toggleRouteTray();
-        state.toggleFocusMode();
-
-        state.toggleInspector();
-        state.toggleRouteTray();
-        state.toggleFocusMode();
-
-        assertTrue(state.isInspectorExpanded());
-        assertFalse(state.isRouteTrayExpanded());
+        assertTrue(state.isContextInspectorExpanded());
     }
 
     @Test

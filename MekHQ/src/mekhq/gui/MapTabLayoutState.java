@@ -36,50 +36,18 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 final class MapTabLayoutState {
-    private boolean inspectorExpanded = true;
-    private boolean routeTrayExpanded = true;
-    private boolean focusMode;
-    private boolean inspectorExpandedBeforeFocus;
-    private boolean routeTrayExpandedBeforeFocus;
+    private boolean contextInspectorExpanded = true;
 
-    boolean isInspectorExpanded() {
-        return !focusMode && inspectorExpanded;
+    boolean isContextInspectorExpanded() {
+        return contextInspectorExpanded;
     }
 
-    boolean isRouteTrayExpanded() {
-        return !focusMode && routeTrayExpanded;
+    void toggleContextInspector() {
+        contextInspectorExpanded = !contextInspectorExpanded;
     }
 
-    boolean isTutorialVisible() {
-        return !focusMode;
-    }
-
-    boolean isFocusMode() {
-        return focusMode;
-    }
-
-    void toggleInspector() {
-        if (!focusMode) {
-            inspectorExpanded = !inspectorExpanded;
-        }
-    }
-
-    void toggleRouteTray() {
-        if (!focusMode) {
-            routeTrayExpanded = !routeTrayExpanded;
-        }
-    }
-
-    void toggleFocusMode() {
-        if (focusMode) {
-            focusMode = false;
-            inspectorExpanded = inspectorExpandedBeforeFocus;
-            routeTrayExpanded = routeTrayExpandedBeforeFocus;
-        } else {
-            inspectorExpandedBeforeFocus = inspectorExpanded;
-            routeTrayExpandedBeforeFocus = routeTrayExpanded;
-            focusMode = true;
-        }
+    void revealContextInspector() {
+        contextInspectorExpanded = true;
     }
 
     static <T> void preserveViewportCenter(Supplier<T> centerSupplier, Consumer<T> centerRestorer,

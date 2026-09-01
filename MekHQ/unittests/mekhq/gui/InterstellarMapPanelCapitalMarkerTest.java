@@ -33,6 +33,7 @@
 package mekhq.gui;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.mock;
@@ -44,6 +45,9 @@ import java.awt.Graphics2D;
 import java.awt.geom.Point2D;
 import java.awt.image.BufferedImage;
 import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import mekhq.campaign.universe.Faction;
 import org.junit.jupiter.api.Test;
@@ -79,7 +83,51 @@ class InterstellarMapPanelCapitalMarkerTest {
         assertTrue(exactColorPixelCount(redMarker, TEST_FACTION_COLOR) > 0);
         assertTrue(exactColorPixelCount(blueMarker, blue) > 0);
         assertFalse(Arrays.equals(pixels(redMarker), pixels(blueMarker)));
-        assertTrue(darkPixelCount(redMarker) > 0, "the crown needs a dark contrast backing");
+        assertTrue(darkPixelCount(redMarker) > 0, "the star needs a dark contrast backing");
+    }
+
+    @Test
+        void datedCapitalResolverKeepsOwnersAndAddsOnlyMercenaryExceptionInShortNameOrder() {
+          Faction capitalOwner = faction(TEST_FACTION_COLOR, false, false);
+          when(capitalOwner.getShortName()).thenReturn("ZZ");
+          Faction nonCapitalOwner = faction(TEST_FACTION_COLOR, false, false);
+          when(nonCapitalOwner.getShortName()).thenReturn("AA");
+        Faction mercenaries = faction(TEST_FACTION_COLOR, false, false);
+        when(mercenaries.getShortName()).thenReturn("MERC");
+          Faction mercenaryReviewBoard = faction(TEST_FACTION_COLOR, false, false);
+          when(mercenaryReviewBoard.getShortName()).thenReturn("MRB");
+          Map<Faction, String> capitals = Map.of(
+              capitalOwner, "Galatea",
+              nonCapitalOwner, "New Avalon",
+              mercenaries, "Galatea",
+              mercenaryReviewBoard, "Galatea");
+
+          List<Faction> galateaCapitals = InterstellarMapPanel.resolveDatedCapitalFactions(
+              Set.of(capitalOwner, nonCapitalOwner), capitals, "Galatea");
+
+          assertEquals(List.of(mercenaries, capitalOwner), galateaCapitals);
+          assertFalse(galateaCapitals.contains(nonCapitalOwner));
+          assertFalse(galateaCapitals.contains(mercenaryReviewBoard));
+
+          List<Faction> mercenaryOwnedCapital = InterstellarMapPanel.resolveDatedCapitalFactions(
+              Set.of(capitalOwner, mercenaries), capitals, "Galatea");
+          assertEquals(List.of(mercenaries, capitalOwner), mercenaryOwnedCapital);
+          assertEquals(1, mercenaryOwnedCapital.stream().filter(faction -> faction == mercenaries).count());
+    }
+
+    @Test
+    void allDatedCapitalsUseTheFactionStar() {
+        Faction ordinaryFaction = faction(TEST_FACTION_COLOR, false, false);
+        when(ordinaryFaction.getShortName()).thenReturn("FS");
+        Faction mercenaries = faction(TEST_FACTION_COLOR, false, false);
+        when(mercenaries.getShortName()).thenReturn("MERC");
+
+        BufferedImage expectedStar = renderCapital(ordinaryFaction, 7.5);
+        BufferedImage ordinaryCapital = renderDatedCapital(ordinaryFaction, "New Avalon", "New Avalon");
+        BufferedImage mercenaryCapital = renderDatedCapital(mercenaries, "Galatea", "Galatea");
+
+        assertTrue(Arrays.equals(pixels(expectedStar), pixels(ordinaryCapital)));
+        assertTrue(Arrays.equals(pixels(expectedStar), pixels(mercenaryCapital)));
     }
 
     private static Faction faction(Color color, boolean major, boolean clan) {
@@ -95,6 +143,15 @@ class InterstellarMapPanelCapitalMarkerTest {
         Graphics2D graphics = canvas.createGraphics();
         InterstellarMapPanel.drawFactionCapitalMarker(graphics, new Point2D.Double(24, 24), markerSize,
               faction);
+        graphics.dispose();
+        return canvas;
+    }
+
+    private static BufferedImage renderDatedCapital(Faction faction, String systemId, String capitalSystemId) {
+        BufferedImage canvas = new BufferedImage(48, 48, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = canvas.createGraphics();
+        InterstellarMapPanel.drawDatedCapitalMarker(graphics, new Point2D.Double(24, 24), 7.5,
+              faction, systemId, capitalSystemId);
         graphics.dispose();
         return canvas;
     }

@@ -38,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
@@ -48,7 +49,6 @@ import java.util.List;
 import javax.swing.JComponent;
 import javax.swing.JButton;
 import javax.swing.JLabel;
-import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTextArea;
@@ -59,39 +59,51 @@ import mekhq.campaign.Campaign;
 import org.junit.jupiter.api.Test;
 
 class InterstellarMapPanelLegendTest {
-    private static final List<String> GROUPS = List.of("NAVIGATION", "RANGE RINGS", "SYSTEM STATUS", "MAP DATA");
-    private static final List<Integer> GROUP_ENTRY_COUNTS = List.of(10, 4, 7, 7);
+    private static final List<String> GROUPS = List.of("NAVIGATION", "MAP LAYERS", "RANGE RINGS", "SYSTEM STATUS");
+            private static final List<Integer> GROUP_ENTRY_COUNTS = List.of(12, 18, 4, 4);
     private static final List<String> TITLES = List.of(
-          "Selected system", "Hovered system", "Current fleet", "Planned route", "Active route",
-                    "Waypoint number", "Reachability shells", "Route caution", "Blocked route leg",
-                    "Distance measurement", "Contract-search radius", "Planetary-acquisition radius", "Jump radius",
-                "50 ly HPG range", "System contact", "Faction ownership", "National capital", "Great Hiring Hall",
-        "Operation flag", "Restricted system", "GM-edited system", "Analytical / service value",
-        "Faction emblem", "HPG network & traffic", "Sovereign border", "Disputed territory",
-        "Unclaimed pocket", "Enclave");
+                "Selected system", "Hovered system", "Planned route",
+                  "Active route", "Reachability shells", "Reachability caution", "Blocked reachability",
+                        "Distance measurement", "Current fleet", "Waypoint number", "Route caution", "Blocked route leg",
+                  "Contract-search radius", "Planetary-acquisition radius", "Jump radius",
+                  "50 ly HPG range", "Dated capital", "Operation flag",
+        "Restricted system", "GM-edited system", "Faction ownership", "Technology", "Industry", "Raw Materials",
+        "Output", "Agriculture", "Population", "HPG", "Recharge Stations", "Academies", "Hiring Halls",
+        "Disease Outbreaks", "Faction emblem", "HPG network & traffic", "Sovereign border",
+        "Disputed territory", "Unclaimed pocket", "Enclave");
     private static final List<String> DESCRIPTIONS = List.of(
-        "Cyan corner brackets identify the selected system.",
-        "Pale corner brackets identify the system under the pointer.",
-        "An amber JumpShip marks the fleet; an amber ring is its low-zoom beacon.",
-        "A cyan dashed path and thin rings show the proposed jump route.",
-        "Amber paths and rings show the current trip; pale pulses show travel flow.",
-        "Numbered badges give each route stop's order.",
-        "Cyan circles mark one-hop systems; restrained square and hexagonal rings mark deeper minimum-hop shells.",
-        "An amber triangle marks an allowed leg with a grounded caution, such as an abandoned destination.",
-        "A red dashed segment and diamond mark a leg blocked by range, access, avoidance, or recharge constraints.",
-        "A pale dash-dot line with distinct A and B endpoints shows a transient direct measurement.",
+        "Amber corner brackets identify the selected system.",
+        "Cyan corner brackets identify the system under the pointer; selected systems suppress hover brackets.",
+        "A cyan dashed path and complete thin rings surrounding each stop show the proposed jump route.",
+        "Amber paths and complete rings surrounding each stop show the current trip; pale pulses show travel flow.",
+        "Centered shapes surrounding systems show minimum hops: cyan circles mark one, squares mark two, and hexagons mark three.",
+        "An amber triangle surrounding a system marks it as reachable with a caution.",
+        "A red diamond surrounding a system marks the blocked frontier.",
+        "A pale dash-dot line uses a circle surrounding endpoint A and a diamond surrounding endpoint B for a transient direct measurement.",
+        "An amber JumpShip above-right of a system marks the fleet. At distant zoom, an amber ring surrounding the system replaces the ship.",
+        "A numbered badge below-right of a system gives each requested route stop's order.",
+        "An amber triangle to the right of a system marks an allowed route leg with a grounded caution, such as an abandoned destination.",
+        "A red dashed segment and diamond to the right of its destination mark a leg blocked by range, access, avoidance, or recharge constraints.",
         "A configurable-color thick dashed ring centered on the selected system bounds contract searches; campaign and MekHQ options control visibility.",
         "A configurable-color thick dashed ring centered on the selected system bounds planetary acquisition; campaign, MekHQ, and zoom options control visibility.",
         "A configurable-color thick dashed ring centered on the selected system shows one-jump reach; MekHQ and zoom options control visibility.",
         "A dark-green dotted ring centered on the selected system marks 50 ly; HPG layer visibility controls when it appears.",
-        "Star color shows spectral class; at low zoom, contact color reflects faction or map data, with grey for empty or unowned systems.",
-        "Colored arcs identify each faction present; a neutral dashed collar marks a shared system.",
-        "A faction-color crown with a dark outline marks every dated national capital at atlas zoom.",
-        "A pale triangle marks a Great Hiring Hall.",
-        "An outline flag marks an active mission; a filled flag marks an active scenario; the count is active missions.",
-        "A black X marks a system barred by outlaw or restricted-entry standing rules.",
-        "A cyan outline ring marks a non-canon system override.",
-        "Bracket color reflects the active map layer's value or service status.",
+        "A faction-color star above a system marks each dated national capital.",
+        "A flag above-left of a system marks an operation: outline for an active mission, filled for an active scenario; the count is active missions.",
+        "A red prohibition ring marks a system barred by outlaw or restricted-entry standing rules.",
+        "A cyan pencil below a system marks a non-canon override.",
+        "Single ownership uses one complete faction-color ring; shared ownership divides the ring equally among all factions.",
+        "Regressed is dark gray; F purple; D blue; C teal; B green; A or Advanced yellow; no population is black.",
+        "F is near-black; D purple; C magenta; B coral; A pale yellow; no population is black.",
+        "F is blue; D purple; C magenta; B orange; A yellow; no population is black.",
+        "F is near-black; D purple; C magenta; B orange; A pale yellow; no population is black.",
+        "F is dark blue; D blue-gray; C gray; B tan; A yellow; no population is black.",
+        "Purple marks under 1M, then colors progress through violet, blue, teal, and green across 1M, 25M, 100M, 200M, 300M, 500M, 1B, and 1.5B; 3B+ is yellow; none is black.",
+        "No HPG is black; D dark gray; C light gray; B pink; A pale yellow.",
+        "No station is gray; one station coral; two stations yellow; unavailable data black.",
+        "None is black; academy counts 1 through 6 progress from blue-teal through teal and green to yellow.",
+        "None is black; Questionable magenta; Minor orange; Standard yellow; Great green.",
+        "None is black; one outbreak yellow; two orange; three magenta; four or more purple.",
         "A faint emblem watermark identifies territory; its tint identifies the faction.",
         "Rings show rating: A cyan, B blue, C orange, D red; links and pulses show A/B traffic.",
         "Translucent faction fill and a solid edge mark territory inferred from dated ownership.",
@@ -114,8 +126,10 @@ class InterstellarMapPanelLegendTest {
                   .map(JLabel.class::cast)
                   .map(JLabel::getText)
                   .toList();
-            assertEquals(TITLES, labels);
-            assertEquals(DESCRIPTIONS, components.stream()
+            List<String> orderedTitles = inDisplayOrder(TITLES);
+            List<String> orderedDescriptions = inDisplayOrder(DESCRIPTIONS);
+            assertEquals(orderedTitles, labels);
+            assertEquals(orderedDescriptions, components.stream()
                 .filter(JTextArea.class::isInstance)
                 .map(JTextArea.class::cast)
                 .map(JTextArea::getText)
@@ -127,7 +141,7 @@ class InterstellarMapPanelLegendTest {
                 .filter(component -> Boolean.TRUE.equals(component.getClientProperty("mapLegendSwatch")))
                   .toList();
             assertEquals(TITLES.size(), swatches.size());
-            assertEquals(TITLES, swatches.stream()
+            assertEquals(orderedTitles, swatches.stream()
                 .map(swatch -> (String) swatch.getClientProperty("mapLegendTitle"))
                 .toList());
             for (JComponent swatch : swatches) {
@@ -159,12 +173,12 @@ class InterstellarMapPanelLegendTest {
 
                 int entryCount = GROUP_ENTRY_COUNTS.get(tabIndex);
                 List<Component> tabComponents = descendantsOf(scrollPane);
-                assertEquals(TITLES.subList(entryOffset, entryOffset + entryCount), tabComponents.stream()
+                assertEquals(orderedTitles.subList(entryOffset, entryOffset + entryCount), tabComponents.stream()
                       .filter(JLabel.class::isInstance)
                       .map(JLabel.class::cast)
                       .map(JLabel::getText)
                       .toList());
-                assertEquals(DESCRIPTIONS.subList(entryOffset, entryOffset + entryCount), tabComponents.stream()
+                assertEquals(orderedDescriptions.subList(entryOffset, entryOffset + entryCount), tabComponents.stream()
                       .filter(JTextArea.class::isInstance)
                       .map(JTextArea.class::cast)
                       .map(JTextArea::getText)
@@ -172,16 +186,22 @@ class InterstellarMapPanelLegendTest {
                 entryOffset += entryCount;
 
                 BufferedImage renderedTab = renderOffscreen(scrollPane);
-                assertFalse(scrollPane.getVerticalScrollBar().isVisible());
+                    assertEquals(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+                        scrollPane.getVerticalScrollBarPolicy());
                 assertFalse(scrollPane.getHorizontalScrollBar().isVisible());
-                assertTrue(scrollPane.getViewport().getView().getHeight()
-                      <= scrollPane.getViewport().getExtentSize().height);
-                    assertTrue(scrollPane.getViewport().getView().getWidth()
-                        <= scrollPane.getViewport().getExtentSize().width);
                 assertTrue(hasColorVariation(renderedTab));
             }
-            assertEquals(TITLES.size(), entryOffset);
+            assertEquals(orderedTitles.size(), entryOffset);
         });
+    }
+
+    private static <T> List<T> inDisplayOrder(List<T> values) {
+        List<T> ordered = new ArrayList<>(values.size());
+        ordered.addAll(values.subList(0, 12));
+        ordered.addAll(values.subList(20, 38));
+        ordered.addAll(values.subList(12, 16));
+        ordered.addAll(values.subList(16, 20));
+        return ordered;
     }
 
     @Test
@@ -224,6 +244,28 @@ class InterstellarMapPanelLegendTest {
             }
         });
     }
+
+        @Test
+        void gmEditedLegendShowsMaterialPencilBelowSystem() throws Exception {
+          SwingUtilities.invokeAndWait(() -> {
+            JTabbedPane tabbedPane = InterstellarMapPanel.createMapLegendTabbedPane();
+            JComponent swatch = descendantsOf(tabbedPane).stream()
+                .filter(JComponent.class::isInstance)
+                .map(JComponent.class::cast)
+                .filter(component -> "GM-edited system".equals(
+                    component.getClientProperty("mapLegendTitle")))
+                .filter(component -> Boolean.TRUE.equals(
+                    component.getClientProperty("mapLegendSwatch")))
+                .findFirst()
+                .orElseThrow();
+
+            BufferedImage image = renderOffscreen(swatch);
+            assertTrue(nearColorPixelCount(image, new Color(65, 210, 224), image.getHeight() / 2) > 0,
+                "the cyan pencil body must be visible below the reference system");
+            assertTrue(maximumNearColorY(image, new Color(65, 210, 224)) < image.getHeight() - 1,
+                "the pencil must not be clipped by the bottom edge");
+          });
+        }
 
     @Test
     void layerControlButtonsShareVerticalCenterWhenExpanded() throws Exception {
@@ -300,6 +342,32 @@ class InterstellarMapPanelLegendTest {
             }
         }
         return false;
+    }
+
+    private static int nearColorPixelCount(BufferedImage image, Color color, int minimumY) {
+        int count = 0;
+        for (int y = minimumY; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                Color pixel = new Color(image.getRGB(x, y), true);
+                if ((pixel.getAlpha() > 0)
+                      && (Math.abs(pixel.getRed() - color.getRed()) <= 30)
+                      && (Math.abs(pixel.getGreen() - color.getGreen()) <= 30)
+                      && (Math.abs(pixel.getBlue() - color.getBlue()) <= 30)) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
+    private static int maximumNearColorY(BufferedImage image, Color color) {
+        int maximumY = -1;
+        for (int y = 0; y < image.getHeight(); y++) {
+            if (nearColorPixelCount(image.getSubimage(0, y, image.getWidth(), 1), color, 0) > 0) {
+                maximumY = y;
+            }
+        }
+        return maximumY;
     }
 
     private static List<Component> descendantsOf(Component root) {

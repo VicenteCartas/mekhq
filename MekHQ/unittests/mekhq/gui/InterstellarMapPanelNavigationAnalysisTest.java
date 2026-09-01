@@ -93,6 +93,25 @@ class InterstellarMapPanelNavigationAnalysisTest {
     }
 
       @Test
+      void everyNavigationShapeRespectsItsStrokedInnerClearance() {
+            double clearance = 24.0;
+            double strokeWidth = 2.2;
+            for (InterstellarMapPanel.NavigationMarkerShape shape
+                    : InterstellarMapPanel.NavigationMarkerShape.values()) {
+                  double pathRadius = InterstellarMapPanel.navigationMarkerPathRadius(
+                          shape, clearance, strokeWidth);
+                  double pathInradius = switch (shape) {
+                        case CIRCLE, SQUARE -> pathRadius;
+                        case TRIANGLE -> pathRadius * Math.cos(Math.PI / 3.0);
+                        case DIAMOND -> pathRadius * Math.cos(Math.PI / 4.0);
+                        case HEXAGON -> pathRadius * Math.cos(Math.PI / 6.0);
+                  };
+
+                  assertEquals(clearance, pathInradius - (strokeWidth / 2.0), 0.000_001, shape.name());
+            }
+      }
+
+      @Test
       void blockedReachabilityStrokeUsesValidMiterLimit() {
             BasicStroke stroke = InterstellarMapPanel.reachabilityMarkerStroke(
                     InterstellarMapPanel.NavigationMarkerTone.BLOCKED);

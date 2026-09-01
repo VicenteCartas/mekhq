@@ -181,9 +181,7 @@ class InterstellarMapPanelTerritoryContourTest {
               InterstellarMapPanel.TerritoryVisualProfile.create(4.0);
 
         assertEquals(0.0, atlas.secondaryDetailAlpha());
-        assertEquals(0.0, atlas.sharedSystemAlpha());
         assertEquals(1.0, detail.secondaryDetailAlpha());
-        assertEquals(1.0, detail.sharedSystemAlpha());
     }
 
     @Test
