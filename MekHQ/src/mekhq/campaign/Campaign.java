@@ -366,19 +366,6 @@ public class Campaign implements ITechManager {
      */
     public static final WeekFields WEEK_FIELDS = WeekFields.ISO;
 
-    /**
-     * Represents the different types of administrative specializations. Each specialization corresponds to a distinct
-     * administrative role within the organization.
-     *
-     * <p>
-     * These specializations are used to determine administrative roles and responsibilities, such as by identifying the
-     * most senior administrator for a given role.
-     * </p>
-     */
-    public enum AdministratorSpecialization {
-        COMMAND, LOGISTICS, TRANSPORT, HR
-    }
-
     @Deprecated(since = "0.51.0")
     private final transient ResourceBundle resources = ResourceBundle.getBundle("mekhq.resources.Campaign",
           MekHQ.getMHQOptions().getLocale());
@@ -929,10 +916,28 @@ public class Campaign implements ITechManager {
      */
     public void importMission(final AbstractContract mission) {
         mission.setCampaignOptions(getCampaignOptions());
-        mission.getScenarios().forEach(this::importScenario);
+        mission.getScenarios().forEach(scenario -> importScenario(scenario, mission));
         contractHistory.contractHistory().put(mission.getId(), mission);
         MekHQ.triggerEvent(new MissionNewEvent(mission));
         StratConContractInitializer.restoreTransientStratconInformation(mission, this);
+    }
+
+    /**
+     * Imports a scenario that was loaded as part of {@code mission}, restoring its link back to that contract before
+     * registering it with the campaign.
+     *
+     * <p>{@link Scenario#getMissionId()} is a back-pointer that never reaches the save file. A contract's scenarios
+     * are nested inside the contract itself, so the link is implied by position rather than stored, and it is
+     * {@link AbstractContract#addScenario(Scenario)} that stamps it. Both load paths build the scenario list directly
+     * instead, so the id has to be restored here or every restored scenario comes back with no contract and each
+     * lookup of its contract returns {@code null}.</p>
+     *
+     * @param scenario the scenario being restored
+     * @param mission  the contract the scenario belongs to
+     */
+    private void importScenario(final Scenario scenario, final AbstractContract mission) {
+        scenario.setMissionId(mission.getId());
+        importScenario(scenario);
     }
 
     public ContractHistoryData getContractHistoryData() {
@@ -943,7 +948,13 @@ public class Campaign implements ITechManager {
         return contractHistory.contractHistory();
     }
 
-    public @jakarta.annotation.Nullable AbstractContract getContract(UUID contractId) {
+    /**
+     * @param contractId the id of the contract to look up, or {@code null} when the caller holds no id - for example a
+     *                   scenario that has yet to be attached to a contract
+     *
+     * @return the contract with that id, or {@code null} if the campaign has never held one
+     */
+    public @Nullable AbstractContract getContract(@Nullable UUID contractId) {
         return contractHistory.get(contractId);
     }
 
@@ -1729,8 +1740,7 @@ public class Campaign implements ITechManager {
         }
 
         Person negotiator = getPlayerForce().getHumanResources()
-                                  .getSeniorAdminPerson(AdministratorSpecialization.TRANSPORT,
-                                        getCampaignOptions(),
+                                  .getSeniorAdminPerson(getCampaignOptions(),
                                         getPlayerForce().isClanForce(),
                                         getLocalDate());
         if (negotiator != null) {
@@ -3685,7 +3695,7 @@ public class Campaign implements ITechManager {
         MHQXMLUtility.writeSimpleXMLTag(writer, indent, "colour", getPlayerForce().getColour().name());
         getPlayerForce().getUnitIcon().writeToXML(writer, indent);
         MHQXMLUtility.writeSimpleXMLTag(writer, indent, "lastFormationId", playerForce.getLastFormationId());
-        getPlayerForce().writeContractsToXML(writer, indent, this);
+        contractHistory.writeToXML(writer, indent, this);
         getPlayerForce().getContractMarket().writeToXML(writer, indent, this);
         MHQXMLUtility.writeSimpleXMLTag(writer, indent, "lastMissionId", lastMissionId);
         MHQXMLUtility.writeSimpleXMLTag(writer, indent, "lastScenarioId", lastScenarioId);
@@ -4050,9 +4060,8 @@ public class Campaign implements ITechManager {
                                       ? "unableToEnterSystem.outlawed"
                                       : "unableToEnterSystem.noRoute";
         new ImmersiveDialogSimple(this, getPlayerForce().getHumanResources()
-                                              .getSeniorAdminPerson(AdministratorSpecialization.TRANSPORT,
-                                                    getCampaignOptions(), getPlayerForce().isClanForce(),
-                                                    getLocalDate()), null,
+                                    .getSeniorAdminPerson(getCampaignOptions(),
+                                        getPlayerForce().isClanForce(), getLocalDate()), null,
               String.format(resources.getString(resourcePrefix + ".ic"), getCommanderAddress()), null,
               resources.getString(resourcePrefix + ".ooc"), null, false);
     }
@@ -4149,6 +4158,19 @@ public class Campaign implements ITechManager {
             JumpPath jumpPath = new JumpPath();
             jumpPath.addSystem(start);
             return jumpPath;
+        }
+
+        // Shortcuts to ensure we're not processing a lot of data when we're unable to reach the target system
+        if (!skipEmptySystemCheck && getPlayerForce().isAvoidingEmptySystems()
+                  && end.getPopulation(currentDay) == 0) {
+            new ImmersiveDialogSimple(this, getPlayerForce().getHumanResources()
+                                                  .getSeniorAdminPerson(getCampaignOptions(),
+                                                        getPlayerForce().isClanForce(),
+                                                        getLocalDate()), null,
+                  String.format(resources.getString("unableToEnterSystem.abandoned.ic"), getCommanderAddress()),
+                  null, resources.getString("unableToEnterSystem.abandoned.ooc"), null, false);
+
+            return new JumpPath();
         }
 
         List<AbstractContract> activeAtBContracts = getActiveContracts();
