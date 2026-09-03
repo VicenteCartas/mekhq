@@ -34,9 +34,19 @@ package mekhq.campaign.universe.factionStanding;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 
+import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.universe.Faction;
+import mekhq.campaign.universe.PlanetarySystem;
+import mekhq.campaign.universe.factionHints.FactionHints;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -90,6 +100,36 @@ class FactionStandingUtilitiesTest {
         for (double regard : new double[] { Double.MIN_VALUE, 0.0, 1.0, -1.0, 100000, -100000, Double.NaN }) {
             assertNotNull(FactionStandingUtilities.calculateFactionStandingLevel(regard));
         }
+    }
+
+    @Test
+    void preparedAccessDataMatchesPlanetarySystemAndContractLookup() {
+        LocalDate when = LocalDate.of(3025, 1, 1);
+        Faction campaignFaction = mock(Faction.class);
+        Faction systemOwner = mock(Faction.class);
+        PlanetarySystem targetSystem = mock(PlanetarySystem.class);
+        FactionStandings factionStandings = mock(FactionStandings.class);
+        FactionHints factionHints = mock(FactionHints.class);
+        when(systemOwner.getShortName()).thenReturn("OWNER");
+        when(targetSystem.getPopulation(when)).thenReturn(1_000_000L);
+        when(targetSystem.getFactionSet(when)).thenReturn(Set.of(systemOwner));
+        when(factionStandings.getRegardForFaction("OWNER", true)).thenReturn(
+              FactionStandingLevel.STANDING_LEVEL_0.getMinimumRegard());
+
+        boolean directAccess = FactionStandingUtilities.canEnterTargetSystem(campaignFaction, factionStandings,
+              null, targetSystem, when, List.of(), factionHints);
+        boolean preparedAccess = FactionStandingUtilities.canEnterTargetSystem(campaignFaction, factionStandings,
+              null, 1_000_000L, Set.of(systemOwner), when, Set.of(), Set.of(), factionHints);
+        assertEquals(directAccess, preparedAccess);
+
+        AbstractContract contract = mock(AbstractContract.class);
+        when(contract.getEmployerFaction()).thenReturn(systemOwner);
+        directAccess = FactionStandingUtilities.canEnterTargetSystem(campaignFaction, factionStandings,
+              null, targetSystem, when, List.of(contract), factionHints);
+        preparedAccess = FactionStandingUtilities.canEnterTargetSystem(campaignFaction, factionStandings,
+              null, 1_000_000L, Set.of(systemOwner), when, Set.of(systemOwner), Set.of(), factionHints);
+        assertEquals(directAccess, preparedAccess);
+        assertTrue(preparedAccess);
     }
 
 }

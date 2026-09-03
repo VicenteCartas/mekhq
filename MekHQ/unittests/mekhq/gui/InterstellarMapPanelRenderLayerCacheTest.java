@@ -40,17 +40,69 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.Color;
+import java.awt.Dimension;
 import java.awt.Graphics2D;
+import java.awt.Point;
+import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.time.LocalDate;
 import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.swing.JPanel;
+import javax.swing.JViewport;
 
 import org.junit.jupiter.api.Test;
 
 class InterstellarMapPanelRenderLayerCacheTest {
+    @Test
+    void hiddenEmptySystemsRenderOnlyWhenRequiredForNavigation() {
+        assertFalse(InterstellarMapPanel.shouldRenderSystem(true, true, false, false));
+        assertTrue(InterstellarMapPanel.shouldRenderSystem(true, true, true, false));
+        assertTrue(InterstellarMapPanel.shouldRenderSystem(true, true, false, true));
+        assertTrue(InterstellarMapPanel.shouldRenderSystem(true, false, false, false));
+        assertFalse(InterstellarMapPanel.shouldRenderSystem(false, false, true, true));
+    }
+
+    @Test
+    void renderPerformanceTrackerAggregatesAndResetsSamples() {
+        InterstellarMapPanel.RenderPerformanceTracker tracker =
+              new InterstellarMapPanel.RenderPerformanceTracker(0L);
+
+                tracker.record(20_000_000L, 8_000_000L, 3_000_000L, 2_000_000L, 1_000_000L,
+              2_000_000L, 7_000_000L, 3_000_000L, 100);
+
+        assertFalse(tracker.shouldReport(4_999_999_999L));
+        assertTrue(tracker.shouldReport(5_000_000_000L));
+        String report = tracker.reportAndReset(5_000_000_000L);
+        assertTrue(report.contains("frames=1"));
+        assertTrue(report.contains(">16ms=1"));
+        assertTrue(report.contains("background=3.0ms territory=2.0ms logos=1.0ms"));
+        assertTrue(report.contains("visibleSystems=100"));
+        assertFalse(tracker.shouldReport(10_000_000_000L));
+    }
+
+    @Test
+    void optionViewLayoutComparisonDetectsGeometryChanges() {
+        JPanel control = new JPanel();
+        JViewport view = new JViewport();
+        Rectangle controlBounds = new Rectangle(10, 20, 200, 300);
+        Dimension viewSize = new Dimension(180, 280);
+        Rectangle viewBounds = new Rectangle(1, 1, 198, 298);
+        Point viewPosition = new Point(0, 0);
+        control.setBounds(controlBounds);
+        view.setView(new JPanel());
+        view.setBounds(viewBounds);
+        view.setViewSize(viewSize);
+        view.setViewPosition(viewPosition);
+
+        assertTrue(InterstellarMapPanel.isOptionViewLayoutCurrent(
+              control, view, controlBounds, viewSize, viewBounds, viewPosition));
+        assertFalse(InterstellarMapPanel.isOptionViewLayoutCurrent(
+              control, view, new Rectangle(10, 20, 201, 300), viewSize, viewBounds, viewPosition));
+    }
+
     @Test
     void identicalViewReusesRasterAcrossAnimationStyleRepaints() {
         InterstellarMapPanel.RenderLayerCache<InterstellarMapPanel.RenderViewKey> cache =
@@ -110,6 +162,7 @@ class InterstellarMapPanelRenderLayerCacheTest {
         BufferedImage resized = cache.getOrRender(viewKey(5, 2, 0.0, 0.0, 1.0), 5, 2, graphics -> { });
 
         assertNotSame(first, resized);
+        assertEquals(BufferedImage.TYPE_INT_ARGB_PRE, resized.getType());
         assertEquals(2, cache.getRenderCount());
     }
 

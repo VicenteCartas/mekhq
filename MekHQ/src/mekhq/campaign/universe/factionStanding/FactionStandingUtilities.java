@@ -451,19 +451,29 @@ public class FactionStandingUtilities {
     public static boolean canEnterTargetSystem(Faction campaignFaction, FactionStandings factionStandings,
           @Nullable PlanetarySystem currentSystem, PlanetarySystem targetSystem, LocalDate when,
           List<AbstractContract> activeContracts, FactionHints factionHints) {
-        // Always allowed in empty systems
-        if (targetSystem.getPopulation(when) == 0) {
-            LOGGER.debug("Target system is empty, access granted");
-            return true;
-        }
-
-        Set<Faction> systemFactions = targetSystem.getFactionSet(when);
-
         Set<Faction> contractEmployers = new HashSet<>();
         Set<Faction> contractTargets = new HashSet<>();
         for (AbstractContract contract : activeContracts) {
             contractEmployers.add(contract.getEmployerFaction());
             contractTargets.add(contract.getEnemyFaction());
+        }
+        return canEnterTargetSystem(campaignFaction, factionStandings, currentSystem,
+              targetSystem.getPopulation(when), targetSystem.getFactionSet(when), when,
+              contractEmployers, contractTargets, factionHints);
+    }
+
+    /**
+     * Batched variant of {@link #canEnterTargetSystem(Faction, FactionStandings, PlanetarySystem, PlanetarySystem,
+     * LocalDate, List, FactionHints)} for callers that already prepared dated system and contract data.
+     */
+    public static boolean canEnterTargetSystem(Faction campaignFaction, FactionStandings factionStandings,
+          @Nullable PlanetarySystem currentSystem, long targetPopulation, Set<Faction> systemFactions,
+          LocalDate when, Set<Faction> contractEmployers, Set<Faction> contractTargets,
+          FactionHints factionHints) {
+        // Always allowed in empty systems
+        if (targetPopulation == 0) {
+            LOGGER.debug("Target system is empty, access granted");
+            return true;
         }
 
         // Entry always allowed if the system is owned by any contract employer or target
@@ -483,7 +493,7 @@ public class FactionStandingUtilities {
         }
 
         // Banned if outlawed in the target system
-        if (isOutlawedInSystem(factionStandings, targetSystem, when)) {
+        if (isOutlawedInSystem(factionStandings, systemFactions)) {
             LOGGER.debug("Player is outlawed in target system, access denied");
             return false;
         }
@@ -521,8 +531,12 @@ public class FactionStandingUtilities {
      */
     private static boolean isOutlawedInSystem(FactionStandings factionStandings, PlanetarySystem targetSystem,
           LocalDate when) {
+        return isOutlawedInSystem(factionStandings, targetSystem.getFactionSet(when));
+    }
+
+    private static boolean isOutlawedInSystem(FactionStandings factionStandings, Set<Faction> targetFactions) {
         double highestRegard = FactionStandingLevel.STANDING_LEVEL_0.getMinimumRegard();
-        for (Faction faction : targetSystem.getFactionSet(when)) {
+        for (Faction faction : targetFactions) {
             double currentRegard = factionStandings.getRegardForFaction(faction.getShortName(), true);
             if (currentRegard > highestRegard) {
                 highestRegard = currentRegard;
