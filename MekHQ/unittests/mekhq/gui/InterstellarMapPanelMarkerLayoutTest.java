@@ -181,6 +181,15 @@ class InterstellarMapPanelMarkerLayoutTest {
               layout.capitalAnchor(0, 1));
           assertAnchorExpansion(layout.operationAnchor(0.0), layout.operationAnchor(0.5),
               layout.operationAnchor());
+          Point2D.Double compactBase = layout.playerBaseAnchor(6.0, 0.0);
+          Point2D.Double transitionBase = layout.playerBaseAnchor(6.0, 0.5);
+          Point2D.Double detailedBase = layout.playerBaseAnchor(6.0, 1.0);
+          assertTrue(compactBase.x < CENTER_X);
+          assertTrue(compactBase.y > CENTER_Y);
+          assertTrue(transitionBase.x < compactBase.x);
+          assertTrue(transitionBase.y > compactBase.y);
+          assertTrue(detailedBase.x < transitionBase.x);
+          assertTrue(detailedBase.y > transitionBase.y);
           assertAnchorExpansion(layout.shipAnchor(0.0), layout.shipAnchor(0.5), layout.shipAnchor());
           assertAnchorExpansion(layout.gmEditedAnchor(0.0), layout.gmEditedAnchor(0.5),
               layout.gmEditedAnchor());

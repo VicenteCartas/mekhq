@@ -53,7 +53,9 @@ import java.io.File;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import javax.imageio.ImageIO;
 import javax.swing.AbstractAction;
 import javax.swing.JButton;
@@ -70,6 +72,7 @@ import mekhq.MHQConstants;
 import mekhq.Utilities;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.JumpPath;
+import mekhq.campaign.base.PlayerBase;
 import mekhq.campaign.unit.Unit;
 import mekhq.campaign.universe.Planet;
 import mekhq.campaign.universe.PlanetarySystem;
@@ -261,6 +264,7 @@ public class PlanetarySystemMapPanel extends JPanel {
                         biggestDiameter = p.getDiameter();
                     }
                 }
+                Map<String, Integer> playerBaseCounts = playerBaseCountsByPlanet();
 
                 for (int i = 1; i <= n; i++) {
                     x = (rectWidth * (i - 1)) + starWidth + midpoint;
@@ -400,6 +404,15 @@ public class PlanetarySystemMapPanel extends JPanel {
                         // inline
                         // file path
                         g2.drawImage(planetIcon, x - radius, y - radius, diameter, diameter, null);
+                        int playerBaseCount = playerBaseCounts.getOrDefault(p.getId(), 0);
+                        if (playerBaseCount > 0) {
+                            double markerRadius = 7.0;
+                            double selectionRingClearance = (selectedPlanet == i) ? 6.0 : 0.0;
+                            InterstellarMapPanel.drawPlayerBaseGlyph(g2,
+                                new java.awt.geom.Point2D.Double(x - radius - markerRadius - selectionRingClearance,
+                                    y + radius + markerRadius + selectionRingClearance),
+                                markerRadius, playerBaseCount, 1.0);
+                        }
                         final String planetName = p.getPrintableName(PlanetarySystemMapPanel.this.campaign.getLocalDate());
 
                         // planet name
@@ -480,6 +493,17 @@ public class PlanetarySystemMapPanel extends JPanel {
 
         repaint();
 
+    }
+
+    private Map<String, Integer> playerBaseCountsByPlanet() {
+        Map<String, Integer> counts = new HashMap<>();
+        for (PlayerBase base : campaign.getCampaignLocationManager().getPlayerBases()) {
+            if ((base.getPlanetId() != null) && (base.getCurrentLocation() != null)
+                  && system.equals(base.getCurrentLocation().getCurrentSystem())) {
+                counts.merge(base.getPlanetId(), 1, Integer::sum);
+            }
+        }
+        return counts;
     }
 
     @Override

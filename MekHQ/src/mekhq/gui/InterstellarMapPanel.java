@@ -103,6 +103,7 @@ import mekhq.campaign.NavigationRouteAnalysis.LegAssessment;
 import mekhq.campaign.NavigationRouteAnalysis.PathAssessment;
 import mekhq.campaign.NavigationRouteAnalysis.Severity;
 import mekhq.campaign.campaignOptions.CampaignOption;
+import mekhq.campaign.base.PlayerBase;
 import mekhq.campaign.mission.contract.AbstractContract;
 import mekhq.campaign.mission.scenarios.Scenario;
 import mekhq.campaign.personnel.InjuryType;
@@ -278,6 +279,8 @@ public class InterstellarMapPanel extends JPanel {
     private static final Color MAP_LEGEND_TITLE_FOREGROUND = new Color(222, 235, 239);
     private static final Color MAP_LEGEND_SCROLLBAR_THUMB = new Color(54, 101, 113);
     private static final int MAP_LEGEND_SCROLLBAR_WIDTH = 10;
+    private static final Color PLAYER_BASE_COLOR = new Color(87, 214, 190);
+    private static final Color PLAYER_BASE_DARK = new Color(4, 19, 25, 235);
     private static final Color NAVIGATION_INSTRUMENT_SHADOW = new Color(3, 8, 15, 215);
     private static final int NAVIGATION_INSTRUMENT_MARGIN = 14;
     private static final int NAVIGATION_INSTRUMENT_WIDTH = 280;
@@ -376,6 +379,7 @@ public class InterstellarMapPanel extends JPanel {
           SELECTED_SYSTEM,
           HOVERED_SYSTEM,
           CURRENT_FLEET,
+          PLAYER_BASE,
           PLANNED_ROUTE,
           ACTIVE_ROUTE,
           WAYPOINT_BADGE,
@@ -414,6 +418,8 @@ public class InterstellarMapPanel extends JPanel {
                     "A cyan ring identifies the system under the pointer at distant zoom; corner brackets replace it closer in. Selected systems suppress hover."),
                 new MapLegendEntry(MapLegendSymbol.CURRENT_FLEET, "Current fleet",
                     "An amber JumpShip above-right of a system marks the fleet. At distant zoom, an amber ring surrounding the system replaces the ship."),
+                new MapLegendEntry(MapLegendSymbol.PLAYER_BASE, "Player base",
+                    "A teal marker identifies a system with player bases. Navigation detail adds the number of bases when more than one share the system."),
                 new MapLegendEntry(MapLegendSymbol.MEASUREMENT,
                     getMapResource("map.legend.measurement.title"),
                     getMapResource("map.legend.measurement.description")))),
@@ -952,6 +958,16 @@ public class InterstellarMapPanel extends JPanel {
         Point2D.Double operationAnchor(double markerRadius, double expansion) {
             double radialOffset = externalOrbitRadius + markerRadius + externalOrbitGap(3.0, 4.0);
             return expandedAnchor(diagonalAnchor(-1.0, -1.0, radialOffset), expansion);
+        }
+
+        Point2D.Double playerBaseAnchor(double markerRadius, double expansion) {
+            double compactOffset = ownershipRadius + markerRadius + 1.5;
+            double detailedOffset = externalOrbitRadius + markerRadius + externalOrbitGap(3.0, 4.0);
+            Point2D.Double compactAnchor = diagonalAnchor(-1.0, 1.0, compactOffset);
+            Point2D.Double detailedAnchor = diagonalAnchor(-1.0, 1.0, detailedOffset);
+            double clampedExpansion = Math.clamp(expansion, 0.0, 1.0);
+            return new Point2D.Double(interpolate(compactAnchor.x, detailedAnchor.x, clampedExpansion),
+                  interpolate(compactAnchor.y, detailedAnchor.y, clampedExpansion));
         }
 
         double overrideRadius() {
@@ -1718,6 +1734,7 @@ public class InterstellarMapPanel extends JPanel {
                     capitals.put(faction, faction.getStartingPlanet(InterstellarMapPanel.this.campaign.getLocalDate()));
                 }
                 Map<String, StrategicMarker> strategicMarkers = buildStrategicMarkers();
+                Map<String, Integer> playerBaseCounts = playerBaseCountsBySystem();
 
                 boolean isUseFactionStandingOutlawing =
                       campaign.getCampaignOptions().isUseFactionStandingOutlawedSafe();
@@ -1811,6 +1828,11 @@ public class InterstellarMapPanel extends JPanel {
                         }
 
                         boolean isCurrentSystem = isSameSystem(system, currentSystem);
+                        int playerBaseCount = playerBaseCounts.getOrDefault(system.getId(), 0);
+                        if (playerBaseCount > 0) {
+                            drawPlayerBaseMarker(g2, markerLayout, playerBaseCount,
+                                  semanticZoom.detailedOverlayAlpha());
+                        }
                         if (isCurrentSystem && (semanticZoom.strategicContactAlpha() > 0.0)) {
                             paintLayerWithAlpha(g2, semanticZoom.strategicContactAlpha(),
                                   markerGraphics -> drawStrategicCurrentLocationMarker(markerGraphics, markerLayout));
@@ -2514,6 +2536,7 @@ public class InterstellarMapPanel extends JPanel {
             case SELECTED_SYSTEM -> paintLegendSelectedSystem(graphics);
             case HOVERED_SYSTEM -> paintLegendHoveredSystem(graphics);
             case CURRENT_FLEET -> paintLegendCurrentFleet(graphics);
+            case PLAYER_BASE -> drawPlayerBaseGlyph(graphics, new Point2D.Double(32, 19), 8.0, 2, 1.0);
             case PLANNED_ROUTE -> paintLegendPlannedRoute(graphics);
             case ACTIVE_ROUTE -> paintLegendActiveRoute(graphics);
             case WAYPOINT_BADGE -> paintLegendWaypointBadge(graphics);
@@ -2635,6 +2658,73 @@ public class InterstellarMapPanel extends JPanel {
             drawJumpShipIcon(graphics, 45, 10, 0.0, 0.0, false);
         } else {
             graphics.drawImage(CURRENT_LOCATION_ICON, 34, 0, 26, 26, null);
+        }
+    }
+
+    private Map<String, Integer> playerBaseCountsBySystem() {
+        Map<String, Integer> counts = new HashMap<>();
+        for (PlayerBase base : campaign.getCampaignLocationManager().getPlayerBases()) {
+            if ((base.getCurrentLocation() != null) && (base.getCurrentLocation().getCurrentSystem() != null)) {
+                counts.merge(base.getCurrentLocation().getCurrentSystem().getId(), 1, Integer::sum);
+            }
+        }
+        return counts;
+    }
+
+    private static void drawPlayerBaseMarker(Graphics2D graphics, SystemMarkerLayout layout, int count,
+          double detailAlpha) {
+        double detailedRadius = Math.max(5.0, Math.min(8.0, layout.size() * 0.72));
+        double radius = interpolate(4.2, detailedRadius, detailAlpha);
+        Point2D.Double anchor = layout.playerBaseAnchor(radius, detailAlpha);
+        drawPlayerBaseGlyph(graphics, anchor, radius, count, detailAlpha);
+    }
+
+    static void drawPlayerBaseGlyph(Graphics2D graphics, Point2D.Double anchor, double radius, int count,
+          double countAlpha) {
+        Stroke oldStroke = graphics.getStroke();
+        Font oldFont = graphics.getFont();
+        Paint oldPaint = graphics.getPaint();
+        try {
+            double left = anchor.x - radius;
+            double top = anchor.y - radius;
+            double width = radius * 2.0;
+            double roofY = top + (radius * 0.55);
+            GeneralPath base = new GeneralPath();
+            base.moveTo(left, roofY);
+            base.lineTo(anchor.x, top);
+            base.lineTo(left + width, roofY);
+            base.lineTo(left + (width * 0.84), roofY);
+            base.lineTo(left + (width * 0.84), top + (radius * 1.7));
+            base.lineTo(left + (width * 0.16), top + (radius * 1.7));
+            base.lineTo(left + (width * 0.16), roofY);
+            base.closePath();
+            graphics.setPaint(PLAYER_BASE_DARK);
+            graphics.setStroke(new BasicStroke(3.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            graphics.draw(base);
+            graphics.setPaint(PLAYER_BASE_COLOR);
+            graphics.fill(base);
+            graphics.setStroke(new BasicStroke(1.2f));
+            graphics.draw(base);
+
+            if ((count > 1) && (countAlpha > 0.0)) {
+                String countText = Integer.toString(count);
+                graphics.setFont(oldFont.deriveFont(Font.BOLD, (float) Math.min(9.0, Math.max(7.0, radius * 1.1))));
+                double badgeRadius = radius * 0.58;
+                double badgeX = anchor.x + (radius * 0.4);
+                double badgeY = anchor.y + (radius * 0.4);
+                graphics.setPaint(withAlpha(PLAYER_BASE_DARK, (int) Math.round(255 * countAlpha)));
+                graphics.fill(new Ellipse2D.Double(badgeX - badgeRadius, badgeY - badgeRadius,
+                      badgeRadius * 2.0, badgeRadius * 2.0));
+                graphics.setPaint(withAlpha(PLAYER_BASE_COLOR, (int) Math.round(255 * countAlpha)));
+                graphics.draw(new Ellipse2D.Double(badgeX - badgeRadius, badgeY - badgeRadius,
+                      badgeRadius * 2.0, badgeRadius * 2.0));
+                Point2D.Double baseline = centeredGlyphBaseline(graphics, countText, badgeX, badgeY);
+                graphics.drawString(countText, (float) baseline.x, (float) baseline.y);
+            }
+        } finally {
+            graphics.setStroke(oldStroke);
+            graphics.setFont(oldFont);
+            graphics.setPaint(oldPaint);
         }
     }
 

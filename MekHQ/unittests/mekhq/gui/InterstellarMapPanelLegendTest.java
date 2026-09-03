@@ -62,11 +62,12 @@ import org.junit.jupiter.api.Test;
 class InterstellarMapPanelLegendTest {
     private static final List<String> GROUPS = List.of(
           "NAVIGATION", "ROUTES", "LAYERS", "OVERLAYS", "RANGE RINGS", "SYSTEM STATUS");
-    private static final List<Integer> GROUP_ENTRY_COUNTS = List.of(4, 8, 12, 7, 4, 4);
+    private static final List<Integer> GROUP_ENTRY_COUNTS = List.of(5, 8, 12, 7, 4, 4);
     private static final List<String> TITLES = List.of(
                 "Selected system", "Hovered system", "Planned route",
                   "Active route", "Reachability shells", "Reachability caution", "Blocked reachability",
-                        "Distance measurement", "Current fleet", "Waypoint number", "Route caution", "Blocked route leg",
+                        "Distance measurement", "Current fleet", "Player base", "Waypoint number", "Route caution",
+                    "Blocked route leg",
                   "Contract-search radius", "Planetary-acquisition radius", "Jump radius",
                   "50 ly HPG range", "Dated capital", "Operation flag",
         "Restricted system", "GM-edited system", "Faction ownership", "Technology", "Industry", "Raw Materials",
@@ -83,6 +84,7 @@ class InterstellarMapPanelLegendTest {
         "At navigation zoom, a red diamond surrounding a system marks the blocked frontier.",
         "A pale dash-dot line uses a circle surrounding endpoint A and a diamond surrounding endpoint B for a transient direct measurement.",
         "An amber JumpShip above-right of a system marks the fleet. At distant zoom, an amber ring surrounding the system replaces the ship.",
+        "A teal marker identifies a system with player bases. Navigation detail adds the number of bases when more than one share the system.",
         "At navigation zoom, a numbered badge below-right of a system gives each requested route stop's order.",
         "An amber triangle to the right of a system marks an allowed route leg with a grounded caution, such as an abandoned destination.",
         "A red dashed segment and diamond to the right of its destination mark a leg blocked by range, access, avoidance, or recharge constraints.",
@@ -204,12 +206,12 @@ class InterstellarMapPanelLegendTest {
 
     private static <T> List<T> inDisplayOrder(List<T> values) {
         List<Integer> displayOrder = List.of(
-              0, 1, 8, 7,
-              2, 3, 9, 4, 5, 6, 10, 11,
-              20, 21, 22, 23, 24, 25, 26, 27, 29, 30, 31, 32,
-              28, 33, 34, 35, 36, 37, 38,
-              12, 13, 14, 15,
-              16, 17, 18, 19);
+              0, 1, 8, 9, 7,
+              2, 3, 10, 4, 5, 6, 11, 12,
+              21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+              33, 34, 35, 36, 37, 38, 39,
+              13, 14, 15, 16,
+              17, 18, 19, 20);
         return displayOrder.stream().map(values::get).toList();
     }
 
