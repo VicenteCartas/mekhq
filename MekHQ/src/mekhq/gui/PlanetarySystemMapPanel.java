@@ -39,7 +39,6 @@ import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Image;
-import java.awt.Insets;
 import java.awt.RenderingHints;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -57,13 +56,12 @@ import java.util.ArrayList;
 import java.util.List;
 import javax.imageio.ImageIO;
 import javax.swing.AbstractAction;
-import javax.swing.BorderFactory;
-import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JLayeredPane;
 import javax.swing.JPanel;
 import javax.swing.KeyStroke;
 
+import megamek.client.ui.util.UIUtil;
 import megamek.common.units.Dropship;
 import megamek.common.units.Jumpship;
 import megamek.common.util.ImageUtil;
@@ -85,6 +83,8 @@ import mekhq.campaign.universe.StarUtil;
  */
 public class PlanetarySystemMapPanel extends JPanel {
     private static final MMLogger LOGGER = MMLogger.create(PlanetarySystemMapPanel.class);
+    private static final int BACK_BUTTON_SIZE = UIUtil.scaleForGUI(36);
+    private static final int BACK_BUTTON_INSET = UIUtil.scaleForGUI(4);
     private final JLayeredPane pane;
     private final JPanel mapPanel;
     private final JButton btnBack;
@@ -411,14 +411,9 @@ public class PlanetarySystemMapPanel extends JPanel {
             }
         };
 
-        btnBack = new JButton();
-        btnBack.setFocusable(false);
-        btnBack.setPreferredSize(new Dimension(36, 36));
-        btnBack.setMargin(new Insets(0, 0, 0, 0));
-        btnBack.setBorder(BorderFactory.createEmptyBorder());
-        btnBack.setToolTipText("Back to Interstellar Map");
-        btnBack.setBackground(Color.DARK_GRAY);
-        btnBack.setIcon(new ImageIcon("data/images/misc/back_button.png")); // TODO : Remove inline file path
+          btnBack = InterstellarMapPanel.createNavigationUtilityIconButton(0xE5C4, BACK_BUTTON_SIZE,
+              "Back to Interstellar Map", "Back to Interstellar Map",
+              "Return to the interstellar navigation map");
         btnBack.addActionListener(ev -> back());
 
         // set up key bindings
@@ -493,7 +488,7 @@ public class PlanetarySystemMapPanel extends JPanel {
         int height = getHeight();
         pane.setBounds(0, 0, width, height);
         mapPanel.setBounds(0, 0, width, height);
-        btnBack.setBounds(4, 4, 40, 40);
+        btnBack.setBounds(BACK_BUTTON_INSET, BACK_BUTTON_INSET, BACK_BUTTON_SIZE, BACK_BUTTON_SIZE);
         super.paintComponent(g);
     }
 

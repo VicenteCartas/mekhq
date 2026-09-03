@@ -38,6 +38,7 @@ import static mekhq.campaign.personnel.medical.advancedMedicalAlternate.Canonica
 import java.awt.AlphaComposite;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
@@ -66,6 +67,7 @@ import javax.swing.text.html.HTMLDocument;
 import javax.swing.text.html.HTMLEditorKit;
 import javax.swing.text.html.StyleSheet;
 
+import megamek.client.ui.util.UIUtil;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.personnel.InjuryType;
@@ -94,6 +96,7 @@ public class PlanetViewPanel extends JScrollablePanel {
     private static final Color DOSSIER_WARNING = new Color(235, 166, 66);
     private static final Color DOSSIER_DIVIDER = new Color(35, 66, 82);
     private static final int HORIZONTAL_PADDING = 12;
+    private static final int LABEL_COLUMN_WIDTH = UIUtil.scaleForGUI(150);
     private static final int REVEAL_FRAME_DELAY_MS = 16;
     private static final long HEADER_REVEAL_DURATION_NS = 200_000_000L;
     private static final long SUMMARY_REVEAL_DELAY_NS = 120_000_000L;
@@ -161,7 +164,6 @@ public class PlanetViewPanel extends JScrollablePanel {
         Set<InjuryType> activeDiseases = getActiveDiseases();
         add(createHeader(planet));
         add(createOperationalSummary(planet, activeDiseases));
-        add(getSystemPanel());
 
         if (planet != null) {
             add(getWorldProfilePanel(planet));
@@ -195,6 +197,8 @@ public class PlanetViewPanel extends JScrollablePanel {
         JPanel header = createRevealBand(0, HEADER_REVEAL_DURATION_NS);
         header.setLayout(new GridBagLayout());
         header.setBorder(BorderFactory.createEmptyBorder(12, HORIZONTAL_PADDING, 10, HORIZONTAL_PADDING));
+        LocalDate currentDate = campaign.getLocalDate();
+        String printableSystemName = system.getPrintableName(currentDate);
 
         JLabel eyebrow = new JLabel(resourceMap.getString("dossier.eyebrow.text"));
         eyebrow.setForeground(DOSSIER_ACCENT);
@@ -203,18 +207,23 @@ public class PlanetViewPanel extends JScrollablePanel {
         constraints.insets = new Insets(0, 0, 3, 0);
         header.add(eyebrow, constraints);
 
-        JLabel systemName = new JLabel(system.getPrintableName(campaign.getLocalDate()));
+        JLabel systemName = new JLabel(printableSystemName);
         systemName.setForeground(DOSSIER_TEXT);
         systemName.setFont(systemName.getFont().deriveFont(Font.BOLD, systemName.getFont().getSize2D() * 1.35f));
         constraints = createFullWidthConstraints(1);
         constraints.insets = new Insets(0, 0, 4, 0);
         header.add(systemName, constraints);
 
-        String context = (planet == null)
-              ? resourceMap.getString("dossier.systemContext.text")
-              : format("dossier.planetContext.format",
-                    planet.getPrintableName(campaign.getLocalDate()),
-                    planet.getFactionDesc(campaign.getLocalDate()));
+        String context;
+        if (planet == null) {
+            context = resourceMap.getString("dossier.systemContext.text");
+        } else {
+            String printablePlanetName = planet.getPrintableName(currentDate);
+            String factionDescription = planet.getFactionDesc(currentDate);
+            context = printableSystemName.equals(printablePlanetName)
+                  ? factionDescription
+                  : format("dossier.planetContext.format", printablePlanetName, factionDescription);
+        }
         JLabel planetContext = new JLabel(context);
         planetContext.setForeground(DOSSIER_MUTED_TEXT);
         constraints = createFullWidthConstraints(2);
@@ -280,10 +289,17 @@ public class PlanetViewPanel extends JScrollablePanel {
         metricValue.setAlignmentX(Component.LEFT_ALIGNMENT);
         metric.add(metricValue);
 
+        if (metricIndex % 2 == 0) {
+            Dimension preferredSize = metric.getPreferredSize();
+            Dimension columnSize = new Dimension(LABEL_COLUMN_WIDTH, preferredSize.height);
+            metric.setMinimumSize(columnSize);
+            metric.setPreferredSize(columnSize);
+        }
+
         GridBagConstraints constraints = new GridBagConstraints();
         constraints.gridx = metricIndex % 2;
         constraints.gridy = 1 + (metricIndex / 2);
-        constraints.weightx = 0.5;
+        constraints.weightx = (metricIndex % 2 == 0) ? 0.0 : 1.0;
         constraints.fill = GridBagConstraints.HORIZONTAL;
         constraints.anchor = GridBagConstraints.NORTHWEST;
         constraints.insets = new Insets(3, 0, 4, (metricIndex % 2 == 0) ? HORIZONTAL_PADDING : 0);
@@ -421,20 +437,6 @@ public class PlanetViewPanel extends JScrollablePanel {
         // Hiring Hall Level
         section.addRow("lblHiringHall.text", new JLabel(getHiringHallText(planet)));
 
-        // Academies
-    List<Academy> filteredAcademies = system.getFilteredAcademies(campaign);
-        if (!filteredAcademies.isEmpty()) {
-            JTextPane txtAcademies = createHtmlTextPane(
-                  MarkdownRenderer.getRenderedHtml(system.getAcademiesForSystem(filteredAcademies)));
-            section.addRow("lblAcademies.text", txtAcademies);
-        }
-
-        // Noteworthy Diseases
-        if (!activeDiseases.isEmpty()) {
-            JTextPane txtDiseases = createHtmlTextPane(getDiseaseText(activeDiseases));
-            section.addRow("lblDiseases.text", txtDiseases);
-        }
-
         // Landmasses
         if (null != planet.getLandMasses()) {
             SourceableValueLabel txtLandMass;
@@ -464,6 +466,20 @@ public class PlanetViewPanel extends JScrollablePanel {
             section.addRow("lblPopulation.text", txtPopulation);
         }
 
+        // Academies
+        List<Academy> filteredAcademies = system.getFilteredAcademies(campaign);
+        if (!filteredAcademies.isEmpty()) {
+            JTextPane txtAcademies = createHtmlTextPane(
+                  MarkdownRenderer.getRenderedHtml(system.getAcademiesForSystem(filteredAcademies)));
+            section.addStackedRow("lblAcademies.text", txtAcademies);
+        }
+
+        // Noteworthy Diseases
+        if (!activeDiseases.isEmpty()) {
+            JTextPane txtDiseases = createHtmlTextPane(getDiseaseText(activeDiseases));
+            section.addStackedRow("lblDiseases.text", txtDiseases);
+        }
+
         // SIC codes
         if (null != planet.getSourcedSocioIndustrial(currentDate)) {
             SocioIndustrialData sid = planet.getSocioIndustrial(currentDate);
@@ -471,7 +487,7 @@ public class PlanetViewPanel extends JScrollablePanel {
             SourceableValueLabel txtSocioIndustrial = new SourceableValueLabel(planet.getSourcedSocioIndustrial(
                   currentDate));
             txtSocioIndustrial.setText(sidText);
-            section.addRow("lblSocioIndustrial1.text", txtSocioIndustrial);
+            section.addStackedRow("lblSocioIndustrial1.text", txtSocioIndustrial);
         }
 
         return section;
@@ -501,17 +517,6 @@ public class PlanetViewPanel extends JScrollablePanel {
         // replace with our text
         txtPosition.setText(text);
         return txtPosition;
-    }
-
-    private DossierSection getSystemPanel() {
-        DossierSection section = new DossierSection("section.systemProfile.text");
-        LocalDate currentDate = campaign.getLocalDate();
-
-        SourceableValueLabel txtStarType = new SourceableValueLabel(system.getSourcedStar());
-        section.addRow("lblStarType1.text", txtStarType);
-        section.addRow("lblRechargeTime.text", new JLabel(system.getRechargeTimeText(currentDate, false)));
-        section.addRow("lblRecharge1.text", new JLabel(system.getRechargeStationsText(currentDate)));
-        return section;
     }
 
     private String getHiringHallText(Planet planet) {
@@ -703,6 +708,10 @@ public class PlanetViewPanel extends JScrollablePanel {
             JLabel label = new JLabel(labelKey == null ? "" : resourceMap.getString(labelKey));
             label.setForeground(DOSSIER_MUTED_TEXT);
             label.setFont(label.getFont().deriveFont(Font.BOLD));
+            Dimension preferredSize = label.getPreferredSize();
+            Dimension columnSize = new Dimension(LABEL_COLUMN_WIDTH, preferredSize.height);
+            label.setMinimumSize(columnSize);
+            label.setPreferredSize(columnSize);
 
             GridBagConstraints labelConstraints = new GridBagConstraints();
             labelConstraints.gridx = 0;
@@ -724,6 +733,21 @@ public class PlanetViewPanel extends JScrollablePanel {
             valueConstraints.insets = new Insets(2, 0, 3, 0);
             add(value, valueConstraints);
             row++;
+        }
+
+        private void addStackedRow(String labelKey, JComponent value) {
+            JLabel label = new JLabel(resourceMap.getString(labelKey));
+            label.setForeground(DOSSIER_MUTED_TEXT);
+            label.setFont(label.getFont().deriveFont(Font.BOLD));
+
+            GridBagConstraints labelConstraints = createFullWidthConstraints(row++);
+            labelConstraints.insets = new Insets(5, 0, 2, 0);
+            add(label, labelConstraints);
+
+            value.setForeground(DOSSIER_TEXT);
+            GridBagConstraints valueConstraints = createFullWidthConstraints(row++);
+            valueConstraints.insets = new Insets(0, 0, 7, 0);
+            add(value, valueConstraints);
         }
 
         private void addFullWidth(JComponent value) {

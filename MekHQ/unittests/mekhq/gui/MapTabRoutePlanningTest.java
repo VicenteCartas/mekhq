@@ -88,6 +88,23 @@ class MapTabRoutePlanningTest {
     }
 
     @Test
+    void quickPlotRequiresOnlyADifferentSelectedSystem() {
+        PlanetarySystem fleetSystem = new PlanetarySystem("Fleet System");
+        PlanetarySystem destination = new PlanetarySystem("Destination");
+
+        assertTrue(MapTab.canQuickPlotRoute(destination, fleetSystem));
+        assertFalse(MapTab.canQuickPlotRoute(null, fleetSystem));
+        assertFalse(MapTab.canQuickPlotRoute(destination, null));
+        assertFalse(MapTab.canQuickPlotRoute(fleetSystem, fleetSystem));
+    }
+
+    @Test
+    void quickPlotLabelChangesWhenReplanningAnExistingCourse() {
+        assertEquals("routeStrip.plot.text", MapTab.quickPlotResourceKey(false));
+        assertEquals("routeStrip.replot.text", MapTab.quickPlotResourceKey(true));
+    }
+
+    @Test
     void failedPlanningDispatchesExplicitFeedbackWithoutNotifyingForSuccess() {
         List<PlanningStatus> feedback = new ArrayList<>();
 

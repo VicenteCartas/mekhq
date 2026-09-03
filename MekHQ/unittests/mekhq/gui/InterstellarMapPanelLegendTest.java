@@ -55,12 +55,14 @@ import javax.swing.JTextArea;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingUtilities;
 
+import megamek.client.ui.util.UIUtil;
 import mekhq.campaign.Campaign;
 import org.junit.jupiter.api.Test;
 
 class InterstellarMapPanelLegendTest {
-    private static final List<String> GROUPS = List.of("NAVIGATION", "MAP LAYERS", "RANGE RINGS", "SYSTEM STATUS");
-            private static final List<Integer> GROUP_ENTRY_COUNTS = List.of(12, 18, 4, 4);
+    private static final List<String> GROUPS = List.of(
+          "NAVIGATION", "ROUTES", "LAYERS", "OVERLAYS", "RANGE RINGS", "SYSTEM STATUS");
+    private static final List<Integer> GROUP_ENTRY_COUNTS = List.of(4, 8, 12, 7, 4, 4);
     private static final List<String> TITLES = List.of(
                 "Selected system", "Hovered system", "Planned route",
                   "Active route", "Reachability shells", "Reachability caution", "Blocked reachability",
@@ -69,30 +71,30 @@ class InterstellarMapPanelLegendTest {
                   "50 ly HPG range", "Dated capital", "Operation flag",
         "Restricted system", "GM-edited system", "Faction ownership", "Technology", "Industry", "Raw Materials",
         "Output", "Agriculture", "Population", "HPG", "Recharge Stations", "Academies", "Hiring Halls",
-        "Disease Outbreaks", "Faction emblem", "HPG network & traffic", "Sovereign border",
+        "Disease Outbreaks", "HPG station classes", "Faction emblem", "HPG network & traffic", "Sovereign border",
         "Disputed territory", "Unclaimed pocket", "Enclave");
     private static final List<String> DESCRIPTIONS = List.of(
-        "Amber corner brackets identify the selected system.",
-        "Cyan corner brackets identify the system under the pointer; selected systems suppress hover brackets.",
-        "A cyan dashed path and complete thin rings surrounding each stop show the proposed jump route.",
-        "Amber paths and complete rings surrounding each stop show the current trip; pale pulses show travel flow.",
-        "Centered shapes surrounding systems show minimum hops: cyan circles mark one, squares mark two, and hexagons mark three.",
-        "An amber triangle surrounding a system marks it as reachable with a caution.",
-        "A red diamond surrounding a system marks the blocked frontier.",
+        "An amber ring identifies the selected system at distant zoom; corner brackets replace it as navigation detail appears.",
+        "A cyan ring identifies the system under the pointer at distant zoom; corner brackets replace it closer in. Selected systems suppress hover.",
+        "A cyan dashed path remains visible at distant zoom; complete thin stop rings appear with navigation detail.",
+        "Amber paths remain visible at distant zoom; complete stop rings and pale travel-flow pulses appear with navigation detail.",
+        "At navigation zoom, centered shapes show minimum hops: cyan circles mark one, squares mark two, and hexagons mark three.",
+        "At navigation zoom, an amber triangle surrounding a system marks it as reachable with a caution.",
+        "At navigation zoom, a red diamond surrounding a system marks the blocked frontier.",
         "A pale dash-dot line uses a circle surrounding endpoint A and a diamond surrounding endpoint B for a transient direct measurement.",
         "An amber JumpShip above-right of a system marks the fleet. At distant zoom, an amber ring surrounding the system replaces the ship.",
-        "A numbered badge below-right of a system gives each requested route stop's order.",
+        "At navigation zoom, a numbered badge below-right of a system gives each requested route stop's order.",
         "An amber triangle to the right of a system marks an allowed route leg with a grounded caution, such as an abandoned destination.",
         "A red dashed segment and diamond to the right of its destination mark a leg blocked by range, access, avoidance, or recharge constraints.",
         "A configurable-color thick dashed ring centered on the selected system bounds contract searches; campaign and MekHQ options control visibility.",
-        "A configurable-color thick dashed ring centered on the selected system bounds planetary acquisition; campaign, MekHQ, and zoom options control visibility.",
-        "A configurable-color thick dashed ring centered on the selected system shows one-jump reach; MekHQ and zoom options control visibility.",
+        "A configurable-color thick dash-dot ring centered on the selected system bounds planetary acquisition; campaign, MekHQ, and zoom options control visibility.",
+        "A configurable-color thick solid ring centered on the selected system shows one-jump reach; MekHQ and zoom options control visibility.",
         "A dark-green dotted ring centered on the selected system marks 50 ly; HPG layer visibility controls when it appears.",
-        "A faction-color star above a system marks each dated national capital.",
-        "A flag above-left of a system marks an operation: outline for an active mission, filled for an active scenario; the count is active missions.",
+        "At distant zoom, a faction-color star replaces its system contact; it moves above the system as navigation detail appears.",
+        "At distant zoom, a centered red diamond marks an urgent active scenario. Closer in, flags show missions, scenarios, and mission counts.",
         "A red prohibition ring marks a system barred by outlaw or restricted-entry standing rules.",
-        "A cyan pencil below a system marks a non-canon override.",
-        "Single ownership uses one complete faction-color ring; shared ownership divides the ring equally among all factions.",
+        "At detail zoom, a cyan pencil below a system marks a non-canon override.",
+        "Distant contacts use faction color directly. At navigation zoom, ownership becomes one complete ring divided equally for shared systems.",
         "Regressed is dark gray; F purple; D blue; C teal; B green; A or Advanced yellow; no population is black.",
         "F is near-black; D purple; C magenta; B coral; A pale yellow; no population is black.",
         "F is blue; D purple; C magenta; B orange; A yellow; no population is black.",
@@ -104,8 +106,9 @@ class InterstellarMapPanelLegendTest {
         "None is black; academy counts 1 through 6 progress from blue-teal through teal and green to yellow.",
         "None is black; Questionable magenta; Minor orange; Standard yellow; Great green.",
         "None is black; one outbreak yellow; two orange; three magenta; four or more purple.",
+        "Hexagonal badges identify included HPG stations: A cyan, B blue, C amber, and D red. Network links are drawn only for A and B stations.",
         "A faint emblem watermark identifies territory; its tint identifies the faction.",
-        "Rings show rating: A cyan, B blue, C orange, D red; links and pulses show A/B traffic.",
+        "Links remain visible at distant zoom. Navigation detail adds rating rings and animated A/B traffic pulses.",
         "Translucent faction fill and a solid edge mark territory inferred from dated ownership.",
         "Multiple faction colors, diagonal hatching, and a dashed border mark shared control.",
         "A dark enclosed void with a dotted boundary marks locally unclaimed space.",
@@ -156,6 +159,7 @@ class InterstellarMapPanelLegendTest {
             assertEquals("Show map symbol legend",
                   legendButton.getAccessibleContext().getAccessibleName());
             assertTrue(legendButton.isFocusable());
+            assertEquals(Boolean.TRUE, legendButton.getClientProperty("navigationUtilityButton"));
             renderOffscreen(legendButton);
 
             Dimension commonViewportSize = null;
@@ -165,6 +169,9 @@ class InterstellarMapPanelLegendTest {
                 assertEquals(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER,
                       scrollPane.getHorizontalScrollBarPolicy());
                 assertTrue(scrollPane.isFocusable());
+                    assertEquals(UIUtil.scaleForGUI(10), scrollPane.getVerticalScrollBar().getPreferredSize().width);
+                    assertEquals(0, scrollPane.getVerticalScrollBar().getComponent(0).getPreferredSize().height);
+                    assertEquals(0, scrollPane.getVerticalScrollBar().getComponent(1).getPreferredSize().height);
                 if (commonViewportSize == null) {
                     commonViewportSize = scrollPane.getViewport().getPreferredSize();
                 } else {
@@ -196,12 +203,14 @@ class InterstellarMapPanelLegendTest {
     }
 
     private static <T> List<T> inDisplayOrder(List<T> values) {
-        List<T> ordered = new ArrayList<>(values.size());
-        ordered.addAll(values.subList(0, 12));
-        ordered.addAll(values.subList(20, 38));
-        ordered.addAll(values.subList(12, 16));
-        ordered.addAll(values.subList(16, 20));
-        return ordered;
+        List<Integer> displayOrder = List.of(
+              0, 1, 8, 7,
+              2, 3, 9, 4, 5, 6, 10, 11,
+              20, 21, 22, 23, 24, 25, 26, 27, 29, 30, 31, 32,
+              28, 33, 34, 35, 36, 37, 38,
+              12, 13, 14, 15,
+              16, 17, 18, 19);
+        return displayOrder.stream().map(values::get).toList();
     }
 
     @Test
@@ -268,37 +277,19 @@ class InterstellarMapPanelLegendTest {
         }
 
     @Test
-    void layerControlButtonsShareVerticalCenterWhenExpanded() throws Exception {
+    void layerControlDrawerContainsNoCommandButtons() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             Campaign campaign = mock(Campaign.class);
             when(campaign.getSystems()).thenReturn(new ArrayList<>());
             InterstellarMapPanel mapPanel = new InterstellarMapPanel(campaign, mock(CampaignGUI.class));
-            Dimension mapSize = new Dimension(1200, 800);
-            mapPanel.setSize(mapSize);
-
-            BufferedImage image = new BufferedImage(mapSize.width, mapSize.height, BufferedImage.TYPE_INT_ARGB);
-            Graphics2D graphics = image.createGraphics();
-            mapPanel.paintComponent(graphics);
-            graphics.dispose();
-            layoutRecursively(mapPanel);
-
-            JButton legendButton = buttonWithAccessibleName(mapPanel, "Show map symbol legend");
-            JButton optionButton = buttonWithAccessibleName(mapPanel, "Hide map layer controls");
-            Point legendCenter = SwingUtilities.convertPoint(legendButton,
-                  legendButton.getWidth() / 2, legendButton.getHeight() / 2, mapPanel);
-            Point optionCenter = SwingUtilities.convertPoint(optionButton,
-                  optionButton.getWidth() / 2, optionButton.getHeight() / 2, mapPanel);
-            assertEquals(legendCenter.y, optionCenter.y);
+            assertTrue(descendantsOf(mapPanel).stream()
+                  .filter(JButton.class::isInstance)
+                  .map(JButton.class::cast)
+                  .map(button -> button.getAccessibleContext().getAccessibleName())
+                  .noneMatch(name -> "Show map symbol legend".equals(name)
+                        || "Show map layer controls".equals(name)
+                        || "Hide map layer controls".equals(name)));
         });
-    }
-
-    private static JButton buttonWithAccessibleName(Component root, String accessibleName) {
-        return descendantsOf(root).stream()
-              .filter(JButton.class::isInstance)
-              .map(JButton.class::cast)
-              .filter(button -> accessibleName.equals(button.getAccessibleContext().getAccessibleName()))
-              .findFirst()
-              .orElseThrow();
     }
 
     private static JComponent componentWithProperty(List<Component> components, String property, String title) {

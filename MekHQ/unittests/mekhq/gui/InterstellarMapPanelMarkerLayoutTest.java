@@ -54,6 +54,41 @@ class InterstellarMapPanelMarkerLayoutTest {
     private static final double CENTER_Y = 82.75;
     private static final double DELTA = 0.000_001;
 
+        @Test
+        void systemDiveInterpolatesCameraExactlyAndZoomsMonotonically() {
+          InterstellarMapPanel.SystemDiveFrame start = InterstellarMapPanel.calculateSystemDiveFrame(
+              120.0, -45.0, 1.5, -300.0, 90.0, 18.0, 0.0);
+          InterstellarMapPanel.SystemDiveFrame middle = InterstellarMapPanel.calculateSystemDiveFrame(
+              120.0, -45.0, 1.5, -300.0, 90.0, 18.0, 0.5);
+          InterstellarMapPanel.SystemDiveFrame end = InterstellarMapPanel.calculateSystemDiveFrame(
+              120.0, -45.0, 1.5, -300.0, 90.0, 18.0, 1.0);
+
+          assertEquals(120.0, start.centerX(), DELTA);
+          assertEquals(-45.0, start.centerY(), DELTA);
+          assertEquals(1.5, start.scale(), DELTA);
+          assertTrue(middle.centerX() < start.centerX());
+          assertTrue(middle.centerX() > end.centerX());
+          assertTrue(middle.centerY() > start.centerY());
+          assertTrue(middle.centerY() < end.centerY());
+          assertTrue(middle.scale() > start.scale());
+          assertTrue(middle.scale() < end.scale());
+          assertEquals(-300.0, end.centerX(), DELTA);
+          assertEquals(90.0, end.centerY(), DELTA);
+          assertEquals(18.0, end.scale(), DELTA);
+        }
+
+    @Test
+    void systemDiveInterpolationRestoresCameraWhenReversed() {
+        InterstellarMapPanel.SystemDiveFrame original = new InterstellarMapPanel.SystemDiveFrame(120, -45, 1.5);
+        InterstellarMapPanel.SystemDiveFrame zoomed = new InterstellarMapPanel.SystemDiveFrame(-300, 90, 18);
+
+        InterstellarMapPanel.SystemDiveFrame restored = InterstellarMapPanel.calculateSystemDiveFrame(
+              zoomed.centerX(), zoomed.centerY(), zoomed.scale(),
+              original.centerX(), original.centerY(), original.scale(), 1.0);
+
+        assertEquals(original, restored);
+    }
+
     @Test
     void factionOwnershipRingCoversFullCircleAndDividesSharedSystemsEqually() {
         Color red = new Color(232, 112, 84);
@@ -89,6 +124,21 @@ class InterstellarMapPanelMarkerLayoutTest {
         }
     }
 
+    @Test
+    void strategicContactUsesOnlyFactionOrLayerCoreWithoutOuterShell() {
+        Color contactColor = new Color(190, 66, 160);
+        BufferedImage image = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = image.createGraphics();
+        InterstellarMapPanel.drawStrategicContactCore(graphics, new Arc2D.Double(),
+              InterstellarMapPanel.SystemMarkerLayout.create(32, 32, 7.2,
+                    InterstellarMapPanel.RouteMarkerState.NONE, false, false), List.of(contactColor));
+        graphics.dispose();
+
+        assertEquals(contactColor.getRGB(), image.getRGB(32, 32));
+        assertEquals(0, image.getRGB(36, 32) >>> 24,
+              "atlas contacts must not retain the close-zoom surrounding circle");
+    }
+
     @ParameterizedTest
     @ValueSource(doubles = { 3.0, 7.5, 12.0, 18.0, 25.0 })
         void positionedMarkersFollowTheOutermostVisibleEnvelope(double markerSize) {
@@ -119,6 +169,39 @@ class InterstellarMapPanelMarkerLayoutTest {
               "a capital moves inward when no navigation wrapper is visible");
           assertTrue(plain.gmEditedAnchor().y < planned.gmEditedAnchor().y,
               "the GM pencil moves inward when no navigation wrapper is visible");
+    }
+
+        @ParameterizedTest
+        @ValueSource(doubles = { 3.0, 7.5, 12.0, 18.0, 25.0 })
+        void zoomExpandedMarkersStayAttachedUntilTheyReachDetailedSlots(double markerSize) {
+          InterstellarMapPanel.SystemMarkerLayout layout = createLayout(markerSize,
+              InterstellarMapPanel.RouteMarkerState.NONE, false, false);
+
+          assertAnchorExpansion(layout.capitalAnchor(0, 1, 0.0), layout.capitalAnchor(0, 1, 0.5),
+              layout.capitalAnchor(0, 1));
+          assertAnchorExpansion(layout.operationAnchor(0.0), layout.operationAnchor(0.5),
+              layout.operationAnchor());
+          assertAnchorExpansion(layout.shipAnchor(0.0), layout.shipAnchor(0.5), layout.shipAnchor());
+          assertAnchorExpansion(layout.gmEditedAnchor(0.0), layout.gmEditedAnchor(0.5),
+              layout.gmEditedAnchor());
+          assertAnchorExpansion(layout.routeBadgeAnchor(18.0, 0.0), layout.routeBadgeAnchor(18.0, 0.5),
+              layout.routeBadgeAnchor(18.0));
+          assertAnchorExpansion(layout.routeStatusAnchor(6.0, 0.0), layout.routeStatusAnchor(6.0, 0.5),
+              layout.routeStatusAnchor(6.0));
+        }
+
+    @ParameterizedTest
+    @ValueSource(doubles = { 3.0, 7.5, 12.0, 18.0, 25.0 })
+    void restrictedMarkerGrowsMonotonicallyFromAtlasToDetail(double markerSize) {
+        InterstellarMapPanel.SystemMarkerLayout layout = createLayout(markerSize,
+              InterstellarMapPanel.RouteMarkerState.NONE, false, false);
+        double atlasRadius = InterstellarMapPanel.restrictedMarkerRadius(layout, 0.0);
+        double transitionRadius = InterstellarMapPanel.restrictedMarkerRadius(layout, 0.5);
+        double detailRadius = InterstellarMapPanel.restrictedMarkerRadius(layout, 1.0);
+
+        assertTrue(atlasRadius < transitionRadius);
+        assertTrue(transitionRadius < detailRadius);
+        assertEquals(layout.overrideRadius(), detailRadius, DELTA);
     }
 
     @ParameterizedTest
@@ -183,6 +266,9 @@ class InterstellarMapPanelMarkerLayoutTest {
           assertTrue(layout.capitalAnchor(0, 1).y < CENTER_Y, "capital stays above");
           assertTrue(layout.operationAnchor().x < CENTER_X, "operation stays upper-left");
           assertTrue(layout.operationAnchor().y < CENTER_Y, "operation stays upper-left");
+                    assertTrue(Point2D.distance(CENTER_X, CENTER_Y, layout.operationAnchor().x, layout.operationAnchor().y)
+                                < Point2D.distance(CENTER_X, CENTER_Y, layout.shipAnchor().x, layout.shipAnchor().y),
+                            "the compact operation flag stays closer than the full JumpShip marker");
           assertTrue(layout.shipAnchor().x > CENTER_X, "fleet stays upper-right");
           assertTrue(layout.shipAnchor().y < CENTER_Y, "fleet stays upper-right");
           assertTrue(waypoint.x > CENTER_X, "waypoint stays lower-right");
@@ -204,6 +290,14 @@ class InterstellarMapPanelMarkerLayoutTest {
               routeState, selected, hovered);
     }
 
+        private static void assertAnchorExpansion(Point2D.Double atlas, Point2D.Double transition,
+            Point2D.Double detail) {
+          assertEquals(CENTER_X, atlas.x, DELTA);
+          assertEquals(CENTER_Y, atlas.y, DELTA);
+          assertEquals(Point2D.distance(CENTER_X, CENTER_Y, detail.x, detail.y) / 2.0,
+              Point2D.distance(CENTER_X, CENTER_Y, transition.x, transition.y), DELTA);
+        }
+
     @Test
     void waypointGlyphsAreOpticallyCenteredInTheirBadge() {
         BufferedImage image = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
@@ -223,6 +317,28 @@ class InterstellarMapPanelMarkerLayoutTest {
             assertEquals(32.0, positionedBounds.getCenterY(), DELTA, text + " vertical center");
         }
         graphics.dispose();
+    }
+
+    @Test
+    void routeFlowUsesDistanceRatherThanEqualTimePerLeg() {
+        List<Point2D.Double> route = List.of(
+              new Point2D.Double(0, 0),
+              new Point2D.Double(10, 0),
+              new Point2D.Double(10, 30));
+
+        assertEquals(40.0, InterstellarMapPanel.routeScreenLength(route), DELTA);
+        assertEquals(new Point2D.Double(5, 0), InterstellarMapPanel.routeFlowPoint(route, 5));
+        assertEquals(new Point2D.Double(10, 5), InterstellarMapPanel.routeFlowPoint(route, 15));
+        assertEquals(new Point2D.Double(10, 25), InterstellarMapPanel.routeFlowPoint(route, 35));
+    }
+
+    @Test
+    void routeFlowPeriodIsIndependentOfZoom() {
+        double navigationZoomPeriod = InterstellarMapPanel.routeFlowPeriodSeconds(220, 4);
+        double detailZoomPeriod = InterstellarMapPanel.routeFlowPeriodSeconds(440, 8);
+
+        assertEquals(4.0, navigationZoomPeriod, DELTA);
+        assertEquals(navigationZoomPeriod, detailZoomPeriod, DELTA);
     }
 
     private static BufferedImage renderOwnershipRing(List<Color> colors) {

@@ -49,12 +49,34 @@ import java.util.UUID;
 
 import mekhq.campaign.mission.contract.AbstractContract;
 import mekhq.campaign.mission.scenarios.Scenario;
+import mekhq.campaign.universe.enums.HPGRating;
 import org.junit.jupiter.api.Test;
 
 class InterstellarMapPanelOperationMarkerTest {
     private static final double DELTA = 0.000_001;
     private static final UUID FIRST_MISSION_ID = new UUID(0, 101);
     private static final UUID SECOND_MISSION_ID = new UUID(0, 102);
+
+        @Test
+        void hpgDetailTightensAtDistantZoomAndHonorsUserLimit() {
+          assertEquals(InterstellarMapPanel.HpgNetworkDetail.CLASS_A,
+              InterstellarMapPanel.effectiveHpgNetworkDetail(
+                  InterstellarMapPanel.HpgNetworkDetail.ALL_STATIONS, 0.9, 3.0));
+          assertEquals(InterstellarMapPanel.HpgNetworkDetail.CLASS_A_B,
+              InterstellarMapPanel.effectiveHpgNetworkDetail(
+                  InterstellarMapPanel.HpgNetworkDetail.ALL_STATIONS, 2.5, 3.0));
+          assertEquals(InterstellarMapPanel.HpgNetworkDetail.ALL_STATIONS,
+              InterstellarMapPanel.effectiveHpgNetworkDetail(
+                  InterstellarMapPanel.HpgNetworkDetail.ALL_STATIONS, 3.2, 3.0));
+          assertEquals(InterstellarMapPanel.HpgNetworkDetail.CLASS_A,
+              InterstellarMapPanel.effectiveHpgNetworkDetail(
+                  InterstellarMapPanel.HpgNetworkDetail.CLASS_A, 4.0, 3.0));
+          assertTrue(InterstellarMapPanel.HpgNetworkDetail.CLASS_A.includes(HPGRating.A));
+          assertFalse(InterstellarMapPanel.HpgNetworkDetail.CLASS_A.includes(HPGRating.B));
+          assertTrue(InterstellarMapPanel.HpgNetworkDetail.CLASS_A_B.includes(HPGRating.B));
+          assertTrue(InterstellarMapPanel.HpgNetworkDetail.ALL_STATIONS.includes(HPGRating.D));
+          assertFalse(InterstellarMapPanel.HpgNetworkDetail.ALL_STATIONS.includes(HPGRating.X));
+        }
 
     @Test
     void semanticZoomKeepsOnlyUrgentOperationsVisibleAtAtlasZoom() {

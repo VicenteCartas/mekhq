@@ -34,6 +34,7 @@ package mekhq.gui.view;
 
 import static java.lang.Math.ceil;
 import static java.text.MessageFormat.format;
+import static megamek.client.ui.util.FontHandler.symbolIcon;
 import static mekhq.campaign.personnel.skills.SkillType.EXP_REGULAR;
 
 import java.awt.Color;
@@ -65,13 +66,13 @@ import javax.swing.BoxLayout;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
-import javax.swing.JFormattedTextField;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JSpinner;
 import javax.swing.SpinnerDateModel;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingConstants;
+import javax.swing.JToggleButton;
 
 import megamek.client.ui.util.UIUtil;
 import mekhq.MekHQ;
@@ -113,6 +114,9 @@ import mekhq.campaign.universe.factionStanding.FactionStandingUtilities;
 import mekhq.gui.baseComponents.FramedCommandButton;
 import mekhq.gui.baseComponents.FramedCommandButtonStyle.ButtonColors;
 import mekhq.gui.baseComponents.FramedCommandButtonStyle.ButtonStateColors;
+import mekhq.gui.baseComponents.ImmersiveCheckBox;
+import mekhq.gui.baseComponents.ImmersiveComboBox;
+import mekhq.gui.baseComponents.ImmersiveSpinner;
 import mekhq.gui.baseComponents.JScrollablePanel;
 
 /**
@@ -128,7 +132,7 @@ public class JumpPathViewPanel extends JScrollablePanel {
     private static final Color DOSSIER_ACTIVE = new Color(235, 166, 66);
     private static final Color DOSSIER_DIVIDER = new Color(35, 66, 82);
     private static final Color DOSSIER_CONTROL_BACKGROUND = new Color(12, 29, 42);
-        private static final Color DOSSIER_CONTROL_ACTIVE = new Color(18, 45, 56);
+    private static final Color DOSSIER_CONTROL_ACTIVE = new Color(18, 45, 56);
         private static final ButtonColors COURSE_BUTTON_COLORS = new ButtonColors(
             new ButtonStateColors(DOSSIER_CONTROL_BACKGROUND, DOSSIER_TEXT, DOSSIER_DIVIDER),
             new ButtonStateColors(DOSSIER_CONTROL_ACTIVE, DOSSIER_ACCENT, DOSSIER_ACCENT),
@@ -137,6 +141,10 @@ public class JumpPathViewPanel extends JScrollablePanel {
     private static final int HORIZONTAL_PADDING = UIUtil.scaleForGUI(14);
         private static final int COURSE_BUTTON_WIDTH = UIUtil.scaleForGUI(112);
         private static final int COURSE_BUTTON_HEIGHT = UIUtil.scaleForGUI(34);
+    private static final int WIDE_PLANNER_CONTROL_WIDTH = UIUtil.scaleForGUI(190);
+    private static final int DENSE_SELECTOR_WIDTH = UIUtil.scaleForGUI(142);
+    private static final int PIRATE_SELECTOR_WIDTH = UIUtil.scaleForGUI(200);
+    private static final int DENSE_SPINNER_WIDTH = UIUtil.scaleForGUI(88);
     private static final double MINIMUM_ACCELERATION_G = 0.1;
     private static final double MAXIMUM_ACCELERATION_G = 10.0;
     private static final double ACCELERATION_STEP_G = 0.1;
@@ -159,6 +167,10 @@ public class JumpPathViewPanel extends JScrollablePanel {
     private final List<PlanetarySystem> requestedStops;
     private final List<Integer> dwellHoursByRequestedStop;
     private final Consumer<Course> courseSelectionHandler;
+    private final Runnable jumpFeeSummaryHandler;
+    private final Runnable cancelCurrentTripHandler;
+    private final boolean advancedPlanningInitiallyExpanded;
+    private final Consumer<Boolean> advancedPlanningStateHandler;
     private Plan itineraryPlan;
     private Result schedule;
     private Mode scheduleMode;
@@ -204,16 +216,24 @@ public class JumpPathViewPanel extends JScrollablePanel {
     private JLabel piratePointAdjustedArrivalValue;
 
     public JumpPathViewPanel(JumpPath p, Campaign c) {
-        this(p, c, List.of(), List.of(), course -> { });
+        this(p, c, List.of(), List.of(), course -> { }, null, null, false, expanded -> { });
     }
 
     public JumpPathViewPanel(JumpPath p, Campaign c, List<Course> routeCourses,
           Consumer<Course> courseSelectionHandler) {
-        this(p, c, routeCourses, List.of(), courseSelectionHandler);
+                this(p, c, routeCourses, List.of(), courseSelectionHandler, null, null, false, expanded -> { });
     }
 
     public JumpPathViewPanel(JumpPath p, Campaign c, List<Course> routeCourses,
           List<PlanetarySystem> requestedStops, Consumer<Course> courseSelectionHandler) {
+          this(p, c, routeCourses, requestedStops, courseSelectionHandler, null, null, false, expanded -> { });
+        }
+
+        public JumpPathViewPanel(JumpPath p, Campaign c, List<Course> routeCourses,
+            List<PlanetarySystem> requestedStops, Consumer<Course> courseSelectionHandler,
+            Runnable jumpFeeSummaryHandler, Runnable cancelCurrentTripHandler,
+            boolean advancedPlanningInitiallyExpanded,
+            Consumer<Boolean> advancedPlanningStateHandler) {
         super();
         this.path = p;
         this.campaign = c;
@@ -222,6 +242,10 @@ public class JumpPathViewPanel extends JScrollablePanel {
         dwellHoursByRequestedStop = new ArrayList<>(requestedStops.size());
         requestedStops.forEach(stop -> dwellHoursByRequestedStop.add(0));
         this.courseSelectionHandler = courseSelectionHandler;
+        this.jumpFeeSummaryHandler = jumpFeeSummaryHandler;
+        this.cancelCurrentTripHandler = cancelCurrentTripHandler;
+        this.advancedPlanningInitiallyExpanded = advancedPlanningInitiallyExpanded;
+        this.advancedPlanningStateHandler = advancedPlanningStateHandler;
         locale = MekHQ.getMHQOptions().getLocale();
         resourceMap = ResourceBundle.getBundle("mekhq.resources.JumpPathViewPanel", locale);
         initComponents();
@@ -246,13 +270,11 @@ public class JumpPathViewPanel extends JScrollablePanel {
             if (routeCourses.size() > 1) {
                 add(createCourseComparison());
             }
-            add(createCircuitPlanner());
         }
-        add(createAccelerationPlanner());
-        add(createSchedulePlanner());
-        add(createPiratePointPlanner());
+        JPanel advancedPlanning = createAdvancedPlanning();
         itinerarySection = createItinerary();
         add(itinerarySection);
+        add(advancedPlanning);
     }
 
     private JPanel createHeader() {
@@ -270,21 +292,12 @@ public class JumpPathViewPanel extends JScrollablePanel {
         constraints.insets = new Insets(0, 0, 3, 0);
         header.add(eyebrow, constraints);
 
-        JLabel routeStatus = new JLabel(resourceMap.getString(activeRoute
-              ? "dossier.activeRoute.text"
-              : "dossier.plannedRoute.text"));
-        routeStatus.setForeground(DOSSIER_TEXT);
-        routeStatus.setFont(routeStatus.getFont().deriveFont(Font.BOLD, routeStatus.getFont().getSize2D() * 1.3f));
-        constraints = createFullWidthConstraints(1);
-        constraints.insets = new Insets(0, 0, 4, 0);
-        header.add(routeStatus, constraints);
-
         LocalDate currentDate = campaign.getLocalDate();
         String startName = getSystemName(path.getFirstSystem(), currentDate);
         String endName = getSystemName(path.getLastSystem(), currentDate);
         JLabel endpoints = new JLabel(format(resourceMap.getString("dossier.route.format"), startName, endName));
         endpoints.setForeground(DOSSIER_MUTED_TEXT);
-        constraints = createFullWidthConstraints(2);
+          constraints = createFullWidthConstraints(1);
         header.add(endpoints, constraints);
         return header;
     }
@@ -309,7 +322,80 @@ public class JumpPathViewPanel extends JScrollablePanel {
             Money journeyCost = calculations.calculateJumpCostForEntireJourney(duration, path.getJumps());
             addMetric(summary, metricIndex, "metric.cost.text", journeyCost.toAmountAndSymbolString());
         }
+        if (jumpFeeSummaryHandler != null) {
+            FramedCommandButton jumpFees = new FramedCommandButton(
+                  resourceMap.getString("summary.jumpFees.text"), COURSE_BUTTON_COLORS);
+            jumpFees.setMargin(new Insets(UIUtil.scaleForGUI(4), UIUtil.scaleForGUI(10),
+                  UIUtil.scaleForGUI(4), UIUtil.scaleForGUI(10)));
+            jumpFees.setToolTipText(resourceMap.getString("summary.jumpFees.tooltip"));
+            jumpFees.getAccessibleContext().setAccessibleDescription(jumpFees.getToolTipText());
+            jumpFees.addActionListener(event -> jumpFeeSummaryHandler.run());
+            GridBagConstraints constraints = createFullWidthConstraints(1 + ((metricIndex + 1) / 2));
+            constraints.gridwidth = 2;
+            constraints.insets = new Insets(5, 0, 1, 0);
+            summary.add(jumpFees, constraints);
+        }
+        if (isActiveRoute() && (cancelCurrentTripHandler != null)) {
+            FramedCommandButton cancelTrip = new FramedCommandButton(
+                  resourceMap.getString("summary.cancelTrip.text"), COURSE_BUTTON_COLORS);
+            cancelTrip.setMargin(new Insets(UIUtil.scaleForGUI(4), UIUtil.scaleForGUI(10),
+                  UIUtil.scaleForGUI(4), UIUtil.scaleForGUI(10)));
+            cancelTrip.setToolTipText(resourceMap.getString("summary.cancelTrip.tooltip"));
+            cancelTrip.getAccessibleContext().setAccessibleDescription(cancelTrip.getToolTipText());
+            cancelTrip.addActionListener(event -> cancelCurrentTripHandler.run());
+            GridBagConstraints constraints = createFullWidthConstraints(2 + ((metricIndex + 1) / 2));
+            constraints.gridwidth = 2;
+            constraints.insets = new Insets(5, 0, 1, 0);
+            summary.add(cancelTrip, constraints);
+        }
         return summary;
+    }
+
+    private JPanel createAdvancedPlanning() {
+        JPanel advanced = createBandPanel();
+        advanced.setLayout(new GridBagLayout());
+        advanced.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, DOSSIER_DIVIDER));
+
+        JToggleButton toggle = new JToggleButton(resourceMap.getString("advanced.show.text"));
+          toggle.setSelected(advancedPlanningInitiallyExpanded);
+          toggle.setText(resourceMap.getString(advancedPlanningInitiallyExpanded
+              ? "advanced.hide.text"
+              : "advanced.show.text"));
+          toggle.setIcon(symbolIcon(advancedPlanningInitiallyExpanded ? 0xE5CF : 0xE5CC,
+              UIUtil.scaleForGUI(18), DOSSIER_ACCENT));
+        toggle.setBackground(DOSSIER_CONTROL_BACKGROUND);
+        toggle.setForeground(DOSSIER_ACCENT);
+        toggle.setFocusPainted(false);
+        toggle.setBorder(BorderFactory.createEmptyBorder(UIUtil.scaleForGUI(10), HORIZONTAL_PADDING,
+              UIUtil.scaleForGUI(10), HORIZONTAL_PADDING));
+        toggle.setToolTipText(resourceMap.getString("advanced.tooltip"));
+        toggle.getAccessibleContext().setAccessibleDescription(toggle.getToolTipText());
+        GridBagConstraints constraints = createFullWidthConstraints(0);
+        advanced.add(toggle, constraints);
+
+        JPanel content = createBandPanel();
+        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+        if (!isActiveRoute()) {
+            content.add(createCircuitPlanner());
+        }
+        content.add(createAccelerationPlanner());
+        content.add(createSchedulePlanner());
+        content.add(createPiratePointPlanner());
+        content.setVisible(advancedPlanningInitiallyExpanded);
+        constraints = createFullWidthConstraints(1);
+        advanced.add(content, constraints);
+
+        toggle.addActionListener(event -> {
+            boolean expanded = toggle.isSelected();
+            content.setVisible(expanded);
+            advancedPlanningStateHandler.accept(expanded);
+            toggle.setText(resourceMap.getString(expanded ? "advanced.hide.text" : "advanced.show.text"));
+            toggle.setIcon(symbolIcon(expanded ? 0xE5CF : 0xE5CC,
+                UIUtil.scaleForGUI(18), DOSSIER_ACCENT));
+            advanced.revalidate();
+            advanced.repaint();
+        });
+        return advanced;
     }
 
     private JPanel createCourseComparison() {
@@ -387,18 +473,13 @@ public class JumpPathViewPanel extends JScrollablePanel {
 
     private JPanel createCircuitPlanner() {
         JPanel planner = createSection("section.circuit.text");
-        JComboBox<String> modeSelector = new JComboBox<>(new String[] {
+        JComboBox<String> modeSelector = new ImmersiveComboBox<>(new String[] {
               resourceMap.getString("circuit.none.text"),
               resourceMap.getString("circuit.whole.text"),
               resourceMap.getString("circuit.custom.text")
         });
         modeSelector.setSelectedIndex(circuitPlan.mode().ordinal());
-        modeSelector.setBackground(DOSSIER_CONTROL_BACKGROUND);
-        modeSelector.setForeground(DOSSIER_TEXT);
-        modeSelector.setToolTipText(resourceMap.getString("circuit.mode.tooltip"));
-        modeSelector.getAccessibleContext().setAccessibleName(resourceMap.getString("circuit.mode.text"));
-        modeSelector.getAccessibleContext().setAccessibleDescription(modeSelector.getToolTipText());
-        modeSelector.setPreferredSize(new Dimension(UIUtil.scaleForGUI(142), modeSelector.getPreferredSize().height));
+        configureComboBox(modeSelector, "circuit.mode.text", "circuit.mode.tooltip", DENSE_SELECTOR_WIDTH);
 
         JPanel input = createBandPanel();
         input.setLayout(new GridBagLayout());
@@ -456,11 +537,8 @@ public class JumpPathViewPanel extends JScrollablePanel {
         } else {
             for (int index = 1; index < systems.size() - 1; index++) {
                 PlanetarySystem system = systems.get(index);
-                JCheckBox covered = new JCheckBox(system.getPrintableName(campaign.getLocalDate()),
+                JCheckBox covered = new ImmersiveCheckBox(system.getPrintableName(campaign.getLocalDate()),
                         circuitPlan.usesCircuitAt(index));
-                covered.setBackground(DOSSIER_BACKGROUND);
-                covered.setForeground(DOSSIER_TEXT);
-                covered.setOpaque(true);
                 covered.setToolTipText(resourceMap.getString("circuit.departure.tooltip"));
                 covered.getAccessibleContext().setAccessibleDescription(covered.getToolTipText());
                 int departureIndex = index;
@@ -488,19 +566,21 @@ public class JumpPathViewPanel extends JScrollablePanel {
 
     private JPanel createAccelerationPlanner() {
         JPanel planner = createSection("section.acceleration.text");
-        accelerationSpinner = new JSpinner(new SpinnerNumberModel(
+        accelerationSpinner = new ImmersiveSpinner(new SpinnerNumberModel(
               JumpPathItinerary.DEFAULT_ACCELERATION_G, MINIMUM_ACCELERATION_G, MAXIMUM_ACCELERATION_G,
               ACCELERATION_STEP_G));
         configureSpinner(accelerationSpinner, "0.0", "planning.acceleration.text", "planning.acceleration.tooltip");
+        setPlannerControlWidth(accelerationSpinner, WIDE_PLANNER_CONTROL_WIDTH);
         addPlannerInput(planner, 1, "planning.acceleration.text", "planning.acceleration.tooltip",
               accelerationSpinner);
 
         double initialDesiredDays = Math.max(MINIMUM_DESIRED_DAYS,
               Math.min(MAXIMUM_DESIRED_DAYS, itineraryPlan.totalDays()));
-        desiredDurationSpinner = new JSpinner(new SpinnerNumberModel(initialDesiredDays,
+        desiredDurationSpinner = new ImmersiveSpinner(new SpinnerNumberModel(initialDesiredDays,
               MINIMUM_DESIRED_DAYS, MAXIMUM_DESIRED_DAYS, 1.0));
         configureSpinner(desiredDurationSpinner, "0.0", "planning.desiredTime.text",
               "planning.desiredTime.tooltip");
+          setPlannerControlWidth(desiredDurationSpinner, WIDE_PLANNER_CONTROL_WIDTH);
         addPlannerInput(planner, 2, "planning.desiredTime.text", "planning.desiredTime.tooltip",
               desiredDurationSpinner);
 
@@ -539,21 +619,17 @@ public class JumpPathViewPanel extends JScrollablePanel {
 
     private JPanel createSchedulePlanner() {
         JPanel planner = createSection("section.schedule.text");
-        JComboBox<String> modeSelector = new JComboBox<>(new String[] {
+        JComboBox<String> modeSelector = new ImmersiveComboBox<>(new String[] {
               resourceMap.getString("schedule.departAt.text"),
               resourceMap.getString("schedule.arriveBy.text")
         });
         modeSelector.setSelectedIndex(scheduleMode.ordinal());
-        modeSelector.setBackground(DOSSIER_CONTROL_BACKGROUND);
-        modeSelector.setForeground(DOSSIER_TEXT);
-        modeSelector.setToolTipText(resourceMap.getString("schedule.mode.tooltip"));
-        modeSelector.getAccessibleContext().setAccessibleName(resourceMap.getString("schedule.mode.text"));
-        modeSelector.getAccessibleContext().setAccessibleDescription(modeSelector.getToolTipText());
-        modeSelector.setPreferredSize(new Dimension(UIUtil.scaleForGUI(142), modeSelector.getPreferredSize().height));
+          configureComboBox(modeSelector, "schedule.mode.text", "schedule.mode.tooltip",
+              WIDE_PLANNER_CONTROL_WIDTH);
         addPlannerControl(planner, 1, resourceMap.getString("schedule.mode.text"),
               resourceMap.getString("schedule.mode.tooltip"), modeSelector);
 
-        scheduleAnchorSpinner = new JSpinner(new SpinnerDateModel(toDate(departureAnchor), null, null,
+        scheduleAnchorSpinner = new ImmersiveSpinner(new SpinnerDateModel(toDate(departureAnchor), null, null,
               Calendar.HOUR_OF_DAY));
         configureScheduleAnchorSpinner();
         addPlannerControl(planner, 2, resourceMap.getString("schedule.anchor.text"),
@@ -564,10 +640,11 @@ public class JumpPathViewPanel extends JScrollablePanel {
             String label = format(resourceMap.getString("schedule.dwell.label.format"),
                   dwell.requestedStopIndex() + 1, dwell.system().getPrintableName(campaign.getLocalDate()));
             String tooltip = resourceMap.getString("schedule.dwell.tooltip");
-            JSpinner dwellSpinner = new JSpinner(new SpinnerNumberModel(
+            JSpinner dwellSpinner = new ImmersiveSpinner(new SpinnerNumberModel(
                 dwellHoursByRequestedStop.get(dwell.requestedStopIndex()).intValue(),
                 0, MAXIMUM_DWELL_HOURS, 1));
             configureNumberSpinner(dwellSpinner, "0", label, tooltip);
+            setPlannerControlWidth(dwellSpinner, WIDE_PLANNER_CONTROL_WIDTH);
             addPlannerControl(planner, row++, label, tooltip, dwellSpinner);
             dwellSpinner.addChangeListener(event -> {
                 dwellHoursByRequestedStop.set(dwell.requestedStopIndex(),
@@ -631,22 +708,26 @@ public class JumpPathViewPanel extends JScrollablePanel {
         boolean endpointAvailable = destination != null;
         int row = 1;
 
-        piratePointModeSelector = new JComboBox<>(new String[] {
+        piratePointModeSelector = new ImmersiveComboBox<>(new String[] {
               resourceMap.getString("pirate.mode.standard.text"),
               resourceMap.getString("pirate.mode.assumed.text")
         });
-        configureComboBox(piratePointModeSelector, "pirate.mode.text", "pirate.mode.tooltip", 190);
+          configureComboBox(piratePointModeSelector, "pirate.mode.text", "pirate.mode.tooltip",
+              PIRATE_SELECTOR_WIDTH);
         addPlannerControl(planner, row++, resourceMap.getString("pirate.mode.text"),
               resourceMap.getString("pirate.mode.tooltip"), piratePointModeSelector);
 
         List<NavigationSource> navigationSources = navigationSources();
-        navigationSourceSelector = new JComboBox<>(navigationSources.toArray(NavigationSource[]::new));
-        configureComboBox(navigationSourceSelector, "pirate.skillSource.text", "pirate.skillSource.tooltip", 300);
+        navigationSourceSelector = new ImmersiveComboBox<>(navigationSources.toArray(NavigationSource[]::new));
+          configureComboBox(navigationSourceSelector, "pirate.skillSource.text", "pirate.skillSource.tooltip",
+              PIRATE_SELECTOR_WIDTH);
+        if (navigationSources.size() > 1) {
           piratePointControlLabels.add(addPlannerControl(planner, row++,
               resourceMap.getString("pirate.skillSource.text"),
               resourceMap.getString("pirate.skillSource.tooltip"), navigationSourceSelector));
+        }
 
-        piratePointTargetSpinner = new JSpinner(new SpinnerNumberModel(DEFAULT_MANUAL_TARGET_NUMBER,
+        piratePointTargetSpinner = new ImmersiveSpinner(new SpinnerNumberModel(DEFAULT_MANUAL_TARGET_NUMBER,
               MINIMUM_TARGET_NUMBER, MAXIMUM_TARGET_NUMBER, 1));
         configureSpinner(piratePointTargetSpinner, "0", "pirate.baseTarget.text", "pirate.baseTarget.tooltip");
           piratePointControlLabels.add(addPlannerInput(planner, row++, "pirate.baseTarget.text",
@@ -655,14 +736,14 @@ public class JumpPathViewPanel extends JScrollablePanel {
           double initialPiratePointDistance = initialPiratePointDistanceMillionsKm(endpointAvailable
               ? destination.getDistanceToJumpPoint()
               : 0.0);
-          piratePointDistanceSpinner = new JSpinner(new SpinnerNumberModel(initialPiratePointDistance,
+          piratePointDistanceSpinner = new ImmersiveSpinner(new SpinnerNumberModel(initialPiratePointDistance,
               0.0, MAXIMUM_ASSUMED_DISTANCE_MILLIONS_KM, 1.0));
         configureSpinner(piratePointDistanceSpinner, "0.0", "pirate.distanceAssumption.text",
               "pirate.distanceAssumption.tooltip");
           piratePointControlLabels.add(addPlannerInput(planner, row++, "pirate.distanceAssumption.text",
               "pirate.distanceAssumption.tooltip", piratePointDistanceSpinner));
 
-        detectionRadiusSpinner = new JSpinner(new SpinnerNumberModel(0.0, 0.0,
+        detectionRadiusSpinner = new ImmersiveSpinner(new SpinnerNumberModel(0.0, 0.0,
               MAXIMUM_ASSUMED_DISTANCE_MILLIONS_KM, 1.0));
         configureSpinner(detectionRadiusSpinner, "0.0", "pirate.detectionAssumption.text",
               "pirate.detectionAssumption.tooltip");
@@ -697,7 +778,10 @@ public class JumpPathViewPanel extends JScrollablePanel {
 
         piratePointModeSelector.setEnabled(endpointAvailable);
 
-        piratePointModeSelector.addActionListener(event -> refreshPiratePointPresentation());
+        piratePointModeSelector.addActionListener(event -> {
+            refreshPiratePointPresentation();
+            updatePiratePointDetailVisibility(planner);
+        });
         navigationSourceSelector.addActionListener(event -> {
             NavigationSource source = (NavigationSource) navigationSourceSelector.getSelectedItem();
             adjustingPiratePointTarget = true;
@@ -718,16 +802,24 @@ public class JumpPathViewPanel extends JScrollablePanel {
         piratePointDistanceSpinner.addChangeListener(event -> refreshPiratePointPresentation());
         detectionRadiusSpinner.addChangeListener(event -> refreshPiratePointPresentation());
         refreshPiratePointPresentation();
+        updatePiratePointDetailVisibility(planner);
         return planner;
     }
 
+    private void updatePiratePointDetailVisibility(JPanel planner) {
+        boolean detailsVisible = piratePointModeSelector.getSelectedIndex() == 1;
+        for (int index = 2; index < planner.getComponentCount(); index++) {
+            planner.getComponent(index).setVisible(detailsVisible);
+        }
+        planner.revalidate();
+        planner.repaint();
+    }
+
     private <T> void configureComboBox(JComboBox<T> comboBox, String labelKey, String tooltipKey, int width) {
-        comboBox.setBackground(DOSSIER_CONTROL_BACKGROUND);
-        comboBox.setForeground(DOSSIER_TEXT);
         comboBox.setToolTipText(resourceMap.getString(tooltipKey));
         comboBox.getAccessibleContext().setAccessibleName(resourceMap.getString(labelKey));
         comboBox.getAccessibleContext().setAccessibleDescription(comboBox.getToolTipText());
-        comboBox.setPreferredSize(new Dimension(UIUtil.scaleForGUI(width), comboBox.getPreferredSize().height));
+        setPlannerControlWidth(comboBox, width);
     }
 
     private List<NavigationSource> navigationSources() {
@@ -757,15 +849,12 @@ public class JumpPathViewPanel extends JScrollablePanel {
     private void addPiratePointModifier(JPanel planner, int row, ModifierCategory category) {
         String label = resourceMap.getString(modifierLabelKey(category));
         String tooltip = resourceMap.getString("pirate.modifier.tooltip");
-        JCheckBox enabled = new JCheckBox(label, false);
-        enabled.setBackground(DOSSIER_BACKGROUND);
-        enabled.setForeground(DOSSIER_TEXT);
-        enabled.setOpaque(true);
+        JCheckBox enabled = new ImmersiveCheckBox(label);
         enabled.setToolTipText(tooltip);
         enabled.getAccessibleContext().setAccessibleName(label);
         enabled.getAccessibleContext().setAccessibleDescription(tooltip);
 
-        JSpinner value = new JSpinner(new SpinnerNumberModel(0, MINIMUM_ASSUMED_MODIFIER,
+        JSpinner value = new ImmersiveSpinner(new SpinnerNumberModel(0, MINIMUM_ASSUMED_MODIFIER,
               MAXIMUM_ASSUMED_MODIFIER, 1));
         configureNumberSpinner(value, "+0;-0", label, tooltip);
 
@@ -1031,20 +1120,10 @@ public class JumpPathViewPanel extends JScrollablePanel {
               resourceMap.getString("schedule.datePattern.text"));
         editor.getFormat().setTimeZone(TimeZone.getTimeZone("UTC"));
         scheduleAnchorSpinner.setEditor(editor);
-        scheduleAnchorSpinner.setBorder(BorderFactory.createLineBorder(DOSSIER_DIVIDER));
-        scheduleAnchorSpinner.setPreferredSize(new Dimension(UIUtil.scaleForGUI(176),
-              scheduleAnchorSpinner.getPreferredSize().height));
         String label = resourceMap.getString("schedule.anchor.text");
         String tooltip = resourceMap.getString("schedule.anchor.tooltip");
-        scheduleAnchorSpinner.setToolTipText(tooltip);
-        scheduleAnchorSpinner.getAccessibleContext().setAccessibleName(label);
-        scheduleAnchorSpinner.getAccessibleContext().setAccessibleDescription(tooltip);
-        JFormattedTextField textField = editor.getTextField();
-        textField.setBackground(DOSSIER_CONTROL_BACKGROUND);
-        textField.setForeground(DOSSIER_TEXT);
-        textField.setCaretColor(DOSSIER_ACCENT);
-        textField.setHorizontalAlignment(SwingConstants.TRAILING);
-        textField.setToolTipText(tooltip);
+          styleSpinner(scheduleAnchorSpinner, label, tooltip);
+                setPlannerControlWidth(scheduleAnchorSpinner, WIDE_PLANNER_CONTROL_WIDTH);
     }
 
     private void configureSpinner(JSpinner spinner, String pattern, String labelKey, String tooltipKey) {
@@ -1053,19 +1132,23 @@ public class JumpPathViewPanel extends JScrollablePanel {
 
     private void configureNumberSpinner(JSpinner spinner, String pattern, String label, String tooltip) {
         spinner.setEditor(new JSpinner.NumberEditor(spinner, pattern));
-        spinner.setBorder(BorderFactory.createLineBorder(DOSSIER_DIVIDER));
-        spinner.setPreferredSize(new Dimension(UIUtil.scaleForGUI(88), spinner.getPreferredSize().height));
+        styleSpinner(spinner, label, tooltip);
+    }
+
+    private void styleSpinner(JSpinner spinner, String label, String tooltip) {
+        setPlannerControlWidth(spinner, DENSE_SPINNER_WIDTH);
         spinner.setToolTipText(tooltip);
         spinner.getAccessibleContext().setAccessibleName(label);
         spinner.getAccessibleContext().setAccessibleDescription(tooltip);
         if (spinner.getEditor() instanceof JSpinner.DefaultEditor editor) {
-            JFormattedTextField textField = editor.getTextField();
-            textField.setBackground(DOSSIER_CONTROL_BACKGROUND);
-            textField.setForeground(DOSSIER_TEXT);
-            textField.setCaretColor(DOSSIER_ACCENT);
-            textField.setHorizontalAlignment(SwingConstants.TRAILING);
-            textField.setToolTipText(tooltip);
+            editor.getTextField().setToolTipText(tooltip);
         }
+    }
+
+    private static void setPlannerControlWidth(JComponent control, int width) {
+        Dimension size = new Dimension(width, control.getPreferredSize().height);
+        control.setPreferredSize(size);
+        control.setMinimumSize(size);
     }
 
     private JLabel addPlannerInput(JPanel planner, int row, String labelKey, String tooltipKey, JSpinner spinner) {
