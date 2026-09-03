@@ -514,7 +514,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
 
     static JPanel createContextHeader(JToggleButton systemTab, JToggleButton routeTab, JButton collapseButton) {
         int utilityInset = UIUtil.scaleForGUI(4);
-        int headerHeight = collapseButton.getPreferredSize().height + (utilityInset * 2);
+        int headerHeight = collapseButton.getPreferredSize().height + (utilityInset * 2) + 1;
 
         JPanel tabs = new JPanel(new GridLayout(1, 2));
         tabs.setOpaque(false);

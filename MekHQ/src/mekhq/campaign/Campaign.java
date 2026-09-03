@@ -4160,19 +4160,6 @@ public class Campaign implements ITechManager {
             return jumpPath;
         }
 
-        // Shortcuts to ensure we're not processing a lot of data when we're unable to reach the target system
-        if (!skipEmptySystemCheck && getPlayerForce().isAvoidingEmptySystems()
-                  && end.getPopulation(currentDay) == 0) {
-            new ImmersiveDialogSimple(this, getPlayerForce().getHumanResources()
-                                                  .getSeniorAdminPerson(getCampaignOptions(),
-                                                        getPlayerForce().isClanForce(),
-                                                        getLocalDate()), null,
-                  String.format(resources.getString("unableToEnterSystem.abandoned.ic"), getCommanderAddress()),
-                  null, resources.getString("unableToEnterSystem.abandoned.ooc"), null, false);
-
-            return new JumpPath();
-        }
-
         List<AbstractContract> activeAtBContracts = getActiveContracts();
 
         FactionHints factionHints = FactionHints.getInstance();

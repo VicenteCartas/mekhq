@@ -110,7 +110,7 @@ class InterstellarMapPanelLegendTest {
         "None is black; one outbreak yellow; two orange; three magenta; four or more purple.",
         "Hexagonal badges identify included HPG stations: A cyan, B blue, C amber, and D red. Network links are drawn only for A and B stations.",
         "A faint emblem watermark identifies territory; its tint identifies the faction.",
-        "Links remain visible at distant zoom. Navigation detail adds rating rings and animated A/B traffic pulses.",
+        "Layers controls maximum station detail. Distant zoom keeps only Class A links; navigation zoom adds Class B, and close zoom honors the selected station classes and adds traffic pulses.",
         "Translucent faction fill and a solid edge mark territory inferred from dated ownership.",
         "Multiple faction colors, diagonal hatching, and a dashed border mark shared control.",
         "A dark enclosed void with a dotted boundary marks locally unclaimed space.",

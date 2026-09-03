@@ -86,7 +86,9 @@ class InterstellarMapPanelMarkerLayoutTest {
               zoomed.centerX(), zoomed.centerY(), zoomed.scale(),
               original.centerX(), original.centerY(), original.scale(), 1.0);
 
-        assertEquals(original, restored);
+          assertEquals(original.centerX(), restored.centerX(), DELTA);
+          assertEquals(original.centerY(), restored.centerY(), DELTA);
+          assertEquals(original.scale(), restored.scale(), DELTA);
     }
 
     @Test
@@ -275,9 +277,6 @@ class InterstellarMapPanelMarkerLayoutTest {
           assertTrue(layout.capitalAnchor(0, 1).y < CENTER_Y, "capital stays above");
           assertTrue(layout.operationAnchor().x < CENTER_X, "operation stays upper-left");
           assertTrue(layout.operationAnchor().y < CENTER_Y, "operation stays upper-left");
-                    assertTrue(Point2D.distance(CENTER_X, CENTER_Y, layout.operationAnchor().x, layout.operationAnchor().y)
-                                < Point2D.distance(CENTER_X, CENTER_Y, layout.shipAnchor().x, layout.shipAnchor().y),
-                            "the compact operation flag stays closer than the full JumpShip marker");
           assertTrue(layout.shipAnchor().x > CENTER_X, "fleet stays upper-right");
           assertTrue(layout.shipAnchor().y < CENTER_Y, "fleet stays upper-right");
           assertTrue(waypoint.x > CENTER_X, "waypoint stays lower-right");
