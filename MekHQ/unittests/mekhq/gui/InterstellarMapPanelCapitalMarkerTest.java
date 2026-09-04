@@ -44,12 +44,15 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.geom.Point2D;
 import java.awt.image.BufferedImage;
+import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import mekhq.campaign.universe.Faction;
+import mekhq.campaign.universe.PlanetarySystem;
+import mekhq.campaign.universe.enums.HPGRating;
 import org.junit.jupiter.api.Test;
 
 class InterstellarMapPanelCapitalMarkerTest {
@@ -113,6 +116,26 @@ class InterstellarMapPanelCapitalMarkerTest {
               Set.of(capitalOwner, mercenaries), capitals, "Galatea");
           assertEquals(List.of(mercenaries, capitalOwner), mercenaryOwnedCapital);
           assertEquals(1, mercenaryOwnedCapital.stream().filter(faction -> faction == mercenaries).count());
+    }
+
+    @Test
+    void preparedSystemRenderDataRetainsDatedCapitalResolution() {
+        LocalDate date = LocalDate.of(3151, 4, 12);
+        Faction capitalOwner = faction(TEST_FACTION_COLOR, false, false);
+        when(capitalOwner.getShortName()).thenReturn("ZZ");
+        Faction mercenaries = faction(TEST_FACTION_COLOR, false, false);
+        when(mercenaries.getShortName()).thenReturn("MERC");
+        PlanetarySystem system = mock(PlanetarySystem.class);
+        when(system.getId()).thenReturn("Galatea");
+        when(system.getFactionSet(date)).thenReturn(Set.of(capitalOwner));
+        when(system.getHPG(date)).thenReturn(HPGRating.X);
+        when(system.getPrintableName(date)).thenReturn("Galatea");
+
+        InterstellarMapPanel.SystemRenderData renderData = InterstellarMapPanel.SystemRenderData.create(
+              system, date, Map.of(capitalOwner, "Galatea", mercenaries, "Galatea"),
+              mercenaries, "Galatea");
+
+        assertEquals(List.of(mercenaries, capitalOwner), renderData.capitalFactions());
     }
 
     @Test

@@ -72,7 +72,7 @@ class InterstellarMapPanelLegendTest {
                   "50 ly HPG range", "Dated capital", "Operation flag",
         "Restricted system", "GM-edited system", "Faction ownership", "Technology", "Industry", "Raw Materials",
         "Output", "Agriculture", "Population", "HPG", "Recharge Stations", "Academies", "Hiring Halls",
-        "Disease Outbreaks", "HPG station classes", "Faction emblem", "HPG network & traffic", "Sovereign border",
+        "Disease Outbreaks", "HPG station classes", "Faction emblem", "HPG network", "Sovereign border",
         "Disputed territory", "Unclaimed pocket", "Enclave");
     private static final List<String> DESCRIPTIONS = List.of(
         "An amber ring identifies the selected system at distant zoom; corner brackets replace it as navigation detail appears.",
@@ -96,7 +96,7 @@ class InterstellarMapPanelLegendTest {
         "At distant zoom, a centered red diamond marks an urgent active scenario. Closer in, flags show missions, scenarios, and mission counts.",
         "A red prohibition ring marks a system barred by outlaw or restricted-entry standing rules.",
         "At detail zoom, a cyan pencil below a system marks a non-canon override.",
-        "Distant contacts use faction color directly. At navigation zoom, ownership becomes one complete ring divided equally for shared systems.",
+        "Compact contacts use faction color at navigation zoom; detail zoom shows intrinsic stars with crisp ownership rings. Shared systems divide both equally.",
         "Regressed is dark gray; F purple; D blue; C teal; B green; A or Advanced yellow; no population is black.",
         "F is near-black; D purple; C magenta; B coral; A pale yellow; no population is black.",
         "F is blue; D purple; C magenta; B orange; A yellow; no population is black.",
@@ -110,7 +110,7 @@ class InterstellarMapPanelLegendTest {
         "None is black; one outbreak yellow; two orange; three magenta; four or more purple.",
         "Hexagonal badges identify included HPG stations: A cyan, B blue, C amber, and D red. Network links are drawn only for A and B stations.",
         "A faint emblem watermark identifies territory; its tint identifies the faction.",
-        "Layers controls maximum station detail. Distant zoom keeps only Class A links; navigation zoom adds Class B, and close zoom honors the selected station classes and adds traffic pulses.",
+        "Layers controls maximum station detail. Distant zoom keeps only Class A links; navigation zoom adds Class B, and close zoom honors the selected station classes.",
         "Translucent faction fill and a solid edge mark territory inferred from dated ownership.",
         "Multiple faction colors, diagonal hatching, and a dashed border mark shared control.",
         "A dark enclosed void with a dotted boundary marks locally unclaimed space.",

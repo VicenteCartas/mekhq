@@ -61,7 +61,10 @@ import javax.swing.JEditorPane;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextPane;
+import javax.swing.JViewport;
+import javax.swing.SwingUtilities;
 import javax.swing.Timer;
+import javax.swing.event.ChangeListener;
 import javax.swing.text.DefaultCaret;
 import javax.swing.text.html.HTMLDocument;
 import javax.swing.text.html.HTMLEditorKit;
@@ -112,6 +115,13 @@ public class PlanetViewPanel extends JScrollablePanel {
     private final List<RevealBandPanel> revealBands = new ArrayList<>();
 
     private Timer revealTimer;
+    private JViewport revealViewport;
+    private int revealViewportY;
+    private final ChangeListener revealScrollListener = event -> {
+        if ((revealViewport != null) && (revealViewport.getViewPosition().y != revealViewportY)) {
+            finishRevealAnimation();
+        }
+    };
     private long revealStartTime;
     private int detailRevealIndex;
     private boolean revealComplete;
@@ -141,6 +151,11 @@ public class PlanetViewPanel extends JScrollablePanel {
     public void addNotify() {
         super.addNotify();
         if (animateReveal && !revealComplete) {
+            revealViewport = (JViewport) SwingUtilities.getAncestorOfClass(JViewport.class, this);
+            if (revealViewport != null) {
+                revealViewportY = revealViewport.getViewPosition().y;
+                revealViewport.addChangeListener(revealScrollListener);
+            }
             startRevealAnimation();
         }
     }
@@ -599,6 +614,10 @@ public class PlanetViewPanel extends JScrollablePanel {
 
     private void finishRevealAnimation() {
         stopRevealTimer();
+        if (revealViewport != null) {
+            revealViewport.removeChangeListener(revealScrollListener);
+            revealViewport = null;
+        }
         revealBands.forEach(panel -> panel.setRevealAlpha(1.0f));
         revealComplete = true;
     }
@@ -608,6 +627,10 @@ public class PlanetViewPanel extends JScrollablePanel {
             revealTimer.stop();
             revealTimer = null;
         }
+    }
+
+    boolean isRevealAnimationRunning() {
+        return revealTimer != null;
     }
 
     private JLabel createSectionHeading(String headingKey) {
@@ -659,7 +682,11 @@ public class PlanetViewPanel extends JScrollablePanel {
         }
 
         private void setRevealAlpha(float revealAlpha) {
-            this.revealAlpha = Math.max(0.0f, Math.min(1.0f, revealAlpha));
+            float boundedAlpha = Math.max(0.0f, Math.min(1.0f, revealAlpha));
+            if (this.revealAlpha == boundedAlpha) {
+                return;
+            }
+            this.revealAlpha = boundedAlpha;
             repaint();
         }
 

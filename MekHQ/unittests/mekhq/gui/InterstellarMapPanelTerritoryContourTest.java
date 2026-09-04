@@ -52,7 +52,6 @@ import java.awt.geom.Ellipse2D;
 import java.awt.geom.PathIterator;
 import java.awt.image.BufferedImage;
 import java.time.LocalDate;
-import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -229,31 +228,6 @@ class InterstellarMapPanelTerritoryContourTest {
               InterstellarMapPanel.TerritoryVisualProfile.create(4.0);
         assertNotEquals(imageSignature(render(disputed, atlas)), imageSignature(render(disputed, detail)));
         assertNotEquals(imageSignature(render(pocket, atlas)), imageSignature(render(pocket, detail)));
-    }
-
-    @Test
-    void sharedSystemCueUsesOnlyExactSystemOwnershipAndDoesNotChangeMarkerGeometry() {
-        LocalDate date = LocalDate.of(3151, 1, 1);
-        Faction factionA = faction("A", Color.RED);
-        Faction factionB = faction("B", Color.BLUE);
-        PlanetarySystem sharedSystem = mock(PlanetarySystem.class);
-        PlanetarySystem sovereignSystem = mock(PlanetarySystem.class);
-        when(sharedSystem.getFactionSet(date)).thenReturn(new HashSet<>(Set.of(factionA, factionB)));
-        when(sovereignSystem.getFactionSet(date)).thenReturn(new HashSet<>(Set.of(factionA)));
-
-        assertTrue(InterstellarMapPanel.hasSharedSystemOwnership(sharedSystem, date));
-        assertFalse(InterstellarMapPanel.hasSharedSystemOwnership(sovereignSystem, date));
-
-        InterstellarMapPanel.SystemMarkerLayout layout = InterstellarMapPanel.SystemMarkerLayout.create(
-              36, 36, 7, InterstellarMapPanel.RouteMarkerState.NONE, false, false);
-        InterstellarMapPanel.SystemMarkerLayout originalLayout = layout;
-        BufferedImage cue = new BufferedImage(IMAGE_SIZE, IMAGE_SIZE, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D graphics = cue.createGraphics();
-        InterstellarMapPanel.drawSharedSystemCue(graphics, new Arc2D.Double(), layout);
-        graphics.dispose();
-
-        assertEquals(originalLayout, layout);
-        assertTrue(paintedPixelCount(cue) > 0);
     }
 
     private static Faction faction(String shortName) {

@@ -38,21 +38,30 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.Rectangle;
+import java.awt.geom.Line2D;
+import java.awt.geom.Point2D;
+import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferInt;
 import java.time.LocalDate;
 import java.util.ArrayDeque;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.JPanel;
 import javax.swing.JViewport;
 
+import mekhq.campaign.universe.PlanetarySystem;
+import mekhq.campaign.universe.PlanetarySystem;
 import org.junit.jupiter.api.Test;
 
 class InterstellarMapPanelRenderLayerCacheTest {
@@ -65,22 +74,85 @@ class InterstellarMapPanelRenderLayerCacheTest {
         assertFalse(InterstellarMapPanel.shouldRenderSystem(false, false, true, true));
     }
 
+        @Test
+        void retainedCartographyRequiresStableStaticMapState() {
+          assertTrue(InterstellarMapPanel.canUseRetainedCartography(
+              true, false));
+          assertFalse(InterstellarMapPanel.canUseRetainedCartography(
+              false, false));
+          assertFalse(InterstellarMapPanel.canUseRetainedCartography(
+              true, true));
+        }
+
+    @Test
+    void routesAndReachabilityDoNotInvalidateStaticCartography() {
+        assertTrue(InterstellarMapPanel.canUseRetainedCartography(true, false));
+    }
+
+    @Test
+    void mergedNavigationRequiresStableRouteRendering() {
+        assertTrue(InterstellarMapPanel.canUseMergedNavigation(true, false, false));
+        assertFalse(InterstellarMapPanel.canUseMergedNavigation(false, false, false));
+        assertFalse(InterstellarMapPanel.canUseMergedNavigation(true, true, false));
+        assertFalse(InterstellarMapPanel.canUseMergedNavigation(true, false, true));
+    }
+
     @Test
     void renderPerformanceTrackerAggregatesAndResetsSamples() {
         InterstellarMapPanel.RenderPerformanceTracker tracker =
               new InterstellarMapPanel.RenderPerformanceTracker(0L);
 
-                tracker.record(20_000_000L, 8_000_000L, 3_000_000L, 2_000_000L, 1_000_000L,
-              2_000_000L, 7_000_000L, 3_000_000L, 100);
+        tracker.record(20_000_000L, 8_000_000L, 3_000_000L, 2_000_000L, 1_000_000L,
+              2_000_000L, 7_000_000L, 3_000_000L, 100, 3, 1, 1, true, true);
+          tracker.recordRetainedRender(5_000_000L, 1_000_000L, 2_000_000L, 3_000_000L, 4_000_000L);
 
         assertFalse(tracker.shouldReport(4_999_999_999L));
         assertTrue(tracker.shouldReport(5_000_000_000L));
         String report = tracker.reportAndReset(5_000_000_000L);
         assertTrue(report.contains("frames=1"));
+        assertTrue(report.contains("p50=20.0ms p95=20.0ms p99=20.0ms"));
         assertTrue(report.contains(">16ms=1"));
         assertTrue(report.contains("background=3.0ms territory=2.0ms logos=1.0ms"));
         assertTrue(report.contains("visibleSystems=100"));
+        assertTrue(report.contains("territoryCache[hits=3 strips=1 full=1]"));
+        assertTrue(report.contains("retainedFrames=1/1"));
+        assertTrue(report.contains("mergedFrames=1/1"));
+        assertTrue(report.contains("full=1 avg=20.0ms max=20.0ms"));
+          assertTrue(report.contains("cachePaints[count=1 cartography=5.0ms routes=1.0ms hpg=2.0ms "
+              + "active=3.0ms systems=4.0ms]"));
         assertFalse(tracker.shouldReport(10_000_000_000L));
+    }
+
+    @Test
+    void renderPerformanceTrackerSeparatesCacheOutcomeFrameCosts() {
+        InterstellarMapPanel.RenderPerformanceTracker tracker =
+              new InterstellarMapPanel.RenderPerformanceTracker(0L);
+
+        tracker.record(8_000_000L, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, true, true);
+        tracker.record(18_000_000L, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, true, true);
+        tracker.record(40_000_000L, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, true, true);
+        tracker.record(12_000_000L, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false);
+
+        String report = tracker.reportAndReset(5_000_000_000L);
+
+        assertTrue(report.contains("hit=1 avg=8.0ms max=8.0ms"));
+        assertTrue(report.contains("strip=1 avg=18.0ms max=18.0ms"));
+        assertTrue(report.contains("full=1 avg=40.0ms max=40.0ms"));
+        assertTrue(report.contains("none=1 avg=12.0ms max=12.0ms"));
+    }
+
+    @Test
+    void renderPerformanceTrackerReportsNearestRankPercentiles() {
+        InterstellarMapPanel.RenderPerformanceTracker tracker =
+              new InterstellarMapPanel.RenderPerformanceTracker(0L);
+        for (long frameMillis : List.of(50L, 10L, 40L, 20L, 30L)) {
+            tracker.record(frameMillis * 1_000_000L, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                false, false);
+        }
+
+        String report = tracker.reportAndReset(5_000_000_000L);
+
+        assertTrue(report.contains("p50=30.0ms p95=50.0ms p99=50.0ms"));
     }
 
     @Test
@@ -164,6 +236,326 @@ class InterstellarMapPanelRenderLayerCacheTest {
         assertNotSame(first, resized);
         assertEquals(BufferedImage.TYPE_INT_ARGB_PRE, resized.getType());
         assertEquals(2, cache.getRenderCount());
+    }
+
+        @Test
+        void pannableCacheReusesExactScaleRasterUntilViewportLeavesOverscan() {
+          InterstellarMapPanel.PannableRenderLayerCache<String> cache =
+              new InterstellarMapPanel.PannableRenderLayerCache<>();
+          AtomicInteger rendererCalls = new AtomicInteger();
+          InterstellarMapPanel.RenderViewKey initialView = viewKey(100, 80, 0.0, 0.0, 2.0);
+
+          InterstellarMapPanel.PannableRenderLayer initial = cache.getOrRender("territory", initialView, 20,
+              graphics -> rendererCalls.incrementAndGet());
+          InterstellarMapPanel.PannableRenderLayer panned = cache.getOrRender("territory",
+              viewKey(100, 80, 5.0, -3.0, 2.0), 20, graphics -> rendererCalls.incrementAndGet());
+
+          assertSame(initial.image(), panned.image());
+          assertEquals(-10, panned.drawX());
+          assertEquals(-26, panned.drawY());
+          assertEquals(1, rendererCalls.get());
+
+          InterstellarMapPanel.PannableRenderLayer outsideCoverage = cache.getOrRender("territory",
+              viewKey(100, 80, 11.0, -3.0, 2.0), 20, graphics -> rendererCalls.incrementAndGet());
+          assertSame(initial.image(), outsideCoverage.image());
+          assertEquals(-20, outsideCoverage.drawX());
+          assertEquals(-20, outsideCoverage.drawY());
+          assertEquals(2, rendererCalls.get());
+          assertEquals(2, cache.getRenderCount());
+                    assertEquals(1, cache.getReuseCount());
+                    assertEquals(1, cache.getStripRefreshCount());
+                    assertEquals(1, cache.getFullRenderCount());
+        }
+
+        @Test
+        void pannableCacheRerendersInsteadOfApplyingFractionalTranslation() {
+          InterstellarMapPanel.PannableRenderLayerCache<String> cache =
+              new InterstellarMapPanel.PannableRenderLayerCache<>();
+          AtomicInteger rendererCalls = new AtomicInteger();
+          cache.getOrRender("territory", viewKey(100, 80, 0.0, 0.0, 2.0), 20,
+              graphics -> rendererCalls.incrementAndGet());
+
+          InterstellarMapPanel.PannableRenderLayer fractionalPan = cache.getOrRender("territory",
+              viewKey(100, 80, 0.25, 0.0, 2.0), 20, graphics -> rendererCalls.incrementAndGet());
+
+          assertEquals(-20, fractionalPan.drawX());
+          assertEquals(2, rendererCalls.get());
+                    assertEquals(0, cache.getReuseCount());
+                    assertEquals(0, cache.getStripRefreshCount());
+                    assertEquals(2, cache.getFullRenderCount());
+        }
+
+            @Test
+            void pannableCacheDefersFullRenderAndInstallsPreparedRaster() {
+              InterstellarMapPanel.PannableRenderLayerCache<String> cache =
+                  new InterstellarMapPanel.PannableRenderLayerCache<>();
+              InterstellarMapPanel.RenderViewKey initialView = viewKey(100, 80, 0.0, 0.0, 2.0);
+              AtomicInteger rendererCalls = new AtomicInteger();
+
+              assertNull(cache.getOrRefresh("territory", initialView, 20, 0,
+                  graphics -> rendererCalls.incrementAndGet()));
+              BufferedImage prepared = new BufferedImage(140, 120, BufferedImage.TYPE_INT_ARGB_PRE);
+              cache.install("territory", initialView, 20, prepared);
+
+              InterstellarMapPanel.PannableRenderLayer available = cache.getOrRefresh(
+                  "territory", initialView, 20, 0, graphics -> rendererCalls.incrementAndGet());
+              assertSame(prepared, available.image());
+              assertEquals(-20, available.drawX());
+              assertEquals(0, rendererCalls.get());
+              assertEquals(1, cache.getFullRenderCount());
+
+              InterstellarMapPanel.RenderViewKey zoomedView = viewKey(100, 80, 0.0, 0.0, 3.0);
+              assertNull(cache.getOrRefresh("territory", zoomedView, 20, 0,
+                  graphics -> rendererCalls.incrementAndGet()));
+              assertSame(prepared, cache.snapshot("territory").image());
+              assertNull(cache.snapshot("other"));
+            }
+
+    @Test
+    void pannableCacheRendersOnlyExposedPixelsWhenRecenteringAfterPan() {
+        InterstellarMapPanel.PannableRenderLayerCache<String> cache =
+              new InterstellarMapPanel.PannableRenderLayerCache<>();
+        AtomicInteger rendererCalls = new AtomicInteger();
+        cache.getOrRender("territory", viewKey(4, 2, 0.0, 0.0, 1.0), 1, graphics -> {
+            rendererCalls.incrementAndGet();
+            graphics.setColor(Color.RED);
+            graphics.fillRect(-1, -1, 6, 4);
+        });
+
+        InterstellarMapPanel.PannableRenderLayer recentered = cache.getOrRender("territory",
+              viewKey(4, 2, 2.0, 0.0, 1.0), 1, graphics -> {
+                  rendererCalls.incrementAndGet();
+                  graphics.setColor(Color.BLUE);
+                  graphics.fillRect(-1, -1, 6, 4);
+              });
+
+        assertEquals(-1, recentered.drawX());
+        assertEquals(-1, recentered.drawY());
+        assertEquals(Color.BLUE.getRGB(), recentered.image().getRGB(0, 1));
+        assertEquals(Color.RED.getRGB(), recentered.image().getRGB(2, 1));
+        assertEquals(2, rendererCalls.get());
+    }
+
+        @Test
+        void pannableCacheRecenteringMatchesFreshRasterWithinPremultipliedRounding() {
+          InterstellarMapPanel.PannableRenderLayerCache<String> incrementalCache =
+              new InterstellarMapPanel.PannableRenderLayerCache<>();
+          InterstellarMapPanel.RenderViewKey initialView = viewKey(24, 16, 0.0, 0.0, 1.0);
+          InterstellarMapPanel.RenderViewKey shiftedView = viewKey(24, 16, 5.0, -2.0, 1.0);
+          incrementalCache.getOrRender("territory", initialView, 4,
+              graphics -> drawShiftedTestPattern(graphics, 0, 0));
+
+          BufferedImage incremental = incrementalCache.getOrRender("territory", shiftedView, 4,
+              graphics -> drawShiftedTestPattern(graphics, 5, -2)).image();
+          InterstellarMapPanel.PannableRenderLayerCache<String> freshCache =
+              new InterstellarMapPanel.PannableRenderLayerCache<>();
+          BufferedImage fresh = freshCache.getOrRender("territory", shiftedView, 4,
+              graphics -> drawShiftedTestPattern(graphics, 5, -2)).image();
+
+          assertPremultipliedImagesEquivalent(fresh, incremental);
+        }
+
+        @Test
+        void pannableCacheRecenteringMatchesFreshRasterForReverseOverlap() {
+          InterstellarMapPanel.PannableRenderLayerCache<String> incrementalCache =
+              new InterstellarMapPanel.PannableRenderLayerCache<>();
+          InterstellarMapPanel.RenderViewKey initialView = viewKey(24, 16, 0.0, 0.0, 1.0);
+          InterstellarMapPanel.RenderViewKey shiftedView = viewKey(24, 16, -5.0, 2.0, 1.0);
+          incrementalCache.getOrRender("territory", initialView, 4,
+              graphics -> drawShiftedTestPattern(graphics, 0, 0));
+
+          BufferedImage incremental = incrementalCache.getOrRender("territory", shiftedView, 4,
+              graphics -> drawShiftedTestPattern(graphics, -5, 2)).image();
+          InterstellarMapPanel.PannableRenderLayerCache<String> freshCache =
+              new InterstellarMapPanel.PannableRenderLayerCache<>();
+          BufferedImage fresh = freshCache.getOrRender("territory", shiftedView, 4,
+              graphics -> drawShiftedTestPattern(graphics, -5, 2)).image();
+
+          assertPremultipliedImagesEquivalent(fresh, incremental);
+        }
+
+        private static void drawShiftedTestPattern(Graphics2D graphics, int deltaX, int deltaY) {
+          graphics.setColor(new Color(40, 170, 220, 180));
+          graphics.setStroke(new java.awt.BasicStroke(3.0f));
+          graphics.draw(new Line2D.Double(-8 + deltaX, 2 + deltaY, 30 + deltaX, 14 + deltaY));
+        }
+
+    @Test
+    void pannableLayerBlitsOnlyTheVisibleSourceRectangle() {
+        BufferedImage source = new BufferedImage(6, 4, BufferedImage.TYPE_INT_ARGB_PRE);
+        Graphics2D sourceGraphics = source.createGraphics();
+        sourceGraphics.setColor(Color.RED);
+        sourceGraphics.fillRect(0, 0, 6, 4);
+        sourceGraphics.setColor(Color.GREEN);
+        sourceGraphics.fillRect(2, 1, 3, 2);
+        sourceGraphics.dispose();
+        BufferedImage target = new BufferedImage(3, 2, BufferedImage.TYPE_INT_ARGB_PRE);
+        Graphics2D targetGraphics = target.createGraphics();
+
+        InterstellarMapPanel.drawPannableRenderLayer(targetGraphics,
+              new InterstellarMapPanel.PannableRenderLayer(source, -2, -1), 3, 2, 1.0);
+        targetGraphics.dispose();
+
+        assertEquals(Color.GREEN.getRGB(), target.getRGB(0, 0));
+        assertEquals(Color.GREEN.getRGB(), target.getRGB(2, 1));
+    }
+
+    @Test
+    void pannableSnapshotTransformPreservesWorldCoordinatesAcrossScaleAndCenterChanges() {
+        InterstellarMapPanel.RenderViewKey renderedView = viewKey(100, 80, 10.0, -5.0, 2.0);
+        InterstellarMapPanel.RenderViewKey requestedView = viewKey(100, 80, 20.0, 0.0, 4.0);
+        BufferedImage image = new BufferedImage(140, 120, BufferedImage.TYPE_INT_ARGB_PRE);
+        InterstellarMapPanel.PannableRenderLayerSnapshot<String> snapshot =
+              new InterstellarMapPanel.PannableRenderLayerSnapshot<>("territory", renderedView, image, 20);
+
+        Point2D transformed = InterstellarMapPanel.transformPannableSnapshot(snapshot, requestedView)
+              .transform(new Point2D.Double(90.0, 50.0), null);
+
+        assertEquals(130.0, transformed.getX());
+        assertEquals(40.0, transformed.getY());
+    }
+
+    @Test
+    void largerCartographyCacheFeedsNavigationRefreshWithoutRerendering() {
+        InterstellarMapPanel.PannableRenderLayerCache<String> cartographyCache =
+              new InterstellarMapPanel.PannableRenderLayerCache<>();
+        InterstellarMapPanel.PannableRenderLayerCache<String> navigationCache =
+              new InterstellarMapPanel.PannableRenderLayerCache<>();
+        AtomicInteger cartographyRenders = new AtomicInteger();
+        InterstellarMapPanel.RenderViewKey initialView = viewKey(24, 16, 0.0, 0.0, 1.0);
+        InterstellarMapPanel.PannableRenderLayer initialCartography = cartographyCache.getOrRender(
+              "cartography", initialView, 8, 4, graphics -> {
+                  cartographyRenders.incrementAndGet();
+                  drawOpaqueShiftedTestPattern(graphics, 0, 0);
+              });
+        navigationCache.getOrRender("navigation", initialView, 4,
+              graphics -> graphics.drawImage(initialCartography.image(), initialCartography.drawX(),
+                  initialCartography.drawY(), null));
+
+        InterstellarMapPanel.RenderViewKey shiftedView = viewKey(24, 16, 5.0, 0.0, 1.0);
+        InterstellarMapPanel.PannableRenderLayer shiftedCartography = cartographyCache.getOrRender(
+              "cartography", shiftedView, 8, 4, graphics -> {
+                  cartographyRenders.incrementAndGet();
+                  drawOpaqueShiftedTestPattern(graphics, 5, 0);
+              });
+        navigationCache.getOrRender(
+              "navigation", shiftedView, 4,
+              graphics -> graphics.drawImage(shiftedCartography.image(), shiftedCartography.drawX(),
+                  shiftedCartography.drawY(), null));
+
+        InterstellarMapPanel.RenderViewKey exposedView = viewKey(24, 16, 9.0, 0.0, 1.0);
+        InterstellarMapPanel.PannableRenderLayer refreshedCartography = cartographyCache.getOrRender(
+              "cartography", exposedView, 8, 4, graphics -> {
+                  cartographyRenders.incrementAndGet();
+                  drawOpaqueShiftedTestPattern(graphics, 9, 0);
+              });
+        InterstellarMapPanel.PannableRenderLayer exposedNavigation = navigationCache.getOrRender(
+              "navigation", exposedView, 4,
+              graphics -> graphics.drawImage(refreshedCartography.image(), refreshedCartography.drawX(),
+                  refreshedCartography.drawY(), null));
+        BufferedImage actual = new BufferedImage(24, 16, BufferedImage.TYPE_INT_ARGB_PRE);
+        Graphics2D actualGraphics = actual.createGraphics();
+        InterstellarMapPanel.drawPannableRenderLayer(actualGraphics, exposedNavigation, 24, 16, 1.0);
+        actualGraphics.dispose();
+          InterstellarMapPanel.PannableRenderLayerCache<String> freshCartographyCache =
+              new InterstellarMapPanel.PannableRenderLayerCache<>();
+          InterstellarMapPanel.PannableRenderLayer freshCartography = freshCartographyCache.getOrRender(
+              "cartography", exposedView, 8, 4,
+              graphics -> drawOpaqueShiftedTestPattern(graphics, 9, 0));
+          InterstellarMapPanel.PannableRenderLayerCache<String> freshNavigationCache =
+              new InterstellarMapPanel.PannableRenderLayerCache<>();
+          InterstellarMapPanel.PannableRenderLayer freshNavigation = freshNavigationCache.getOrRender(
+              "navigation", exposedView, 4,
+              graphics -> graphics.drawImage(freshCartography.image(), freshCartography.drawX(),
+                freshCartography.drawY(), null));
+        BufferedImage expected = new BufferedImage(24, 16, BufferedImage.TYPE_INT_ARGB_PRE);
+        Graphics2D expectedGraphics = expected.createGraphics();
+          InterstellarMapPanel.drawPannableRenderLayer(expectedGraphics, freshNavigation, 24, 16, 1.0);
+        expectedGraphics.dispose();
+
+        assertPremultipliedImagesEquivalent(expected, actual);
+        assertEquals(2, cartographyRenders.get());
+        assertEquals(1, cartographyCache.getReuseCount());
+        assertEquals(1, navigationCache.getStripRefreshCount());
+        assertEquals(1, navigationCache.getReuseCount());
+    }
+
+    private static void drawOpaqueShiftedTestPattern(Graphics2D graphics, int deltaX, int deltaY) {
+        graphics.setColor(Color.BLACK);
+        graphics.fillRect(-20, -20, 80, 60);
+        drawShiftedTestPattern(graphics, deltaX, deltaY);
+    }
+
+        @Test
+        void renderLayerOverscanRespectsRasterPixelBudget() {
+          assertEquals(512, InterstellarMapPanel.renderLayerOverscan(2560, 1600));
+          int fiveKMargin = InterstellarMapPanel.renderLayerOverscan(5120, 2880);
+          assertTrue(fiveKMargin > 0);
+          assertTrue(InterstellarMapPanel.canCacheRenderLayer(
+              5120 + (fiveKMargin * 2), 2880 + (fiveKMargin * 2)));
+          assertEquals(0, InterstellarMapPanel.renderLayerOverscan(8192, 8192));
+        }
+
+    @Test
+    void retainedCartographyUsesLargerOverscanWithinPixelBudget() {
+        int width = 1280;
+        int height = 720;
+        int overscan = InterstellarMapPanel.retainedCartographyOverscan(width, height);
+
+        assertEquals(1024, overscan);
+        assertTrue(overscan > InterstellarMapPanel.renderLayerOverscan(width, height));
+        assertTrue(InterstellarMapPanel.canCacheRenderLayer(
+              width + (overscan * 2), height + (overscan * 2)));
+        assertEquals(0, InterstellarMapPanel.retainedCartographyOverscan(8192, 8192));
+    }
+
+    @Test
+    void spatialIndexReturnsBoundedAndRequiredSystemsInOriginalOrder() {
+        PlanetarySystem right = systemAt("right", 10.0, 0.0);
+        PlanetarySystem required = systemAt("required", 100.0, 100.0);
+        PlanetarySystem equivalentRequired = systemAt("required", -100.0, -100.0);
+        PlanetarySystem left = systemAt("left", 0.0, 0.0);
+        PlanetarySystem above = systemAt("above", 5.0, 20.0);
+        InterstellarMapPanel.SystemSpatialIndex index =
+              new InterstellarMapPanel.SystemSpatialIndex(List.of(right, required, left, above));
+
+        List<PlanetarySystem> result = index.query(-1.0, -1.0, 11.0, 1.0, equivalentRequired, null);
+
+        assertEquals(List.of(right, required, left), result);
+    }
+
+    @Test
+    void retainedSystemQueryBoundsIncludeMarkerExtentBeyondCacheEdge() {
+        InterstellarMapPanel.MapQueryBounds bounds = InterstellarMapPanel.retainedSystemQueryBounds(
+              viewKey(100, 80, 10.0, -5.0, 2.0), 20, 8.0);
+
+        assertEquals(-49.0, bounds.minX());
+        assertEquals(-39.0, bounds.minY());
+        assertEquals(29.0, bounds.maxX());
+        assertEquals(29.0, bounds.maxY());
+    }
+
+    private static void assertPremultipliedImagesEquivalent(BufferedImage expected, BufferedImage actual) {
+        assertEquals(expected.getWidth(), actual.getWidth());
+        assertEquals(expected.getHeight(), actual.getHeight());
+        int[] expectedPixels = ((DataBufferInt) expected.getRaster().getDataBuffer()).getData();
+        int[] actualPixels = ((DataBufferInt) actual.getRaster().getDataBuffer()).getData();
+        for (int index = 0; index < expectedPixels.length; index++) {
+            for (int shift = 0; shift <= 24; shift += 8) {
+                int expectedChannel = (expectedPixels[index] >>> shift) & 0xFF;
+                int actualChannel = (actualPixels[index] >>> shift) & 0xFF;
+                assertTrue(Math.abs(expectedChannel - actualChannel) <= 1,
+                      "premultiplied pixel channel differs at index " + index + ", shift " + shift);
+            }
+        }
+    }
+
+    private static PlanetarySystem systemAt(String id, double x, double y) {
+        PlanetarySystem system = mock(PlanetarySystem.class);
+        when(system.getId()).thenReturn(id);
+        when(system.getX()).thenReturn(x);
+        when(system.getY()).thenReturn(y);
+        return system;
     }
 
     @Test
@@ -333,6 +725,128 @@ class InterstellarMapPanelRenderLayerCacheTest {
           eventLoop.removeFirst().run();
           assertEquals(1, preparationCalls.get());
           assertEquals(latestDate, preparedKey.get());
+        }
+
+    @Test
+    void backgroundPreparationPublishesOnlyLatestVisibleRequest() {
+        AtomicBoolean showing = new AtomicBoolean(true);
+        ArrayDeque<Runnable> background = new ArrayDeque<>();
+        ArrayDeque<Runnable> eventLoop = new ArrayDeque<>();
+        AtomicReference<String> installed = new AtomicReference<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        InterstellarMapPanel.LatestBackgroundPreparationQueue<String, String> queue =
+              new InterstellarMapPanel.LatestBackgroundPreparationQueue<>(showing::get,
+                    background::addLast, eventLoop::addLast, key -> "prepared-" + key,
+                  (key, value) -> installed.set(value), (key, exception) -> failure.set(exception), value -> { });
+
+        queue.request("first");
+        queue.request("latest");
+        assertEquals(1, background.size());
+
+        background.removeFirst().run();
+        eventLoop.removeFirst().run();
+        assertNull(installed.get(), "superseded work must not be published");
+        assertEquals(1, background.size(), "the latest request starts after the worker becomes idle");
+
+        background.removeFirst().run();
+        eventLoop.removeFirst().run();
+        assertEquals("prepared-latest", installed.get());
+        assertNull(failure.get());
+
+        showing.set(false);
+        queue.request("hidden");
+        assertTrue(background.isEmpty());
+    }
+
+    @Test
+    void backgroundPreparationReturningToInFlightRequestSupersedesPendingWork() {
+        ArrayDeque<Runnable> background = new ArrayDeque<>();
+        ArrayDeque<Runnable> eventLoop = new ArrayDeque<>();
+        AtomicReference<String> installed = new AtomicReference<>();
+        InterstellarMapPanel.LatestBackgroundPreparationQueue<String, String> queue =
+              new InterstellarMapPanel.LatestBackgroundPreparationQueue<>(() -> true,
+                    background::addLast, eventLoop::addLast, key -> "prepared-" + key,
+                    (key, value) -> installed.set(value), (key, exception) -> { }, value -> { });
+
+        queue.request("current");
+        queue.request("superseded");
+        queue.request("current");
+        background.removeFirst().run();
+        eventLoop.removeFirst().run();
+
+        assertEquals("prepared-current", installed.get());
+        assertTrue(background.isEmpty(), "superseded work must not start after returning to the current request");
+    }
+
+    @Test
+    void pendingBackgroundPreparationResumesWhenMapBecomesVisible() {
+        AtomicBoolean showing = new AtomicBoolean(true);
+        ArrayDeque<Runnable> background = new ArrayDeque<>();
+        ArrayDeque<Runnable> eventLoop = new ArrayDeque<>();
+        AtomicReference<String> installed = new AtomicReference<>();
+        InterstellarMapPanel.LatestBackgroundPreparationQueue<String, String> queue =
+              new InterstellarMapPanel.LatestBackgroundPreparationQueue<>(showing::get,
+                    background::addLast, eventLoop::addLast, key -> "prepared-" + key,
+                    (key, value) -> installed.set(value), (key, exception) -> { }, value -> { });
+
+        queue.request("obsolete");
+        queue.request("current");
+        showing.set(false);
+        background.removeFirst().run();
+        eventLoop.removeFirst().run();
+        assertTrue(background.isEmpty());
+
+        showing.set(true);
+        queue.request("current");
+        assertEquals(1, background.size());
+        background.removeFirst().run();
+        eventLoop.removeFirst().run();
+
+        assertEquals("prepared-current", installed.get());
+    }
+
+        @Test
+        void canceledBackgroundPreparationDiscardsCompletedValue() {
+          ArrayDeque<Runnable> background = new ArrayDeque<>();
+          ArrayDeque<Runnable> eventLoop = new ArrayDeque<>();
+          AtomicReference<String> installed = new AtomicReference<>();
+          AtomicReference<String> discarded = new AtomicReference<>();
+          InterstellarMapPanel.LatestBackgroundPreparationQueue<String, String> queue =
+              new InterstellarMapPanel.LatestBackgroundPreparationQueue<>(() -> true,
+                  background::addLast, eventLoop::addLast, key -> "prepared-" + key,
+                  (key, value) -> installed.set(value), (key, failure) -> { }, discarded::set);
+
+          queue.request("obsolete");
+          background.removeFirst().run();
+          queue.cancel();
+          eventLoop.removeFirst().run();
+
+          assertNull(installed.get());
+          assertEquals("prepared-obsolete", discarded.get());
+        }
+
+        @Test
+        void retainedCartographyWorkerRendersPreparedContoursAtRequestedView() {
+          LocalDate date = LocalDate.of(3151, 4, 12);
+          mekhq.campaign.universe.Faction faction = mock(mekhq.campaign.universe.Faction.class);
+          when(faction.getColor()).thenReturn(Color.RED);
+          Rectangle2D contourShape = new Rectangle2D.Double(-5.0, -5.0, 10.0, 10.0);
+          InterstellarMapPanel.TerritoryContour contour = new InterstellarMapPanel.TerritoryContour(
+              List.of(faction), InterstellarMapPanel.TerritorySemantic.SOVEREIGN,
+              contourShape, Color.RED, 1, -5.0, 5.0, -5.0, 5.0);
+          InterstellarMapPanel.TerritoryAtlas atlas = new InterstellarMapPanel.TerritoryAtlas(
+              date, 0, 0, 0, 0, java.util.Map.of(), List.of(contour), List.of());
+          InterstellarMapPanel.RenderViewKey view = viewKey(20, 20, 0.0, 0.0, 1.0);
+          InterstellarMapPanel.RetainedCartographyRenderRequest request =
+              new InterstellarMapPanel.RetainedCartographyRenderRequest(
+                  null, view, 2, atlas, null, 1.0, 0.0);
+
+          BufferedImage rendered = InterstellarMapPanel.renderRetainedCartographyTerritory(request);
+
+          assertEquals(24, rendered.getWidth());
+          assertEquals(24, rendered.getHeight());
+          assertEquals(BufferedImage.TYPE_INT_ARGB_PRE, rendered.getType());
+          assertEquals(Color.RED.getRGB(), rendered.getRGB(12, 12));
         }
 
     private static void renderLayers(

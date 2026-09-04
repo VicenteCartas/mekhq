@@ -92,53 +92,55 @@ class InterstellarMapPanelMarkerLayoutTest {
     }
 
     @Test
-    void factionOwnershipRingCoversFullCircleAndDividesSharedSystemsEqually() {
+        void factionOwnershipRingCoversFullCircleAndDividesSharedSystemsEqually() {
         Color red = new Color(232, 112, 84);
         Color blue = new Color(88, 170, 230);
         Color green = new Color(114, 196, 126);
-
-        BufferedImage singleFaction = renderOwnershipRing(List.of(red));
-        for (double angle : new double[] { 0, 90, 180, 270 }) {
+          BufferedImage singleFaction = renderOwnershipRing(List.of(red));
+          for (double angle : new double[] { 0, 90, 180, 270 }) {
             assertEquals(red.getRGB(), sampleRing(singleFaction, angle));
+          }
+
+          BufferedImage shared = renderOwnershipRing(List.of(red, blue, green));
+          assertEquals(red.getRGB(), sampleRing(shared, 30));
+          assertEquals(blue.getRGB(), sampleRing(shared, -90));
+          assertEquals(green.getRGB(), sampleRing(shared, 150));
+          for (double angle : new double[] { 0, 60, 120, 180, 240, 300 }) {
+            assertTrue((sampleRing(shared, angle) >>> 24) > 0,
+                "ownership ring must have no angular gaps");
+          }
         }
 
-        BufferedImage shared = renderOwnershipRing(List.of(red, blue, green));
-        assertEquals(red.getRGB(), sampleRing(shared, 30));
-        assertEquals(blue.getRGB(), sampleRing(shared, -90));
-        assertEquals(green.getRGB(), sampleRing(shared, 150));
-        for (double angle : new double[] { 0, 60, 120, 180, 240, 300 }) {
-            assertTrue((sampleRing(shared, angle) >>> 24) > 0, "ownership ring must have no angular gaps");
-        }
-    }
-
-    @Test
-    void analyticalLayerRingCoversFullCircle() {
-        Color layerColor = new Color(33, 144, 140);
+        @Test
+        void analyticalLayerRingCoversFullCircle() {
+          Color layerColor = new Color(33, 144, 140);
         BufferedImage image = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
         Graphics2D graphics = image.createGraphics();
-        InterstellarMapPanel.drawAnalyticalOverlay(graphics, new Arc2D.Double(),
+          InterstellarMapPanel.drawAnalyticalOverlay(graphics, new Arc2D.Double(),
               InterstellarMapPanel.SystemMarkerLayout.create(32, 32, 7.2,
-                    InterstellarMapPanel.RouteMarkerState.NONE, false, false), layerColor, 1.0);
+                    InterstellarMapPanel.RouteMarkerState.NONE, false, false),
+              layerColor, 1.0);
         graphics.dispose();
 
-        for (double angle : new double[] { 0, 45, 90, 135, 180, 225, 270, 315 }) {
+          for (double angle : new double[] { 0, 45, 90, 135, 180, 225, 270, 315 }) {
             assertEquals(layerColor.getRGB(), sampleRing(image, angle));
+          }
         }
-    }
 
-    @Test
-    void strategicContactUsesOnlyFactionOrLayerCoreWithoutOuterShell() {
-        Color contactColor = new Color(190, 66, 160);
-        BufferedImage image = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D graphics = image.createGraphics();
-        InterstellarMapPanel.drawStrategicContactCore(graphics, new Arc2D.Double(),
+        @Test
+        void strategicContactUsesOnlyFactionOrLayerCoreWithoutOuterShell() {
+          Color contactColor = new Color(190, 66, 160);
+          BufferedImage image = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+          Graphics2D graphics = image.createGraphics();
+          InterstellarMapPanel.drawStrategicContactCore(graphics, new Arc2D.Double(),
               InterstellarMapPanel.SystemMarkerLayout.create(32, 32, 7.2,
-                    InterstellarMapPanel.RouteMarkerState.NONE, false, false), List.of(contactColor));
-        graphics.dispose();
+                  InterstellarMapPanel.RouteMarkerState.NONE, false, false),
+              List.of(contactColor));
+          graphics.dispose();
 
-        assertEquals(contactColor.getRGB(), image.getRGB(32, 32));
-        assertEquals(0, image.getRGB(36, 32) >>> 24,
-              "atlas contacts must not retain the close-zoom surrounding circle");
+          assertEquals(contactColor.getRGB(), image.getRGB(32, 32));
+          assertEquals(0, image.getRGB(36, 32) >>> 24,
+              "atlas and navigation contacts must not retain the detail ring");
     }
 
     @ParameterizedTest

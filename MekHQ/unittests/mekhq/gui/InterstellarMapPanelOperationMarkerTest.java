@@ -99,6 +99,32 @@ class InterstellarMapPanelOperationMarkerTest {
         assertEquals(atlas, InterstellarMapPanel.SemanticZoomProfile.create(0.9, 3.0));
     }
 
+        @Test
+        void semanticZoomKeepsMediumViewCompactUntilDetailZoom() {
+          InterstellarMapPanel.SemanticZoomProfile atlas =
+              InterstellarMapPanel.SemanticZoomProfile.create(0.9, 3.0);
+          InterstellarMapPanel.SemanticZoomProfile navigation =
+              InterstellarMapPanel.SemanticZoomProfile.create(3.0, 3.0);
+          InterstellarMapPanel.SemanticZoomProfile transition =
+              InterstellarMapPanel.SemanticZoomProfile.create(4.0, 3.0);
+          InterstellarMapPanel.SemanticZoomProfile detail =
+              InterstellarMapPanel.SemanticZoomProfile.create(5.0, 3.0);
+
+        assertEquals(1.0, atlas.systemContactAlpha(), DELTA);
+          assertEquals(0.0, atlas.systemDetailAlpha(), DELTA);
+          assertEquals(0.0, navigation.systemDetailAlpha(), DELTA);
+          assertEquals(0.0, navigation.ordinaryLabelAlpha(), DELTA);
+          assertEquals(1.0, navigation.routeLabelAlpha(), DELTA,
+              "route labels must remain independent from ordinary labels");
+        assertTrue(transition.systemContactAlpha() > 0.0);
+          assertTrue(transition.systemDetailAlpha() > 0.0);
+          assertTrue(transition.systemDetailAlpha() < 1.0);
+          assertTrue(transition.ordinaryLabelAlpha() > 0.0);
+        assertEquals(0.0, detail.systemContactAlpha(), DELTA);
+          assertEquals(1.0, detail.systemDetailAlpha(), DELTA);
+          assertEquals(1.0, detail.ordinaryLabelAlpha(), DELTA);
+        }
+
     @Test
     void urgentMarkerIsDeterministicAndHasMateriallyStrongerFilledArea() {
         BufferedImage missionOnly = render(new InterstellarMapPanel.StrategicMarker(1, 0));
