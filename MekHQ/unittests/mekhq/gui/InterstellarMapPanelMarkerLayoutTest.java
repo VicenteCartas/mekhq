@@ -329,28 +329,6 @@ class InterstellarMapPanelMarkerLayoutTest {
         graphics.dispose();
     }
 
-    @Test
-    void routeFlowUsesDistanceRatherThanEqualTimePerLeg() {
-        List<Point2D.Double> route = List.of(
-              new Point2D.Double(0, 0),
-              new Point2D.Double(10, 0),
-              new Point2D.Double(10, 30));
-
-        assertEquals(40.0, InterstellarMapPanel.routeScreenLength(route), DELTA);
-        assertEquals(new Point2D.Double(5, 0), InterstellarMapPanel.routeFlowPoint(route, 5));
-        assertEquals(new Point2D.Double(10, 5), InterstellarMapPanel.routeFlowPoint(route, 15));
-        assertEquals(new Point2D.Double(10, 25), InterstellarMapPanel.routeFlowPoint(route, 35));
-    }
-
-    @Test
-    void routeFlowPeriodIsIndependentOfZoom() {
-        double navigationZoomPeriod = InterstellarMapPanel.routeFlowPeriodSeconds(220, 4);
-        double detailZoomPeriod = InterstellarMapPanel.routeFlowPeriodSeconds(440, 8);
-
-        assertEquals(4.0, navigationZoomPeriod, DELTA);
-        assertEquals(navigationZoomPeriod, detailZoomPeriod, DELTA);
-    }
-
     private static BufferedImage renderOwnershipRing(List<Color> colors) {
         BufferedImage image = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
         Graphics2D graphics = image.createGraphics();

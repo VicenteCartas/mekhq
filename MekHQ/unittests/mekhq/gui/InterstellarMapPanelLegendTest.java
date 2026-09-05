@@ -78,7 +78,7 @@ class InterstellarMapPanelLegendTest {
         "An amber ring identifies the selected system at distant zoom; corner brackets replace it as navigation detail appears.",
         "A cyan ring identifies the system under the pointer at distant zoom; corner brackets replace it closer in. Selected systems suppress hover.",
         "A cyan dashed path remains visible at distant zoom; complete thin stop rings appear with navigation detail.",
-        "Amber paths remain visible at distant zoom; complete stop rings and pale travel-flow pulses appear with navigation detail.",
+        "Amber paths remain visible at distant zoom; complete stop rings appear with navigation detail.",
         "At navigation zoom, centered shapes show minimum hops: cyan circles mark one, squares mark two, and hexagons mark three.",
         "At navigation zoom, an amber triangle surrounding a system marks it as reachable with a caution.",
         "At navigation zoom, a red diamond surrounding a system marks the blocked frontier.",

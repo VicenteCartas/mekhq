@@ -11,6 +11,7 @@ The development laptop is substantially faster than the intended baseline hardwa
 - Never hide systems, labels, overlays, or controls merely because the user is panning or zooming.
 - Keep the ambient star animation removed.
 - Remove animated HPG information packets; retain only the already-dense static HPG network and station cues.
+- Omit continuous active-route flow pulses and JumpShip navigation lights; retain route activation and jump transitions.
 - Do not reintroduce blurred, individually rasterized ring glyphs.
 - Hidden empty systems must not leave black circles or other artifacts.
 - Preserve selection, hover, current location, route, capital, operation, GM override, restricted-system, base, HPG, and navigation semantics.

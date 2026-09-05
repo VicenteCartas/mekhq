@@ -225,7 +225,6 @@ public class InterstellarMapPanel extends JPanel {
     private static final Color MAP_POPUP_TEXT = new Color(218, 231, 235);
     private static final Color MAP_POPUP_DISABLED_TEXT = new Color(132, 153, 161);
     private static final Color MAP_POPUP_SELECTION_TEXT = new Color(65, 210, 224);
-    private static final double ACTIVE_ROUTE_FLOW_MAP_UNITS_PER_SECOND = 13.75;
     private static final Color CURRENT_LOCATION_COLOR = new Color(255, 190, 82);
     private static final Color SELECTED_SYSTEM_COLOR = ACTIVE_ROUTE_COLOR;
     private static final Color HOVERED_SYSTEM_COLOR = PLANNED_ROUTE_COLOR;
@@ -260,7 +259,6 @@ public class InterstellarMapPanel extends JPanel {
     private static final long SYSTEM_HOP_DURATION_NS = 520_000_000L;
     private static final double SYSTEM_HOP_DEPARTURE_END_PROGRESS = 0.34;
     private static final double SYSTEM_HOP_ARRIVAL_START_PROGRESS = 0.64;
-    private static final double NANOSECONDS_PER_SECOND = 1_000_000_000.0;
     private static final double FULL_CIRCLE_RADIANS = Math.PI * 2.0;
     private static final Color LAYER_CONTROL_BACKGROUND = new Color(5, 13, 23, 230);
     private static final Color LAYER_CONTROL_BORDER = new Color(65, 210, 224, 105);
@@ -439,7 +437,7 @@ public class InterstellarMapPanel extends JPanel {
                 new MapLegendEntry(MapLegendSymbol.PLANNED_ROUTE, "Planned route",
                     "A cyan dashed path remains visible at distant zoom; complete thin stop rings appear with navigation detail."),
                 new MapLegendEntry(MapLegendSymbol.ACTIVE_ROUTE, "Active route",
-                    "Amber paths remain visible at distant zoom; complete stop rings and pale travel-flow pulses appear with navigation detail."),
+                    "Amber paths remain visible at distant zoom; complete stop rings appear with navigation detail."),
                 new MapLegendEntry(MapLegendSymbol.WAYPOINT_BADGE, "Waypoint number",
                     "At navigation zoom, a numbered badge below-right of a system gives each requested route stop's order."),
                 new MapLegendEntry(MapLegendSymbol.REACHABILITY,
@@ -2476,7 +2474,7 @@ public class InterstellarMapPanel extends JPanel {
 
                 if (!useMergedNavigation && !activeRouteSystems.isEmpty()) {
                     drawActiveRoute(g2, arc, activeRouteSystems, size,
-                          showRouteActivation ? routeActivationProgress : 1.0, ambientElapsedSeconds,
+                          showRouteActivation ? routeActivationProgress : 1.0,
                           semanticZoom.detailedOverlayAlpha());
                 }
                 long routePhaseFinishedNanos = RENDER_PROFILING_ENABLED ? System.nanoTime() : 0L;
@@ -2683,7 +2681,7 @@ public class InterstellarMapPanel extends JPanel {
                             && isCurrentSystem) {
                             paintLayerWithAlpha(g2, semanticZoom.currentLocationAlpha(),
                                 markerGraphics -> drawCurrentLocationMarker(markerGraphics, markerLayout,
-                                    ambientElapsedSeconds, semanticZoom.detailedOverlayAlpha()));
+                                    semanticZoom.detailedOverlayAlpha()));
                         }
                         HPGRating hpgRating = renderData.hpgRating();
                         if ((visibleHpgNetworkAlpha > 0.0) && hpgNetworkDetail.includes(hpgRating)
@@ -2698,8 +2696,7 @@ public class InterstellarMapPanel extends JPanel {
                 if ((semanticZoom.currentLocationAlpha() > 0.0) && isSystemHopAnimating()) {
                       double hopMarkerSize = size;
                     paintLayerWithAlpha(g2, semanticZoom.currentLocationAlpha(),
-                          markerGraphics -> drawSystemHopMarker(markerGraphics, hopMarkerSize, hoveredSystem,
-                              ambientElapsedSeconds));
+                          markerGraphics -> drawSystemHopMarker(markerGraphics, hopMarkerSize, hoveredSystem));
                 }
 
                 if (previousMapModeGraphics != null) {
@@ -2807,7 +2804,7 @@ public class InterstellarMapPanel extends JPanel {
                         LOGGER.info("{} timers[layer={}, selection={}, proposedRoute={}, travel={}, dive={}]",
                               renderPerformanceTracker.reportAndReset(frameFinishedNanos),
                               layerAnimationTimer.isRunning(), selectionAnimationTimer.isRunning(),
-                            proposedRouteAnimationTimer.isRunning(), travelAnimationTimer.isRunning(),
+                                                        proposedRouteAnimationTimer.isRunning(), travelAnimationTimer.isRunning(),
                             systemDiveAnimationTimer.isRunning());
                     }
                 }
@@ -3493,7 +3490,7 @@ public class InterstellarMapPanel extends JPanel {
         Arc2D.Double contact = new Arc2D.Double();
         drawNavigationContact(graphics, contact, 25, 23, 4);
         if (CURRENT_LOCATION_ICON == null) {
-            drawJumpShipIcon(graphics, 45, 10, 0.0, 0.0, false);
+            drawJumpShipIcon(graphics, 45, 10, 0.0);
         } else {
             graphics.drawImage(CURRENT_LOCATION_ICON, 34, 0, 26, 26, null);
         }
@@ -4534,7 +4531,7 @@ public class InterstellarMapPanel extends JPanel {
                     long hpgFinishedNanos = RENDER_PROFILING_ENABLED ? System.nanoTime() : 0L;
           if (!activeRouteSystems.isEmpty()) {
             drawActiveRoute(graphics, new Arc2D.Double(), activeRouteSystems, systemSize,
-                1.0, STATIC_AMBIENT_PHASE_SECONDS, semanticZoom.detailedOverlayAlpha());
+                1.0, semanticZoom.detailedOverlayAlpha());
           }
                     long activeRouteFinishedNanos = RENDER_PROFILING_ENABLED ? System.nanoTime() : 0L;
           drawRetainedSystemArt(graphics, systemRenderData, mapMode, systemSize,
@@ -6626,7 +6623,7 @@ public class InterstellarMapPanel extends JPanel {
     }
 
     private void drawActiveRoute(Graphics2D graphics, Arc2D.Double arc, List<PlanetarySystem> routeSystems,
-            double size, double activationProgress, double ambientElapsedSeconds, double detailAlpha) {
+            double size, double activationProgress, double detailAlpha) {
         int legCount = routeSystems.size() - 1;
         double clampedProgress = Math.clamp(activationProgress, 0.0, 1.0);
         double routePosition = easeInOutCubic(clampedProgress) * Math.max(0, legCount);
@@ -6660,10 +6657,6 @@ public class InterstellarMapPanel extends JPanel {
         if ((clampedProgress > 0.0) && (clampedProgress < 1.0) && (legCount > 0) && (detailAlpha > 0.0)) {
             paintLayerWithAlpha(graphics, detailAlpha,
                   routeGraphics -> drawRouteActivationBoundary(routeGraphics, routeSystems, routePosition));
-        }
-        if ((clampedProgress >= 1.0) && (detailAlpha > 0.0)) {
-            paintLayerWithAlpha(graphics, detailAlpha,
-                  routeGraphics -> drawActiveRouteFlow(routeGraphics, routeSystems, ambientElapsedSeconds));
         }
         if (detailAlpha > 0.0) {
             paintLayerWithAlpha(graphics, detailAlpha, routeGraphics -> {
@@ -6714,65 +6707,6 @@ public class InterstellarMapPanel extends JPanel {
             return Math.clamp(routePosition / transitionLength, 0.0, 1.0);
         }
         return Math.clamp((routePosition - waypointIndex + transitionLength) / transitionLength, 0.0, 1.0);
-    }
-
-    private void drawActiveRouteFlow(Graphics2D graphics, List<PlanetarySystem> routeSystems,
-          double ambientElapsedSeconds) {
-        List<Point2D.Double> routePoints = routeSystems.stream()
-              .map(system -> new Point2D.Double(map2scrX(system.getX()), map2scrY(system.getY())))
-              .toList();
-        double routeLength = routeScreenLength(routePoints);
-        if (routeLength <= 0.0) {
-            return;
-        }
-
-        int routeHash = 1;
-        for (PlanetarySystem system : routeSystems) {
-            routeHash = (31 * routeHash) + getStableHash(system.getId());
-        }
-          double routePeriodSeconds = routeFlowPeriodSeconds(routeLength, conf.scale);
-        double routeProgress = fractionalPart((ambientElapsedSeconds / routePeriodSeconds)
-              + getStableUnit(routeHash, 0x7f4a7c15));
-        Point2D.Double packet = routeFlowPoint(routePoints, routeProgress * routeLength);
-
-        Paint oldPaint = graphics.getPaint();
-        graphics.setPaint(withAlpha(ACTIVE_ROUTE_COLOR, 105));
-        graphics.fill(new Ellipse2D.Double(packet.x - 4.2, packet.y - 4.2, 8.4, 8.4));
-        graphics.setPaint(ACTIVE_ROUTE_FLOW_COLOR);
-        graphics.fill(new Ellipse2D.Double(packet.x - 1.9, packet.y - 1.9, 3.8, 3.8));
-        graphics.setPaint(oldPaint);
-    }
-
-    static double routeScreenLength(List<Point2D.Double> routePoints) {
-        double routeLength = 0.0;
-        for (int pointIndex = 1; pointIndex < routePoints.size(); pointIndex++) {
-            routeLength += routePoints.get(pointIndex - 1).distance(routePoints.get(pointIndex));
-        }
-        return routeLength;
-    }
-
-    static double routeFlowPeriodSeconds(double routeScreenLength, double mapScale) {
-        return routeScreenLength / (mapScale * ACTIVE_ROUTE_FLOW_MAP_UNITS_PER_SECOND);
-    }
-
-    static Point2D.Double routeFlowPoint(List<Point2D.Double> routePoints, double routeDistance) {
-        if (routePoints.isEmpty()) {
-            return new Point2D.Double();
-        }
-        double remainingDistance = Math.max(0.0, routeDistance);
-        for (int pointIndex = 1; pointIndex < routePoints.size(); pointIndex++) {
-            Point2D.Double start = routePoints.get(pointIndex - 1);
-            Point2D.Double end = routePoints.get(pointIndex);
-            double legLength = start.distance(end);
-            if ((remainingDistance <= legLength) && (legLength > 0.0)) {
-                double legProgress = remainingDistance / legLength;
-                return new Point2D.Double(interpolate(start.x, end.x, legProgress),
-                      interpolate(start.y, end.y, legProgress));
-            }
-            remainingDistance -= legLength;
-        }
-        Point2D.Double destination = routePoints.getLast();
-        return new Point2D.Double(destination.x, destination.y);
     }
 
     private void drawActiveRouteWaypointBadges(Graphics2D graphics, List<PlanetarySystem> routeSystems,
@@ -6995,9 +6929,9 @@ public class InterstellarMapPanel extends JPanel {
     }
 
     private static void drawCurrentLocationMarker(Graphics2D graphics, SystemMarkerLayout layout,
-                    double ambientElapsedSeconds, double expansion) {
-                        Point2D.Double shipAnchor = layout.shipAnchor(expansion);
-        drawJumpShipIcon(graphics, shipAnchor.x, shipAnchor.y, 0.0, ambientElapsedSeconds, false);
+          double expansion) {
+        Point2D.Double shipAnchor = layout.shipAnchor(expansion);
+        drawJumpShipIcon(graphics, shipAnchor.x, shipAnchor.y, 0.0);
     }
 
     private static void drawStrategicCurrentLocationMarker(Graphics2D graphics, SystemMarkerLayout layout) {
@@ -7038,8 +6972,7 @@ public class InterstellarMapPanel extends JPanel {
         }
     }
 
-        private void drawSystemHopMarker(Graphics2D graphics, double size, @Nullable PlanetarySystem hoveredSystem,
-            double ambientElapsedSeconds) {
+        private void drawSystemHopMarker(Graphics2D graphics, double size, @Nullable PlanetarySystem hoveredSystem) {
         if ((systemHopOriginId == null) || (systemHopDestinationId == null)) {
             return;
         }
@@ -7054,20 +6987,18 @@ public class InterstellarMapPanel extends JPanel {
             double phaseProgress = progress / SYSTEM_HOP_DEPARTURE_END_PROGRESS;
                         SystemMarkerLayout originLayout = createSystemMarkerLayout(origin, size, RouteMarkerState.ACTIVE,
                                     hoveredSystem);
-            drawSystemHopEndpoint(graphics, originLayout, ambientElapsedSeconds,
-                phaseProgress, true);
+            drawSystemHopEndpoint(graphics, originLayout, phaseProgress, true);
           } else if (progress >= SYSTEM_HOP_ARRIVAL_START_PROGRESS) {
             double phaseProgress = (progress - SYSTEM_HOP_ARRIVAL_START_PROGRESS)
                 / (1.0 - SYSTEM_HOP_ARRIVAL_START_PROGRESS);
             SystemMarkerLayout destinationLayout = createSystemMarkerLayout(destination, size,
                   RouteMarkerState.ACTIVE, hoveredSystem);
-            drawSystemHopEndpoint(graphics, destinationLayout, ambientElapsedSeconds,
-                phaseProgress, false);
+            drawSystemHopEndpoint(graphics, destinationLayout, phaseProgress, false);
           }
     }
 
         private static void drawSystemHopEndpoint(Graphics2D graphics, SystemMarkerLayout layout,
-            double ambientElapsedSeconds, double phaseProgress, boolean departing) {
+            double phaseProgress, boolean departing) {
           double easedProgress = easeInOutCubic(phaseProgress);
           double shipAlpha = departing ? 1.0 - easedProgress : easedProgress;
           Point2D.Double shipAnchor = layout.shipAnchor();
@@ -7075,8 +7006,7 @@ public class InterstellarMapPanel extends JPanel {
 
           drawSystemHopShimmer(graphics, shipAnchor.x, shipAnchor.y, shimmerAlpha);
           paintLayerWithAlpha(graphics, shipAlpha,
-              shipGraphics -> drawJumpShipIcon(shipGraphics, shipAnchor.x, shipAnchor.y, 0.0,
-                  ambientElapsedSeconds, false));
+              shipGraphics -> drawJumpShipIcon(shipGraphics, shipAnchor.x, shipAnchor.y, 0.0));
         }
 
         private static void drawSystemHopShimmer(Graphics2D graphics, double centerX, double centerY, double alpha) {
@@ -7101,8 +7031,7 @@ public class InterstellarMapPanel extends JPanel {
         graphics.setPaint(oldPaint);
     }
 
-    private static void drawJumpShipIcon(Graphics2D graphics, double centerX, double centerY, double rotation,
-          double ambientElapsedSeconds, boolean moving) {
+    private static void drawJumpShipIcon(Graphics2D graphics, double centerX, double centerY, double rotation) {
         Graphics2D shipGraphics = (Graphics2D) graphics.create();
         try {
             shipGraphics.translate(centerX, centerY);
@@ -7114,7 +7043,6 @@ public class InterstellarMapPanel extends JPanel {
             } else {
                 drawJumpShipFallback(shipGraphics);
             }
-            drawJumpShipNavigationLights(shipGraphics, ambientElapsedSeconds, moving);
         } finally {
             shipGraphics.dispose();
         }
@@ -7131,33 +7059,6 @@ public class InterstellarMapPanel extends JPanel {
         graphics.setPaint(CURRENT_LOCATION_COLOR);
         graphics.setStroke(new BasicStroke(2.0f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
         graphics.draw(locationChevron);
-    }
-
-    private static void drawJumpShipNavigationLights(Graphics2D graphics, double ambientElapsedSeconds,
-          boolean moving) {
-        double cyanPeriod = moving ? 1.35 : 2.8;
-        double amberPeriod = moving ? 1.85 : 3.7;
-        drawJumpShipNavigationLight(graphics, -3.5, -4.0, PLANNED_ROUTE_COLOR,
-              getNavigationLightAlpha(ambientElapsedSeconds, cyanPeriod, 0.08));
-        drawJumpShipNavigationLight(graphics, 7.0, 3.5, ACTIVE_ROUTE_FLOW_COLOR,
-              getNavigationLightAlpha(ambientElapsedSeconds, amberPeriod, 0.61));
-    }
-
-    private static int getNavigationLightAlpha(double ambientElapsedSeconds, double periodSeconds,
-          double phaseOffset) {
-        double phase = fractionalPart((ambientElapsedSeconds / periodSeconds) + phaseOffset);
-        double pulse = phase < 0.08
-              ? phase / 0.08
-              : (phase < 0.20 ? 1.0 - ((phase - 0.08) / 0.12) : 0.0);
-        return (int) Math.round(interpolate(35.0, 235.0, pulse));
-    }
-
-    private static void drawJumpShipNavigationLight(Graphics2D graphics, double x, double y, Color color,
-          int alpha) {
-        graphics.setPaint(withAlpha(color, Math.max(18, alpha / 4)));
-        graphics.fill(new Ellipse2D.Double(x - 1.8, y - 1.8, 3.6, 3.6));
-        graphics.setPaint(withAlpha(color, alpha));
-        graphics.fill(new Ellipse2D.Double(x - 0.8, y - 0.8, 1.6, 1.6));
     }
 
         private static void drawSelectedSystemMarker(Graphics2D graphics, SystemMarkerLayout layout,
