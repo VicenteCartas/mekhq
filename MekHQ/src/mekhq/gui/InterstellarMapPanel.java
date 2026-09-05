@@ -77,6 +77,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -259,6 +260,8 @@ public class InterstellarMapPanel extends JPanel {
     private static final int RENDER_BENCHMARK_DELAY_MS = 16;
     private static final long RENDER_BENCHMARK_WARMUP_NS = 5_000_000_000L;
     private static final long RENDER_BENCHMARK_DURATION_NS = 30_000_000_000L;
+    private static final String TRANSITION_BENCHMARK_PATH_ID = "transition-cold-v1";
+    private static final long TRANSITION_BENCHMARK_TIMEOUT_NS = 10_000_000_000L;
     private static final double[] RENDER_BENCHMARK_X_OFFSETS = { 0.0, 640.0, 0.0, -640.0, 0.0, 0.0, 0.0,
         0.0, 0.0 };
     private static final double[] RENDER_BENCHMARK_Y_OFFSETS = { 0.0, 0.0, 0.0, 0.0, 0.0, 360.0, 0.0,
@@ -355,6 +358,22 @@ public class InterstellarMapPanel extends JPanel {
         ACADEMIES,
         HIRING_HALLS,
         DISEASE_OUTBREAKS
+    }
+
+    private enum TransitionBenchmarkPhase {
+        WARMUP,
+        MODE_TRANSITION,
+        CACHE_REGENERATION,
+        RESTORE
+    }
+
+    private enum MapModeTransitionCacheStage {
+        INACTIVE,
+        CARTOGRAPHY,
+        SYSTEMS,
+        PREVIOUS,
+        TARGET,
+        READY
     }
 
     enum HpgNetworkDetail {
@@ -766,9 +785,21 @@ public class InterstellarMapPanel extends JPanel {
               boolean emptySystems) {
         }
 
+          record TransitionBenchmarkRun(RenderBenchmarkCamera origin, int width, int height, LocalDate date,
+              MapMode originMode, MapMode targetMode, boolean territory, boolean hpgNetwork, boolean operations,
+              boolean reachability, boolean emptySystems) {
+          }
+
         static boolean isRenderBenchmarkEnabled(boolean profilingEnabled, boolean benchmarkRequested) {
             return profilingEnabled && benchmarkRequested;
         }
+
+                static boolean isExactTransitionBenchmarkFrame(boolean mapModeAnimating,
+                            boolean retainedCartographyProvisional, boolean retainedCartography,
+                            boolean mergedNavigation) {
+                        return !mapModeAnimating && !retainedCartographyProvisional
+                                    && retainedCartography && mergedNavigation;
+                }
 
         static RenderBenchmarkCamera renderBenchmarkCameraAt(RenderBenchmarkCamera origin, double progress) {
           double clampedProgress = Math.clamp(progress, 0.0, 1.0);
@@ -1914,6 +1945,7 @@ public class InterstellarMapPanel extends JPanel {
     private final Timer travelAnimationTimer;
     private final Timer systemDiveAnimationTimer;
     private final Timer renderBenchmarkTimer;
+    private final Timer transitionBenchmarkTimer;
     private final RenderPerformanceTracker renderPerformanceTracker =
           new RenderPerformanceTracker(System.nanoTime());
     private boolean optionPanelHidden;
@@ -1949,6 +1981,9 @@ public class InterstellarMapPanel extends JPanel {
     private double mapModeAnimationProgress = 1.0;
     private MapMode previousMapMode = MapMode.FACTION;
     private MapMode targetMapMode = MapMode.FACTION;
+        private MapModeTransitionCacheStage mapModeTransitionCacheStage =
+            MapModeTransitionCacheStage.INACTIVE;
+        private boolean mapModeTransitionSettling;
 
     private ArrayList<PlanetarySystem> systems;
     private SystemSpatialIndex systemSpatialIndex;
@@ -1991,6 +2026,10 @@ public class InterstellarMapPanel extends JPanel {
     private RenderBenchmarkRun renderBenchmarkRun;
     private long renderBenchmarkPhaseStartedNanos;
     private boolean renderBenchmarkMeasuring;
+    private TransitionBenchmarkRun transitionBenchmarkRun;
+    private TransitionBenchmarkPhase transitionBenchmarkPhase;
+    private long transitionBenchmarkPhaseStartedNanos;
+    private boolean transitionBenchmarkExactFramePainted;
     private NavigationRouteAnalysis.Reachability cachedReachability;
     private long reachabilityRevision;
     private PathAssessment cachedProposedRouteAssessment = emptyPathAssessment();
@@ -2020,6 +2059,14 @@ public class InterstellarMapPanel extends JPanel {
             new PannableRenderLayerCache<>();
         private final PannableRenderLayerCache<RetainedNavigationKey> retainedNavigationRenderCache =
                     new PannableRenderLayerCache<>();
+        private final PannableRenderLayerCache<RetainedNavigationKey> mapModeTransitionBaseRenderCache =
+            new PannableRenderLayerCache<>();
+        private final PannableRenderLayerCache<RetainedCartographyKey> mapModeTransitionSystemRenderCache =
+            new PannableRenderLayerCache<>();
+        private final PannableRenderLayerCache<RetainedCartographyKey> previousMapModeRenderCache =
+            new PannableRenderLayerCache<>();
+        private final PannableRenderLayerCache<RetainedCartographyKey> targetMapModeRenderCache =
+            new PannableRenderLayerCache<>();
     private final RenderLayerCache<FactionLogoRenderKey> factionLogoRenderCache = new RenderLayerCache<>();
     private final StaticCartographyPreparationQueue<TerritoryDataKey> territoryPreparationQueue =
           new StaticCartographyPreparationQueue<>(this::isShowing, SwingUtilities::invokeLater,
@@ -2065,6 +2112,9 @@ public class InterstellarMapPanel extends JPanel {
                 systemDiveAnimationTimer.setCoalesce(true);
             renderBenchmarkTimer = new Timer(RENDER_BENCHMARK_DELAY_MS, e -> updateRenderBenchmark());
             renderBenchmarkTimer.setCoalesce(true);
+            transitionBenchmarkTimer = new Timer(RENDER_BENCHMARK_DELAY_MS,
+                e -> updateTransitionBenchmark());
+            transitionBenchmarkTimer.setCoalesce(true);
 
         setBorder(BorderFactory.createLineBorder(Color.black));
 
@@ -2384,7 +2434,18 @@ public class InterstellarMapPanel extends JPanel {
                     toggleRenderBenchmark();
                 }
             });
-            LOGGER.info("Map render benchmark enabled; press Ctrl+Shift+B on the interstellar map to start or cancel");
+            getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(
+                  KeyStroke.getKeyStroke(KeyEvent.VK_T,
+                        InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
+                  "toggleTransitionBenchmark");
+            getActionMap().put("toggleTransitionBenchmark", new AbstractAction() {
+                @Override
+                public void actionPerformed(ActionEvent event) {
+                    toggleTransitionBenchmark();
+                }
+            });
+            LOGGER.info("Map render benchmarks enabled; Ctrl+Shift+B runs warm pan and "
+                  + "Ctrl+Shift+T runs transition/cache regeneration");
         }
 
         addMouseWheelListener(new MouseAdapter() {
@@ -2515,30 +2576,61 @@ public class InterstellarMapPanel extends JPanel {
                 int revealedProposedRouteSystemCount = showRouteActivation
                       ? 0
                       : getRevealedProposedRouteSystemCount();
+                        boolean useRetainedMapModeTransition = canUseRetainedMapModeTransition(
+                            atlas != null, mapModeAnimating || mapModeTransitionSettling,
+                        territoryLayerAnimating || hpgNetworkLayerAnimating,
+                        proposedRouteAnimationTimer.isRunning(), showRouteActivation)
+                        && (territoryRenderKey != null)
+                        && (renderLayerOverscan(territoryRenderKey.viewKey().width(),
+                            territoryRenderKey.viewKey().height()) > 0);
+                        if (mapModeAnimating && isPreparingMapModeTransition()
+                            && !useRetainedMapModeTransition) {
+                          mapModeTransitionCacheStage = MapModeTransitionCacheStage.READY;
+                          mapModeAnimationStartTime = System.nanoTime();
+                        }
                 boolean useRetainedCartography = canUseRetainedCartography(
                       atlas != null, hasActiveRetainedCartographyAnimation());
                 boolean useMergedNavigation = canUseMergedNavigation(useRetainedCartography,
                       proposedRouteAnimationTimer.isRunning(), showRouteActivation);
+                    boolean useRetainedNavigation = useMergedNavigation || useRetainedMapModeTransition;
                 long territoryStartedNanos = RENDER_PROFILING_ENABLED ? System.nanoTime() : 0L;
                     int territoryCacheHitsBefore = RENDER_PROFILING_ENABLED
                         ? territoryRenderCache.getReuseCount()
                             + retainedCartographyRenderCache.getReuseCount()
                             + retainedSystemArtRenderCache.getReuseCount()
-                            + retainedNavigationRenderCache.getReuseCount() : 0;
+                            + retainedNavigationRenderCache.getReuseCount()
+                            + mapModeTransitionBaseRenderCache.getReuseCount()
+                            + mapModeTransitionSystemRenderCache.getReuseCount()
+                            + previousMapModeRenderCache.getReuseCount()
+                            + targetMapModeRenderCache.getReuseCount() : 0;
                     int territoryStripRefreshesBefore = RENDER_PROFILING_ENABLED
                         ? territoryRenderCache.getStripRefreshCount()
                             + retainedCartographyRenderCache.getStripRefreshCount()
                             + retainedSystemArtRenderCache.getStripRefreshCount()
-                            + retainedNavigationRenderCache.getStripRefreshCount() : 0;
+                            + retainedNavigationRenderCache.getStripRefreshCount()
+                            + mapModeTransitionBaseRenderCache.getStripRefreshCount()
+                            + mapModeTransitionSystemRenderCache.getStripRefreshCount()
+                            + previousMapModeRenderCache.getStripRefreshCount()
+                            + targetMapModeRenderCache.getStripRefreshCount() : 0;
                     int territoryFullRendersBefore = RENDER_PROFILING_ENABLED
                         ? territoryRenderCache.getFullRenderCount()
                             + retainedCartographyRenderCache.getFullRenderCount()
                             + retainedSystemArtRenderCache.getFullRenderCount()
-                            + retainedNavigationRenderCache.getFullRenderCount() : 0;
-                if (!useMergedNavigation) {
+                            + retainedNavigationRenderCache.getFullRenderCount()
+                            + mapModeTransitionBaseRenderCache.getFullRenderCount()
+                            + mapModeTransitionSystemRenderCache.getFullRenderCount()
+                            + previousMapModeRenderCache.getFullRenderCount()
+                            + targetMapModeRenderCache.getFullRenderCount() : 0;
+                if (!useRetainedNavigation) {
                     retainedNavigationRenderCache.clear();
                 }
-                if (useMergedNavigation && (territoryRenderKey != null)) {
+                if (useRetainedMapModeTransition) {
+                    paintRetainedMapModeTransition(g2, atlas, territoryRenderKey, systemRenderData,
+                          previousMapMode, targetMapMode, hpgNetworkDetail, size,
+                          visibleTerritoryAlpha, semanticZoom.factionLogoAlpha() * FACTION_LOGO_OPACITY,
+                          visibleHpgNetworkAlpha, semanticZoom, thick, dashed, activeRouteSystems,
+                          revealedProposedRouteSystemCount, mapModeAnimationProgress);
+                } else if (useMergedNavigation && (territoryRenderKey != null)) {
                     paintRetainedNavigationLayer(g2, atlas, territoryRenderKey, systemRenderData,
                           targetMapMode, hpgNetworkDetail, size, visibleTerritoryAlpha,
                           visibleFactionLogoAlpha * FACTION_LOGO_OPACITY, visibleHpgNetworkAlpha,
@@ -2555,7 +2647,8 @@ public class InterstellarMapPanel extends JPanel {
                 }
                 long territoryFinishedNanos = RENDER_PROFILING_ENABLED ? System.nanoTime() : 0L;
                 long factionLogoStartedNanos = RENDER_PROFILING_ENABLED ? System.nanoTime() : 0L;
-                        if (!useRetainedCartography && (atlas != null) && (territoryRenderKey != null)
+                        if (!useRetainedCartography && !useRetainedMapModeTransition
+                            && (atlas != null) && (territoryRenderKey != null)
                             && (visibleFactionLogoAlpha > 0.0)) {
                     FactionLogoRenderKey factionLogoRenderKey = createFactionLogoRenderKey(territoryRenderKey);
                     paintStaticFactionLogoLayer(g2, atlas, factionLogoRenderKey,
@@ -2564,22 +2657,22 @@ public class InterstellarMapPanel extends JPanel {
                 long factionLogoFinishedNanos = RENDER_PROFILING_ENABLED ? System.nanoTime() : 0L;
                 long staticPhaseFinishedNanos = RENDER_PROFILING_ENABLED ? System.nanoTime() : 0L;
 
-                if (!useMergedNavigation) {
+                if (!useRetainedNavigation) {
                     drawReachability(g2, size, semanticZoom.detailedOverlayAlpha());
                 }
 
-                if (!useMergedNavigation && !showRouteActivation) {
+                if (!useRetainedNavigation && !showRouteActivation) {
                       drawProposedRoute(g2, arc, size, revealedProposedRouteSystemCount,
                           semanticZoom.detailedOverlayAlpha());
                 }
 
-                                if (!useMergedNavigation && (visibleHpgNetworkAlpha > 0.0)) {
+                                if (!useRetainedNavigation && (visibleHpgNetworkAlpha > 0.0)) {
                                         paintLayerWithAlpha(g2, visibleHpgNetworkAlpha,
                                                     hpgGraphics -> InterstellarMapPanel.this.drawHpgNetworkLayer(hpgGraphics,
                                                                 thick, dashed, hpgNetworkDetail));
                 }
 
-                if (!useMergedNavigation && !activeRouteSystems.isEmpty()) {
+                if (!useRetainedNavigation && !activeRouteSystems.isEmpty()) {
                     drawActiveRoute(g2, arc, activeRouteSystems, size,
                           showRouteActivation ? routeActivationProgress : 1.0,
                           semanticZoom.detailedOverlayAlpha());
@@ -2595,18 +2688,30 @@ public class InterstellarMapPanel extends JPanel {
                       ? territoryRenderCache.getReuseCount()
                           + retainedCartographyRenderCache.getReuseCount()
                           + retainedSystemArtRenderCache.getReuseCount()
-                          + retainedNavigationRenderCache.getReuseCount() - territoryCacheHitsBefore : 0;
+                          + retainedNavigationRenderCache.getReuseCount()
+                          + mapModeTransitionBaseRenderCache.getReuseCount()
+                          + mapModeTransitionSystemRenderCache.getReuseCount()
+                          + previousMapModeRenderCache.getReuseCount()
+                          + targetMapModeRenderCache.getReuseCount() - territoryCacheHitsBefore : 0;
                 int territoryStripRefreshes = RENDER_PROFILING_ENABLED
                       ? territoryRenderCache.getStripRefreshCount()
                           + retainedCartographyRenderCache.getStripRefreshCount()
                           + retainedSystemArtRenderCache.getStripRefreshCount()
                           + retainedNavigationRenderCache.getStripRefreshCount()
+                          + mapModeTransitionBaseRenderCache.getStripRefreshCount()
+                          + mapModeTransitionSystemRenderCache.getStripRefreshCount()
+                          + previousMapModeRenderCache.getStripRefreshCount()
+                          + targetMapModeRenderCache.getStripRefreshCount()
                           - territoryStripRefreshesBefore : 0;
                 int territoryFullRenders = RENDER_PROFILING_ENABLED
                       ? territoryRenderCache.getFullRenderCount()
                           + retainedCartographyRenderCache.getFullRenderCount()
                           + retainedSystemArtRenderCache.getFullRenderCount()
                           + retainedNavigationRenderCache.getFullRenderCount()
+                          + mapModeTransitionBaseRenderCache.getFullRenderCount()
+                          + mapModeTransitionSystemRenderCache.getFullRenderCount()
+                          + previousMapModeRenderCache.getFullRenderCount()
+                          + targetMapModeRenderCache.getFullRenderCount()
                           - territoryFullRendersBefore : 0;
 
                                 Set<PlanetarySystem> activeRouteWaypoints = new HashSet<>(activeRouteSystems);
@@ -2684,7 +2789,7 @@ public class InterstellarMapPanel extends JPanel {
                             || isSameSystem(system, currentSystem)
                             || isSameSystem(system, selectedSystem)
                                                         || routeWaypoint;
-                        boolean systemArtRetained = useRetainedCartography
+                        boolean systemArtRetained = (useRetainedCartography || useRetainedMapModeTransition)
                             && (!systemEmpty || optEmptySystems.isSelected());
                         if (showRouteContact) {
                             drawNavigationContact(g2, arc, x, y, size);
@@ -2899,9 +3004,17 @@ public class InterstellarMapPanel extends JPanel {
                           routePhaseFinishedNanos - staticPhaseFinishedNanos,
                           systemPhaseFinishedNanos - routePhaseFinishedNanos,
                           frameFinishedNanos - systemPhaseFinishedNanos, visibleSystemCount, territoryCacheHits,
-                          territoryStripRefreshes, territoryFullRenders, useRetainedCartography,
-                          useMergedNavigation);
-                      if (!renderBenchmarkTimer.isRunning()
+                          territoryStripRefreshes, territoryFullRenders,
+                          useRetainedCartography || useRetainedMapModeTransition,
+                          useMergedNavigation || useRetainedMapModeTransition);
+                    if (transitionBenchmarkRun != null
+                          && isExactTransitionBenchmarkFrame(mapModeAnimating,
+                              retainedCartographyProvisional,
+                              useRetainedCartography || useRetainedMapModeTransition,
+                              useMergedNavigation || useRetainedMapModeTransition)) {
+                        transitionBenchmarkExactFramePainted = true;
+                    }
+                      if (!renderBenchmarkTimer.isRunning() && !transitionBenchmarkTimer.isRunning()
                           && renderPerformanceTracker.shouldReport(frameFinishedNanos)) {
                         LOGGER.info("{} timers[layer={}, selection={}, proposedRoute={}, travel={}, dive={}]",
                               renderPerformanceTracker.reportAndReset(frameFinishedNanos),
@@ -2909,6 +3022,9 @@ public class InterstellarMapPanel extends JPanel {
                                                         proposedRouteAnimationTimer.isRunning(), travelAnimationTimer.isRunning(),
                             systemDiveAnimationTimer.isRunning());
                     }
+                }
+                if (mapModeTransitionSettling && !isTransitionBenchmarkAwaitingSettledFrame()) {
+                    finishSettledMapModeTransitionFrame();
                 }
             }
         };
@@ -3102,6 +3218,13 @@ public class InterstellarMapPanel extends JPanel {
             return territoryReady && !retainedCartographyAnimating;
     }
 
+          static boolean canUseRetainedMapModeTransition(boolean territoryReady,
+              boolean mapModeAnimating, boolean otherRetainedLayerAnimating,
+              boolean proposedRouteAnimating, boolean routeActivationAnimating) {
+            return territoryReady && mapModeAnimating && !otherRetainedLayerAnimating
+                && !proposedRouteAnimating && !routeActivationAnimating;
+          }
+
         static boolean canUseMergedNavigation(boolean retainedCartography,
                     boolean proposedRouteAnimating, boolean routeActivationAnimating) {
                 return retainedCartography && !proposedRouteAnimating && !routeActivationAnimating;
@@ -3121,6 +3244,7 @@ public class InterstellarMapPanel extends JPanel {
     @Override
     public void removeNotify() {
         cancelRenderBenchmark("map hidden");
+        cancelTransitionBenchmark("map hidden");
         travelAnimationTimer.stop();
         suspendSystemDiveAnimation();
         disposeMapLegendDialog();
@@ -3130,6 +3254,10 @@ public class InterstellarMapPanel extends JPanel {
     }
 
     private void toggleRenderBenchmark() {
+        if (transitionBenchmarkRun != null) {
+            LOGGER.info("Map render benchmark not started: transition benchmark is running");
+            return;
+        }
         if (renderBenchmarkTimer.isRunning()) {
             cancelRenderBenchmark("cancelled by user");
             return;
@@ -3246,6 +3374,183 @@ public class InterstellarMapPanel extends JPanel {
         renderBenchmarkRun = null;
         renderBenchmarkMeasuring = false;
         applyRenderBenchmarkCamera(benchmarkRun.origin());
+    }
+
+    private void toggleTransitionBenchmark() {
+        if (transitionBenchmarkRun != null) {
+            cancelTransitionBenchmark("cancelled by user");
+            return;
+        }
+        if (renderBenchmarkTimer.isRunning()) {
+            LOGGER.info("Map transition benchmark not started: warm-pan benchmark is running");
+            return;
+        }
+        if (!isShowing() || (getWidth() <= 0) || (getHeight() <= 0)) {
+            LOGGER.info("Map transition benchmark not started: map is not visible");
+            return;
+        }
+        if (hasActiveRenderAnimation()) {
+            LOGGER.info("Map transition benchmark not started: wait for map animations to finish");
+            return;
+        }
+
+        MapMode originMode = getSelectedMapMode();
+        MapMode targetMode = originMode == MapMode.FACTION ? MapMode.TECHNOLOGY : MapMode.FACTION;
+        transitionBenchmarkRun = new TransitionBenchmarkRun(
+              new RenderBenchmarkCamera(conf.centerX, conf.centerY, conf.scale),
+              getWidth(), getHeight(), campaign.getLocalDate(), originMode, targetMode,
+              optTerritory.isSelected(), optHPGNetwork.isSelected(), optOperations.isSelected(),
+              optReachability.isSelected(), optEmptySystems.isSelected());
+        transitionBenchmarkPhase = TransitionBenchmarkPhase.WARMUP;
+        transitionBenchmarkPhaseStartedNanos = System.nanoTime();
+        transitionBenchmarkExactFramePainted = false;
+        renderPerformanceTracker.reset(transitionBenchmarkPhaseStartedNanos);
+        transitionBenchmarkTimer.start();
+        requestStaticCartographyPreparation();
+        repaint();
+        LOGGER.info("Map transition benchmark warmup started: path={}", TRANSITION_BENCHMARK_PATH_ID);
+    }
+
+    private void updateTransitionBenchmark() {
+        TransitionBenchmarkRun benchmarkRun = transitionBenchmarkRun;
+        if (benchmarkRun == null) {
+            transitionBenchmarkTimer.stop();
+            return;
+        }
+        if (!isTransitionBenchmarkConfigurationCurrent(benchmarkRun)) {
+            cancelTransitionBenchmark("map configuration changed");
+            return;
+        }
+        if (hasUnexpectedTransitionBenchmarkAnimation()) {
+            cancelTransitionBenchmark("another map animation started");
+            return;
+        }
+        long nowNanos = System.nanoTime();
+        if ((nowNanos - transitionBenchmarkPhaseStartedNanos) > TRANSITION_BENCHMARK_TIMEOUT_NS) {
+            cancelTransitionBenchmark(transitionBenchmarkPhase.name().toLowerCase(Locale.ROOT) + " timed out");
+            return;
+        }
+        if (!transitionBenchmarkExactFramePainted) {
+            return;
+        }
+
+        switch (transitionBenchmarkPhase) {
+            case WARMUP -> startMeasuredMapModeTransition(benchmarkRun, nowNanos);
+            case MODE_TRANSITION -> finishMapModeTransitionMeasurement(benchmarkRun, nowNanos);
+            case CACHE_REGENERATION -> finishCacheRegenerationMeasurement(benchmarkRun, nowNanos);
+            case RESTORE -> finishTransitionBenchmarkRestore(benchmarkRun, nowNanos);
+        }
+    }
+
+    private boolean hasUnexpectedTransitionBenchmarkAnimation() {
+        return optionPanelAnimating || territoryLayerAnimating || hpgNetworkLayerAnimating
+              || operationsLayerAnimating || selectionAnimationTimer.isRunning()
+              || proposedRouteAnimationTimer.isRunning() || travelAnimationTimer.isRunning()
+              || systemDiveAnimationTimer.isRunning();
+    }
+
+    private boolean isTransitionBenchmarkConfigurationCurrent(TransitionBenchmarkRun benchmarkRun) {
+        MapMode expectedMode = switch (transitionBenchmarkPhase) {
+            case WARMUP, RESTORE -> benchmarkRun.originMode();
+            case MODE_TRANSITION, CACHE_REGENERATION -> benchmarkRun.targetMode();
+        };
+        return (getWidth() == benchmarkRun.width()) && (getHeight() == benchmarkRun.height())
+              && campaign.getLocalDate().equals(benchmarkRun.date())
+              && benchmarkRun.origin().equals(
+                  new RenderBenchmarkCamera(conf.centerX, conf.centerY, conf.scale))
+              && (getSelectedMapMode() == expectedMode)
+              && (optTerritory.isSelected() == benchmarkRun.territory())
+              && (optHPGNetwork.isSelected() == benchmarkRun.hpgNetwork())
+              && (optOperations.isSelected() == benchmarkRun.operations())
+              && (optReachability.isSelected() == benchmarkRun.reachability())
+              && (optEmptySystems.isSelected() == benchmarkRun.emptySystems());
+    }
+
+    private void startMeasuredMapModeTransition(TransitionBenchmarkRun benchmarkRun, long nowNanos) {
+        transitionBenchmarkPhase = TransitionBenchmarkPhase.MODE_TRANSITION;
+        transitionBenchmarkPhaseStartedNanos = nowNanos;
+        transitionBenchmarkExactFramePainted = false;
+        renderPerformanceTracker.reset(nowNanos);
+        selectMapMode(benchmarkRun.targetMode());
+        startMapModeAnimation(benchmarkRun.targetMode());
+        LOGGER.info("Map transition benchmark measurement started: path={} phase=mode-transition from={} to={}",
+              TRANSITION_BENCHMARK_PATH_ID, benchmarkRun.originMode(), benchmarkRun.targetMode());
+    }
+
+    private void finishMapModeTransitionMeasurement(TransitionBenchmarkRun benchmarkRun, long nowNanos) {
+        logTransitionBenchmarkResult(benchmarkRun, "mode-transition", benchmarkRun.targetMode(), nowNanos);
+        finishSettledMapModeTransitionFrame();
+        transitionBenchmarkPhase = TransitionBenchmarkPhase.CACHE_REGENERATION;
+        transitionBenchmarkPhaseStartedNanos = nowNanos;
+        transitionBenchmarkExactFramePainted = false;
+        renderPerformanceTracker.reset(nowNanos);
+        clearRenderLayerCaches();
+        repaint();
+        LOGGER.info("Map transition benchmark measurement started: path={} phase=cache-regeneration mode={}",
+              TRANSITION_BENCHMARK_PATH_ID, benchmarkRun.targetMode());
+    }
+
+    private void finishCacheRegenerationMeasurement(TransitionBenchmarkRun benchmarkRun, long nowNanos) {
+        logTransitionBenchmarkResult(benchmarkRun, "cache-regeneration", benchmarkRun.targetMode(), nowNanos);
+        transitionBenchmarkPhase = TransitionBenchmarkPhase.RESTORE;
+        transitionBenchmarkPhaseStartedNanos = nowNanos;
+        transitionBenchmarkExactFramePainted = false;
+        renderPerformanceTracker.reset(nowNanos);
+        selectMapMode(benchmarkRun.originMode());
+        startMapModeAnimation(benchmarkRun.originMode());
+    }
+
+    private void finishTransitionBenchmarkRestore(TransitionBenchmarkRun benchmarkRun, long nowNanos) {
+        transitionBenchmarkTimer.stop();
+        finishSettledMapModeTransitionFrame();
+        transitionBenchmarkRun = null;
+        transitionBenchmarkPhase = null;
+        transitionBenchmarkExactFramePainted = false;
+        renderPerformanceTracker.reset(nowNanos);
+        LOGGER.info("Map transition benchmark completed: path={} restoredMode={}",
+              TRANSITION_BENCHMARK_PATH_ID, benchmarkRun.originMode());
+    }
+
+    private void logTransitionBenchmarkResult(TransitionBenchmarkRun benchmarkRun, String phase,
+          MapMode mode, long nowNanos) {
+        String report = renderPerformanceTracker.hasSamples()
+              ? renderPerformanceTracker.reportAndReset(nowNanos)
+              : "Map render: frames=0";
+        long elapsedMillis = (nowNanos - transitionBenchmarkPhaseStartedNanos) / 1_000_000L;
+        LOGGER.info("Map transition benchmark result: path={} phase={} viewport={}x{} date={} "
+                    + "from={} to={} mode={} layers[territory={} hpg={} operations={} reachability={} empty={}] "
+                    + "center=({}, {}) scale={} elapsed={}ms {}",
+              TRANSITION_BENCHMARK_PATH_ID, phase, benchmarkRun.width(), benchmarkRun.height(),
+              benchmarkRun.date(), benchmarkRun.originMode(), benchmarkRun.targetMode(), mode,
+              benchmarkRun.territory(), benchmarkRun.hpgNetwork(), benchmarkRun.operations(),
+              benchmarkRun.reachability(), benchmarkRun.emptySystems(), benchmarkRun.origin().centerX(),
+              benchmarkRun.origin().centerY(), benchmarkRun.origin().scale(), elapsedMillis, report);
+    }
+
+    private void cancelTransitionBenchmark(String reason) {
+        TransitionBenchmarkRun benchmarkRun = transitionBenchmarkRun;
+        if (benchmarkRun == null) {
+            return;
+        }
+        transitionBenchmarkTimer.stop();
+        transitionBenchmarkRun = null;
+        transitionBenchmarkPhase = null;
+        transitionBenchmarkExactFramePainted = false;
+        selectMapMode(benchmarkRun.originMode());
+        previousMapMode = benchmarkRun.originMode();
+        targetMapMode = benchmarkRun.originMode();
+        mapModeAnimationProgress = 1.0;
+        mapModeAnimating = false;
+        mapModeTransitionSettling = false;
+        mapModeTransitionCacheStage = MapModeTransitionCacheStage.INACTIVE;
+        clearMapModeTransitionRenderCaches();
+        if (!hasActiveLayerAnimation()) {
+            layerAnimationTimer.stop();
+        }
+        renderPerformanceTracker.reset(System.nanoTime());
+        repaint();
+        LOGGER.info("Map transition benchmark cancelled: path={} reason={}",
+              TRANSITION_BENCHMARK_PATH_ID, reason);
     }
 
     private void updateAnimationVisibility() {
@@ -4293,8 +4598,9 @@ public class InterstellarMapPanel extends JPanel {
             return;
         }
 
+        boolean reversingActiveTransition = mapModeAnimating && (selectedMode == previousMapMode);
         double startProgress = 0.0;
-        if (mapModeAnimating && (selectedMode == previousMapMode)) {
+        if (reversingActiveTransition) {
             MapMode outgoingMode = targetMapMode;
             startProgress = 1.0 - mapModeAnimationProgress;
             previousMapMode = outgoingMode;
@@ -4308,6 +4614,11 @@ public class InterstellarMapPanel extends JPanel {
               Math.round(MAP_MODE_ANIMATION_DURATION_NS * (1.0 - startProgress)));
         mapModeAnimationStartTime = currentTime;
         mapModeAnimating = previousMapMode != targetMapMode;
+          mapModeTransitionSettling = false;
+          clearMapModeTransitionRenderCaches();
+          mapModeTransitionCacheStage = reversingActiveTransition
+              ? MapModeTransitionCacheStage.READY
+              : MapModeTransitionCacheStage.CARTOGRAPHY;
         startLayerAnimationTimerIfNeeded();
         repaint();
     }
@@ -4381,14 +4692,17 @@ public class InterstellarMapPanel extends JPanel {
             changed = true;
         }
         if (mapModeAnimating) {
-            double elapsedProgress = getAnimationProgress(currentTime, mapModeAnimationStartTime,
-                  mapModeAnimationDuration);
-            mapModeAnimationProgress = interpolate(mapModeAnimationStartProgress, 1.0,
-                  easeInOutCubic(elapsedProgress));
-            if (elapsedProgress >= 1.0) {
-                mapModeAnimationProgress = 1.0;
-                previousMapMode = targetMapMode;
-                mapModeAnimating = false;
+            if (!isPreparingMapModeTransition()) {
+                double elapsedProgress = getAnimationProgress(currentTime, mapModeAnimationStartTime,
+                    mapModeAnimationDuration);
+                mapModeAnimationProgress = interpolate(mapModeAnimationStartProgress, 1.0,
+                    easeInOutCubic(elapsedProgress));
+                if (elapsedProgress >= 1.0) {
+                  mapModeAnimationProgress = 1.0;
+                  previousMapMode = targetMapMode;
+                  mapModeAnimating = false;
+                  mapModeTransitionSettling = true;
+                }
             }
             changed = true;
         }
@@ -4402,6 +4716,26 @@ public class InterstellarMapPanel extends JPanel {
 
     private static double getAnimationProgress(long currentTime, long startTime, long duration) {
         return Math.min(1.0, (double) (currentTime - startTime) / duration);
+    }
+
+    private boolean isPreparingMapModeTransition() {
+          return (mapModeTransitionCacheStage == MapModeTransitionCacheStage.CARTOGRAPHY)
+              || (mapModeTransitionCacheStage == MapModeTransitionCacheStage.SYSTEMS)
+              || (mapModeTransitionCacheStage == MapModeTransitionCacheStage.PREVIOUS)
+              || (mapModeTransitionCacheStage == MapModeTransitionCacheStage.TARGET);
+    }
+
+    private boolean isTransitionBenchmarkAwaitingSettledFrame() {
+        return (transitionBenchmarkRun != null)
+              && ((transitionBenchmarkPhase == TransitionBenchmarkPhase.MODE_TRANSITION)
+                    || (transitionBenchmarkPhase == TransitionBenchmarkPhase.RESTORE));
+    }
+
+    private void finishSettledMapModeTransitionFrame() {
+        mapModeTransitionSettling = false;
+        mapModeTransitionCacheStage = MapModeTransitionCacheStage.INACTIVE;
+        clearMapModeTransitionRenderCaches();
+        repaint();
     }
 
     private static void paintLayerWithAlpha(Graphics2D graphics, double alpha,
@@ -4658,6 +4992,23 @@ public class InterstellarMapPanel extends JPanel {
         return radioButton;
     }
 
+    private void selectMapMode(MapMode mapMode) {
+        switch (mapMode) {
+            case FACTION -> optFactions.setSelected(true);
+            case TECHNOLOGY -> optTech.setSelected(true);
+            case INDUSTRY -> optIndustry.setSelected(true);
+            case RAW_MATERIALS -> optRawMaterials.setSelected(true);
+            case OUTPUT -> optOutput.setSelected(true);
+            case AGRICULTURE -> optAgriculture.setSelected(true);
+            case POPULATION -> optPopulation.setSelected(true);
+            case HPG -> optHPG.setSelected(true);
+            case RECHARGE_STATIONS -> optRecharge.setSelected(true);
+            case ACADEMIES -> optAcademies.setSelected(true);
+            case HIRING_HALLS -> optHiringHalls.setSelected(true);
+            case DISEASE_OUTBREAKS -> optDiseases.setSelected(true);
+        }
+    }
+
     private static void setupHexPath(@Nullable GeneralPath path, double centerX, double centerY, double radius) {
         if (null == path) {
             return;
@@ -4689,6 +5040,162 @@ public class InterstellarMapPanel extends JPanel {
               layerGraphics -> drawTerritoryLayer(layerGraphics, atlas, overscan));
           drawPannableRenderLayer(graphics, territory, viewKey.width(), viewKey.height(), alpha);
     }
+
+        private void paintRetainedMapModeTransition(Graphics2D graphics, TerritoryAtlas atlas,
+            TerritoryRenderKey renderKey, Map<String, SystemRenderData> systemRenderData,
+            MapMode previousMode, MapMode targetMode, HpgNetworkDetail hpgNetworkDetail,
+            double systemSize, double territoryAlpha, double factionLogoAlpha,
+            double hpgNetworkAlpha, SemanticZoomProfile semanticZoom, Stroke thick,
+            Stroke dashed, List<PlanetarySystem> activeRouteSystems,
+            int revealedProposedRouteSystemCount, double transitionProgress) {
+          territoryRenderCache.clear();
+          factionLogoRenderCache.clear();
+          retainedSystemArtRenderCache.clear();
+          RenderViewKey viewKey = renderKey.viewKey();
+          FactionLogoRenderKey factionLogoRenderKey = createFactionLogoRenderKey(renderKey);
+          int overscan = renderLayerOverscan(viewKey.width(), viewKey.height());
+          RetainedCartographyKey stableCartographyKey = createRetainedCartographyKey(
+              renderKey, targetMode, hpgNetworkDetail, systemSize, territoryAlpha,
+              0.0, hpgNetworkAlpha, semanticZoom, factionLogoRenderKey);
+          RetainedNavigationKey stableKey = new RetainedNavigationKey(stableCartographyKey,
+              getPathSystemIds(jumpPath), getSystemIds(activeRouteSystems), reachabilityRevision);
+                    if (mapModeTransitionCacheStage == MapModeTransitionCacheStage.CARTOGRAPHY) {
+            mapModeTransitionBaseRenderCache.getOrRender(
+                stableKey, viewKey, overscan,
+                layerGraphics -> drawRetainedMapModeTransitionBase(layerGraphics, atlas,
+                                        factionLogoRenderKey, hpgNetworkDetail, systemSize, territoryAlpha,
+                                        hpgNetworkAlpha, semanticZoom, thick, dashed,
+                    activeRouteSystems, revealedProposedRouteSystemCount, overscan));
+                        mapModeTransitionCacheStage = MapModeTransitionCacheStage.SYSTEMS;
+                        paintRetainedMapModeTransitionSource(graphics, atlas, renderKey, systemRenderData,
+                                previousMode, hpgNetworkDetail, systemSize, territoryAlpha, factionLogoAlpha,
+                                hpgNetworkAlpha, semanticZoom, thick, dashed, activeRouteSystems,
+                                revealedProposedRouteSystemCount);
+                        repaint();
+                        return;
+                    }
+                    if (mapModeTransitionCacheStage == MapModeTransitionCacheStage.SYSTEMS) {
+                        mapModeTransitionSystemRenderCache.getOrRender(
+                                stableCartographyKey, viewKey, overscan,
+                                layerGraphics -> drawRetainedSystemArt(layerGraphics, systemRenderData,
+                                        targetMode, systemSize, semanticZoom, overscan, true, false));
+            mapModeTransitionCacheStage = MapModeTransitionCacheStage.PREVIOUS;
+            paintRetainedMapModeTransitionSource(graphics, atlas, renderKey, systemRenderData,
+                previousMode, hpgNetworkDetail, systemSize, territoryAlpha, factionLogoAlpha,
+                hpgNetworkAlpha, semanticZoom, thick, dashed, activeRouteSystems,
+                revealedProposedRouteSystemCount);
+            repaint();
+            return;
+          }
+          if (mapModeTransitionCacheStage == MapModeTransitionCacheStage.PREVIOUS) {
+            getRetainedMapModeEndpoint(previousMapModeRenderCache, atlas, renderKey,
+                factionLogoRenderKey, systemRenderData, previousMode, hpgNetworkDetail,
+                systemSize, factionLogoAlpha, semanticZoom, overscan);
+            mapModeTransitionCacheStage = MapModeTransitionCacheStage.TARGET;
+            paintRetainedMapModeTransitionSource(graphics, atlas, renderKey, systemRenderData,
+                previousMode, hpgNetworkDetail, systemSize, territoryAlpha, factionLogoAlpha,
+                hpgNetworkAlpha, semanticZoom, thick, dashed, activeRouteSystems,
+                revealedProposedRouteSystemCount);
+            repaint();
+            return;
+          }
+          if (mapModeTransitionCacheStage == MapModeTransitionCacheStage.TARGET) {
+            getRetainedMapModeEndpoint(targetMapModeRenderCache, atlas, renderKey,
+                factionLogoRenderKey, systemRenderData, targetMode, hpgNetworkDetail,
+                systemSize, factionLogoAlpha, semanticZoom, overscan);
+            mapModeTransitionCacheStage = MapModeTransitionCacheStage.READY;
+            mapModeAnimationStartTime = System.nanoTime();
+            paintRetainedMapModeTransitionSource(graphics, atlas, renderKey, systemRenderData,
+                previousMode, hpgNetworkDetail, systemSize, territoryAlpha, factionLogoAlpha,
+                hpgNetworkAlpha, semanticZoom, thick, dashed, activeRouteSystems,
+                revealedProposedRouteSystemCount);
+            repaint();
+            return;
+          }
+          PannableRenderLayer stableLayer = mapModeTransitionBaseRenderCache.getOrRender(
+              stableKey, viewKey, overscan,
+              layerGraphics -> drawRetainedMapModeTransitionBase(layerGraphics, atlas,
+                  factionLogoRenderKey, hpgNetworkDetail, systemSize, territoryAlpha,
+                  hpgNetworkAlpha, semanticZoom, thick, dashed,
+                  activeRouteSystems, revealedProposedRouteSystemCount, overscan));
+          drawPannableRenderLayer(graphics, stableLayer, viewKey.width(), viewKey.height(), 1.0);
+          PannableRenderLayer systemLayer = mapModeTransitionSystemRenderCache.getOrRender(
+              stableCartographyKey, viewKey, overscan,
+              layerGraphics -> drawRetainedSystemArt(layerGraphics, systemRenderData,
+                  targetMode, systemSize, semanticZoom, overscan, true, false));
+          drawPannableRenderLayer(graphics, systemLayer, viewKey.width(), viewKey.height(), 1.0);
+          PannableRenderLayer previousLayer = getRetainedMapModeEndpoint(
+              previousMapModeRenderCache, atlas, renderKey,
+              factionLogoRenderKey, systemRenderData, previousMode, hpgNetworkDetail,
+              systemSize, factionLogoAlpha, semanticZoom, overscan);
+          drawPannableRenderLayer(graphics, previousLayer, viewKey.width(), viewKey.height(),
+              1.0 - transitionProgress);
+          PannableRenderLayer targetLayer = getRetainedMapModeEndpoint(
+              targetMapModeRenderCache, atlas, renderKey,
+              factionLogoRenderKey, systemRenderData, targetMode, hpgNetworkDetail,
+              systemSize, factionLogoAlpha, semanticZoom, overscan);
+          drawPannableRenderLayer(graphics, targetLayer, viewKey.width(), viewKey.height(),
+              transitionProgress);
+        }
+
+        private void paintRetainedMapModeTransitionSource(Graphics2D graphics,
+            TerritoryAtlas atlas, TerritoryRenderKey renderKey,
+            Map<String, SystemRenderData> systemRenderData, MapMode mapMode,
+            HpgNetworkDetail hpgNetworkDetail, double systemSize, double territoryAlpha,
+            double factionLogoAlpha, double hpgNetworkAlpha, SemanticZoomProfile semanticZoom,
+            Stroke thick, Stroke dashed, List<PlanetarySystem> activeRouteSystems,
+            int revealedProposedRouteSystemCount) {
+          double sourceFactionLogoAlpha = mapMode == MapMode.FACTION ? factionLogoAlpha : 0.0;
+          paintRetainedNavigationLayer(graphics, atlas, renderKey, systemRenderData,
+              mapMode, hpgNetworkDetail, systemSize, territoryAlpha, sourceFactionLogoAlpha,
+              hpgNetworkAlpha, semanticZoom, thick, dashed, activeRouteSystems,
+              revealedProposedRouteSystemCount);
+        }
+
+        private void drawRetainedMapModeTransitionBase(Graphics2D graphics,
+            TerritoryAtlas atlas, FactionLogoRenderKey factionLogoRenderKey,
+            HpgNetworkDetail hpgNetworkDetail, double systemSize, double territoryAlpha,
+            double hpgNetworkAlpha, SemanticZoomProfile semanticZoom, Stroke thick,
+            Stroke dashed, List<PlanetarySystem> activeRouteSystems,
+            int revealedProposedRouteSystemCount, int overscan) {
+          drawRetainedCartographyLayer(graphics, atlas, factionLogoRenderKey,
+              territoryAlpha, 0.0, overscan);
+          drawReachability(graphics, systemSize, semanticZoom.detailedOverlayAlpha());
+          drawProposedRoute(graphics, new Arc2D.Double(), systemSize,
+              revealedProposedRouteSystemCount, semanticZoom.detailedOverlayAlpha());
+          if (hpgNetworkAlpha > 0.0) {
+            paintLayerWithAlpha(graphics, hpgNetworkAlpha,
+                layerGraphics -> drawHpgNetworkLayer(layerGraphics, thick, dashed,
+                    hpgNetworkDetail));
+          }
+          if (!activeRouteSystems.isEmpty()) {
+            drawActiveRoute(graphics, new Arc2D.Double(), activeRouteSystems, systemSize,
+                1.0, semanticZoom.detailedOverlayAlpha());
+          }
+        }
+
+        private PannableRenderLayer getRetainedMapModeEndpoint(
+            PannableRenderLayerCache<RetainedCartographyKey> cache, TerritoryAtlas atlas,
+            TerritoryRenderKey renderKey, FactionLogoRenderKey factionLogoRenderKey,
+            Map<String, SystemRenderData> systemRenderData, MapMode mapMode,
+            HpgNetworkDetail hpgNetworkDetail, double systemSize,
+            double factionLogoAlpha, SemanticZoomProfile semanticZoom, int overscan) {
+          RenderViewKey viewKey = renderKey.viewKey();
+          double endpointFactionLogoAlpha = mapMode == MapMode.FACTION ? factionLogoAlpha : 0.0;
+          RetainedCartographyKey key = createRetainedCartographyKey(
+              renderKey, mapMode, hpgNetworkDetail, systemSize, 0.0,
+              endpointFactionLogoAlpha, 0.0, semanticZoom, factionLogoRenderKey);
+          return cache.getOrRender(
+              key, viewKey, overscan, layerGraphics -> {
+                if (endpointFactionLogoAlpha > 0.0) {
+                  paintLayerWithAlpha(layerGraphics, endpointFactionLogoAlpha,
+                      logoGraphics -> drawFactionLogoLayer(logoGraphics, atlas,
+                          factionLogoRenderKey, false));
+                }
+                drawRetainedSystemArt(layerGraphics, systemRenderData, mapMode,
+                    systemSize, semanticZoom, overscan, false, true);
+              });
+        }
 
         private void paintRetainedNavigationLayer(Graphics2D graphics, TerritoryAtlas atlas,
             TerritoryRenderKey renderKey, Map<String, SystemRenderData> systemRenderData,
@@ -4962,6 +5469,14 @@ public class InterstellarMapPanel extends JPanel {
         private void drawRetainedSystemArt(Graphics2D graphics,
             Map<String, SystemRenderData> systemRenderData, MapMode mapMode,
             double systemSize, SemanticZoomProfile semanticZoom, int overscan) {
+          drawRetainedSystemArt(graphics, systemRenderData, mapMode, systemSize,
+              semanticZoom, overscan, true, true);
+        }
+
+        private void drawRetainedSystemArt(Graphics2D graphics,
+            Map<String, SystemRenderData> systemRenderData, MapMode mapMode,
+            double systemSize, SemanticZoomProfile semanticZoom, int overscan,
+            boolean drawIntrinsicArt, boolean drawMapModeArt) {
                     Shape renderClip = graphics.getClip();
                     double renderExtent = Math.max(8.0, (systemSize * 2.4) + 3.0);
           RenderViewKey viewKey = RenderViewKey.create(
@@ -4982,13 +5497,15 @@ public class InterstellarMapPanel extends JPanel {
                         }
             SystemMarkerLayout layout = SystemMarkerLayout.create(
                 x, y, systemSize, RouteMarkerState.NONE, false, false);
-            if (semanticZoom.systemDetailAlpha() > 0.0) {
+            if (drawIntrinsicArt && (semanticZoom.systemDetailAlpha() > 0.0)) {
                 drawIntrinsicStar(graphics, arc, system, x, y, systemSize,
                     semanticZoom.systemDetailAlpha());
             }
-            drawSystemMapModeArt(graphics, arc, system, renderData, layout, mapMode,
-                semanticZoom.systemContactAlpha(), semanticZoom.systemDetailAlpha(),
-                semanticZoom.serviceAlpha(), optEmptySystems.isSelected());
+            if (drawMapModeArt) {
+              drawSystemMapModeArt(graphics, arc, system, renderData, layout, mapMode,
+                  semanticZoom.systemContactAlpha(), semanticZoom.systemDetailAlpha(),
+                  semanticZoom.serviceAlpha(), optEmptySystems.isSelected());
+            }
           }
         }
 
@@ -5222,6 +5739,7 @@ public class InterstellarMapPanel extends JPanel {
         clearRetainedCartographyRenderCache();
         retainedSystemArtRenderCache.clear();
         retainedNavigationRenderCache.clear();
+        clearMapModeTransitionRenderCaches();
         factionLogoRenderCache.clear();
     }
 
@@ -5308,6 +5826,7 @@ public class InterstellarMapPanel extends JPanel {
         clearRetainedCartographyRenderCache();
         retainedSystemArtRenderCache.clear();
         retainedNavigationRenderCache.clear();
+        clearMapModeTransitionRenderCaches();
         factionLogoRenderCache.clear();
     }
 
@@ -5317,15 +5836,29 @@ public class InterstellarMapPanel extends JPanel {
         retainedCartographyProvisional = false;
     }
 
+    private void clearMapModeTransitionRenderCaches() {
+        mapModeTransitionBaseRenderCache.clear();
+        mapModeTransitionSystemRenderCache.clear();
+        previousMapModeRenderCache.clear();
+        targetMapModeRenderCache.clear();
+    }
+
     RenderCacheDiagnostics getRenderCacheDiagnostics() {
         return new RenderCacheDiagnostics(backgroundRenderCache.getRenderCount(),
               territoryRenderCache.getRenderCount() + retainedCartographyRenderCache.getRenderCount()
                   + retainedSystemArtRenderCache.getRenderCount()
-                  + retainedNavigationRenderCache.getRenderCount(),
+                  + retainedNavigationRenderCache.getRenderCount()
+                  + mapModeTransitionBaseRenderCache.getRenderCount()
+                  + mapModeTransitionSystemRenderCache.getRenderCount()
+                  + previousMapModeRenderCache.getRenderCount()
+                  + targetMapModeRenderCache.getRenderCount(),
               factionLogoRenderCache.getRenderCount(),
               preparedTerritoryAtlas.getPreparationCount(), backgroundRenderCache.hasImage(),
               territoryRenderCache.hasImage() || retainedCartographyRenderCache.hasImage()
-                  || retainedSystemArtRenderCache.hasImage() || retainedNavigationRenderCache.hasImage(),
+                  || retainedSystemArtRenderCache.hasImage() || retainedNavigationRenderCache.hasImage()
+                  || mapModeTransitionBaseRenderCache.hasImage()
+                  || mapModeTransitionSystemRenderCache.hasImage()
+                  || previousMapModeRenderCache.hasImage() || targetMapModeRenderCache.hasImage(),
               factionLogoRenderCache.hasImage());
     }
 

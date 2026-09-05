@@ -89,6 +89,22 @@ class InterstellarMapPanelRenderLayerCacheTest {
         assertTrue(InterstellarMapPanel.canUseRetainedCartography(true, false));
     }
 
+        @Test
+        void retainedMapModeTransitionRequiresStableSupportingLayers() {
+          assertTrue(InterstellarMapPanel.canUseRetainedMapModeTransition(
+              true, true, false, false, false));
+          assertFalse(InterstellarMapPanel.canUseRetainedMapModeTransition(
+              false, true, false, false, false));
+          assertFalse(InterstellarMapPanel.canUseRetainedMapModeTransition(
+              true, false, false, false, false));
+          assertFalse(InterstellarMapPanel.canUseRetainedMapModeTransition(
+              true, true, true, false, false));
+          assertFalse(InterstellarMapPanel.canUseRetainedMapModeTransition(
+              true, true, false, true, false));
+          assertFalse(InterstellarMapPanel.canUseRetainedMapModeTransition(
+              true, true, false, false, true));
+        }
+
     @Test
     void mergedNavigationRequiresStableRouteRendering() {
         assertTrue(InterstellarMapPanel.canUseMergedNavigation(true, false, false));
@@ -187,6 +203,15 @@ class InterstellarMapPanelRenderLayerCacheTest {
         assertFalse(InterstellarMapPanel.isRenderBenchmarkEnabled(false, true));
         assertFalse(InterstellarMapPanel.isRenderBenchmarkEnabled(true, false));
         assertTrue(InterstellarMapPanel.isRenderBenchmarkEnabled(true, true));
+    }
+
+    @Test
+    void transitionBenchmarkRequiresSettledExactRetainedFrame() {
+        assertFalse(InterstellarMapPanel.isExactTransitionBenchmarkFrame(true, false, true, true));
+        assertFalse(InterstellarMapPanel.isExactTransitionBenchmarkFrame(false, true, true, true));
+        assertFalse(InterstellarMapPanel.isExactTransitionBenchmarkFrame(false, false, false, true));
+        assertFalse(InterstellarMapPanel.isExactTransitionBenchmarkFrame(false, false, true, false));
+        assertTrue(InterstellarMapPanel.isExactTransitionBenchmarkFrame(false, false, true, true));
     }
 
     @Test
