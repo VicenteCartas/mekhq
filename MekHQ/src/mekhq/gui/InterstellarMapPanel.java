@@ -42,6 +42,7 @@ import java.awt.MultipleGradientPaint.CycleMethod;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.HierarchyEvent;
+import java.awt.event.InputEvent;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
@@ -49,6 +50,7 @@ import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.awt.font.FontRenderContext;
 import java.awt.font.GlyphVector;
 import java.awt.geom.AffineTransform;
 import java.awt.geom.Arc2D;
@@ -251,6 +253,16 @@ public class InterstellarMapPanel extends JPanel {
     private static final int SYSTEM_DIVE_ANIMATION_DELAY_MS = 16;
     private static final boolean RENDER_PROFILING_ENABLED = Boolean.getBoolean("mekhq.map.renderProfiling");
     private static final long RENDER_PROFILE_REPORT_INTERVAL_NS = 5_000_000_000L;
+    private static final boolean RENDER_BENCHMARK_ENABLED = isRenderBenchmarkEnabled(RENDER_PROFILING_ENABLED,
+          Boolean.getBoolean("mekhq.map.renderBenchmark"));
+    private static final String RENDER_BENCHMARK_PATH_ID = "pan-v2";
+    private static final int RENDER_BENCHMARK_DELAY_MS = 16;
+    private static final long RENDER_BENCHMARK_WARMUP_NS = 5_000_000_000L;
+    private static final long RENDER_BENCHMARK_DURATION_NS = 30_000_000_000L;
+    private static final double[] RENDER_BENCHMARK_X_OFFSETS = { 0.0, 640.0, 0.0, -640.0, 0.0, 0.0, 0.0,
+        0.0, 0.0 };
+    private static final double[] RENDER_BENCHMARK_Y_OFFSETS = { 0.0, 0.0, 0.0, 0.0, 0.0, 360.0, 0.0,
+        -360.0, 0.0 };
     private static final double STATIC_AMBIENT_PHASE_SECONDS = 0.0;
     private static final long SYSTEM_DIVE_ANIMATION_DURATION_NS = 700_000_000L;
     private static final double SYSTEM_DIVE_MINIMUM_TARGET_SCALE = 18.0;
@@ -727,11 +739,49 @@ public class InterstellarMapPanel extends JPanel {
         return new MapQueryBounds(minX, minY, maxX, maxY);
     }
 
+        static MapQueryBounds viewportSystemQueryBounds(RenderViewKey viewKey, double markerExtent,
+                    double rightVisualExtent) {
+        double scale = Double.longBitsToDouble(viewKey.scaleBits());
+        double centerX = Double.longBitsToDouble(viewKey.centerXBits());
+        double centerY = Double.longBitsToDouble(viewKey.centerYBits());
+                double rightExtent = Math.max(markerExtent, rightVisualExtent);
+        double minX = (-rightExtent - (viewKey.width() / 2.0)) / scale - centerX;
+        double maxX = (viewKey.width() + markerExtent - (viewKey.width() / 2.0)) / scale - centerX;
+        double minY = ((viewKey.height() / 2.0) - viewKey.height() - markerExtent) / scale + centerY;
+        double maxY = ((viewKey.height() / 2.0) + markerExtent) / scale + centerY;
+        return new MapQueryBounds(minX, minY, maxX, maxY);
+    }
+
     record MapCenter(double x, double y) {
     }
 
     record SystemDiveFrame(double centerX, double centerY, double scale) {
     }
+
+        record RenderBenchmarkCamera(double centerX, double centerY, double scale) {
+        }
+
+        record RenderBenchmarkRun(RenderBenchmarkCamera origin, int width, int height, LocalDate date,
+              String mapMode, boolean territory, boolean hpgNetwork, boolean operations, boolean reachability,
+              boolean emptySystems) {
+        }
+
+        static boolean isRenderBenchmarkEnabled(boolean profilingEnabled, boolean benchmarkRequested) {
+            return profilingEnabled && benchmarkRequested;
+        }
+
+        static RenderBenchmarkCamera renderBenchmarkCameraAt(RenderBenchmarkCamera origin, double progress) {
+          double clampedProgress = Math.clamp(progress, 0.0, 1.0);
+          double pathPosition = clampedProgress * (RENDER_BENCHMARK_X_OFFSETS.length - 1);
+          int startIndex = Math.min((int) pathPosition, RENDER_BENCHMARK_X_OFFSETS.length - 2);
+          double segmentProgress = pathPosition - startIndex;
+          double xOffset = Math.rint(interpolate(RENDER_BENCHMARK_X_OFFSETS[startIndex],
+              RENDER_BENCHMARK_X_OFFSETS[startIndex + 1], segmentProgress));
+          double yOffset = Math.rint(interpolate(RENDER_BENCHMARK_Y_OFFSETS[startIndex],
+              RENDER_BENCHMARK_Y_OFFSETS[startIndex + 1], segmentProgress));
+          return new RenderBenchmarkCamera(origin.centerX() + (xOffset / origin.scale()),
+              origin.centerY() + (yOffset / origin.scale()), origin.scale());
+        }
 
     record TerritoryRenderKey(RenderViewKey viewKey, LocalDate date, long dataRevision) {
     }
@@ -862,6 +912,15 @@ public class InterstellarMapPanel extends JPanel {
                   averageMillis(retainedHpgNanos, retainedRenderCount),
                   averageMillis(retainedActiveRouteNanos, retainedRenderCount),
                   averageMillis(retainedSystemNanos, retainedRenderCount));
+            reset(nowNanos);
+            return report;
+        }
+
+        boolean hasSamples() {
+            return frameCount > 0;
+        }
+
+        void reset(long nowNanos) {
             reportStartedNanos = nowNanos;
             frameSampleCount = 0;
             frameCount = 0;
@@ -900,7 +959,6 @@ public class InterstellarMapPanel extends JPanel {
             retainedHpgNanos = 0;
             retainedActiveRouteNanos = 0;
             retainedSystemNanos = 0;
-            return report;
         }
 
         private void recordCacheOutcome(long frameNanos, int cacheHits, int stripRefreshes, int fullRenders) {
@@ -967,6 +1025,21 @@ public class InterstellarMapPanel extends JPanel {
     }
 
     record SystemRenderDataKey(LocalDate date, long dataRevision) {
+    }
+
+    record MapPresentationData(Map<String, StrategicMarker> strategicMarkers,
+          Map<String, Integer> playerBaseCounts, Set<Faction> contractEmployers,
+          Set<Faction> contractTargets) {
+        MapPresentationData {
+            strategicMarkers = Map.copyOf(strategicMarkers);
+            playerBaseCounts = Map.copyOf(playerBaseCounts);
+            contractEmployers = Set.copyOf(contractEmployers);
+            contractTargets = Set.copyOf(contractTargets);
+        }
+
+        static MapPresentationData empty() {
+            return new MapPresentationData(Map.of(), Map.of(), Set.of(), Set.of());
+        }
     }
 
         record SystemRenderData(Set<Faction> factions, List<Color> factionColors, List<Faction> capitalFactions,
@@ -1840,6 +1913,7 @@ public class InterstellarMapPanel extends JPanel {
     private final Timer proposedRouteAnimationTimer;
     private final Timer travelAnimationTimer;
     private final Timer systemDiveAnimationTimer;
+    private final Timer renderBenchmarkTimer;
     private final RenderPerformanceTracker renderPerformanceTracker =
           new RenderPerformanceTracker(System.nanoTime());
     private boolean optionPanelHidden;
@@ -1914,6 +1988,9 @@ public class InterstellarMapPanel extends JPanel {
     private SystemDiveFrame systemDiveReturnFrame;
     private boolean systemDiveReturning;
     private Runnable systemDiveCompletion;
+    private RenderBenchmarkRun renderBenchmarkRun;
+    private long renderBenchmarkPhaseStartedNanos;
+    private boolean renderBenchmarkMeasuring;
     private NavigationRouteAnalysis.Reachability cachedReachability;
     private long reachabilityRevision;
     private PathAssessment cachedProposedRouteAssessment = emptyPathAssessment();
@@ -1958,6 +2035,11 @@ public class InterstellarMapPanel extends JPanel {
     private final Map<FactionLogoKey, FactionLogoImage> factionLogoImages = new HashMap<>();
     private final Map<ScaledFactionLogoKey, FactionLogoImage> scaledFactionLogoImages = new HashMap<>();
     private final Set<FactionLogoKey> missingFactionLogoImages = new HashSet<>();
+    private MapPresentationData mapPresentationData = MapPresentationData.empty();
+    private Map<String, SystemRenderData> systemLabelWidthRenderData = Map.of();
+    private Font systemLabelWidthFont;
+    private FontRenderContext systemLabelWidthFontRenderContext;
+    private double maximumSystemLabelWidth;
 
     public InterstellarMapPanel(Campaign campaign, CampaignGUI view) {
         this.campaign = campaign;
@@ -1965,6 +2047,7 @@ public class InterstellarMapPanel extends JPanel {
               MekHQ.getMHQOptions().getLocale());
         systems = this.campaign.getSystems();
         systemSpatialIndex = new SystemSpatialIndex(systems);
+        refreshMapPresentationData();
         hqView = view;
         jumpPath = new JumpPath();
         optionPanelHidden = true;
@@ -1980,6 +2063,8 @@ public class InterstellarMapPanel extends JPanel {
                 systemDiveAnimationTimer = new Timer(SYSTEM_DIVE_ANIMATION_DELAY_MS,
               e -> updateSystemDiveAnimation());
                 systemDiveAnimationTimer.setCoalesce(true);
+            renderBenchmarkTimer = new Timer(RENDER_BENCHMARK_DELAY_MS, e -> updateRenderBenchmark());
+            renderBenchmarkTimer.setCoalesce(true);
 
         setBorder(BorderFactory.createLineBorder(Color.black));
 
@@ -2289,6 +2374,18 @@ public class InterstellarMapPanel extends JPanel {
                 }
             }
         });
+        if (RENDER_BENCHMARK_ENABLED) {
+            getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(
+                  KeyStroke.getKeyStroke(KeyEvent.VK_B,
+                        InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), "toggleRenderBenchmark");
+            getActionMap().put("toggleRenderBenchmark", new AbstractAction() {
+                @Override
+                public void actionPerformed(ActionEvent event) {
+                    toggleRenderBenchmark();
+                }
+            });
+            LOGGER.info("Map render benchmark enabled; press Ctrl+Shift+B on the interstellar map to start or cancel");
+        }
 
         addMouseWheelListener(new MouseAdapter() {
             @Override
@@ -2318,10 +2415,6 @@ public class InterstellarMapPanel extends JPanel {
                 final Stroke dashed = new BasicStroke(1.5f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL, 0,
                       new float[] { 3 }, 0);
 
-                minX = scr2mapX(-size * 2.0);
-                minY = scr2mapY(getHeight() + size * 2.0);
-                maxX = scr2mapX(getWidth() + size * 2.0);
-                maxY = scr2mapY(-size * 2.0);
                     TerritoryAtlas atlas = getPreparedTerritoryAtlas(now);
                     TerritoryRenderKey territoryRenderKey = atlas == null ? null
                         : new TerritoryRenderKey(renderViewKey, now, cartographyDataRevision);
@@ -2329,6 +2422,20 @@ public class InterstellarMapPanel extends JPanel {
                 PlanetarySystem hoveredSystem = findHoveredSystem(size, systemRenderData);
                 double semanticZoomReference = getSemanticZoomReference(conf.showPlanetNamesThreshold);
                     SemanticZoomProfile semanticZoom = SemanticZoomProfile.create(conf.scale, semanticZoomReference);
+                    double markerQueryExtent = size * 2.0;
+                      double rightVisualExtent = markerQueryExtent;
+                      if (semanticZoom.ordinaryLabelAlpha() > 0.0) {
+                        SystemMarkerLayout queryLayout = SystemMarkerLayout.create(
+                            0.0, 0.0, size, RouteMarkerState.NONE, false, false);
+                        rightVisualExtent = queryLayout.labelX()
+                            + getMaximumSystemLabelWidth(g2, systemRenderData);
+                      }
+                    MapQueryBounds viewportQueryBounds = viewportSystemQueryBounds(
+                          renderViewKey, markerQueryExtent, rightVisualExtent);
+                    minX = viewportQueryBounds.minX();
+                    minY = viewportQueryBounds.minY();
+                    maxX = viewportQueryBounds.maxX();
+                    maxY = viewportQueryBounds.maxY();
                     double visibleHpgNetworkAlpha = hpgNetworkLayerAlpha * semanticZoom.hpgNetworkAlpha();
                       HpgNetworkDetail hpgNetworkDetail = effectiveHpgNetworkDetail(
                           (HpgNetworkDetail) optHpgNetworkDetail.getSelectedItem(), conf.scale,
@@ -2527,23 +2634,17 @@ public class InterstellarMapPanel extends JPanel {
                                         priorityLabelSystemIds.add(jumpPath.get(jumpPath.size() - 1).getId());
                 }
 
-                        Map<String, StrategicMarker> strategicMarkers = buildStrategicMarkers();
-                        Map<String, Integer> playerBaseCounts = playerBaseCountsBySystem();
+                    MapPresentationData presentationData = mapPresentationData;
+                    Map<String, StrategicMarker> strategicMarkers = presentationData.strategicMarkers();
+                    Map<String, Integer> playerBaseCounts = presentationData.playerBaseCounts();
 
                 boolean isUseFactionStandingOutlawing =
                             campaign.getCampaignOptions().isUseFactionStandingOutlawedSafe();
                 Faction campaignFaction = campaign.getPlayerForce().getFaction();
                 FactionStandings factionStandings = campaign.getPlayerForce().getFactionStandings();
                 LocalDate today = campaign.getLocalDate();
-                List<AbstractContract> activeAtBContracts = campaign.getActiveContracts();
-                Set<Faction> contractEmployers = new HashSet<>();
-                Set<Faction> contractTargets = new HashSet<>();
-                if (isUseFactionStandingOutlawing) {
-                    for (AbstractContract contract : activeAtBContracts) {
-                        contractEmployers.add(contract.getEmployerFaction());
-                        contractTargets.add(contract.getEnemyFaction());
-                    }
-                }
+                Set<Faction> contractEmployers = presentationData.contractEmployers();
+                Set<Faction> contractTargets = presentationData.contractTargets();
 
                 FactionHints factionHints = FactionHints.getInstance();
 
@@ -2800,7 +2901,8 @@ public class InterstellarMapPanel extends JPanel {
                           frameFinishedNanos - systemPhaseFinishedNanos, visibleSystemCount, territoryCacheHits,
                           territoryStripRefreshes, territoryFullRenders, useRetainedCartography,
                           useMergedNavigation);
-                    if (renderPerformanceTracker.shouldReport(frameFinishedNanos)) {
+                      if (!renderBenchmarkTimer.isRunning()
+                          && renderPerformanceTracker.shouldReport(frameFinishedNanos)) {
                         LOGGER.info("{} timers[layer={}, selection={}, proposedRoute={}, travel={}, dive={}]",
                               renderPerformanceTracker.reportAndReset(frameFinishedNanos),
                               layerAnimationTimer.isRunning(), selectionAnimationTimer.isRunning(),
@@ -3018,12 +3120,132 @@ public class InterstellarMapPanel extends JPanel {
 
     @Override
     public void removeNotify() {
+        cancelRenderBenchmark("map hidden");
         travelAnimationTimer.stop();
         suspendSystemDiveAnimation();
         disposeMapLegendDialog();
         territoryPreparationQueue.cancel();
         clearRenderLayerCaches();
         super.removeNotify();
+    }
+
+    private void toggleRenderBenchmark() {
+        if (renderBenchmarkTimer.isRunning()) {
+            cancelRenderBenchmark("cancelled by user");
+            return;
+        }
+        if (!isShowing() || (getWidth() <= 0) || (getHeight() <= 0)) {
+            LOGGER.info("Map render benchmark not started: map is not visible");
+            return;
+        }
+        if (hasActiveRenderAnimation()) {
+            LOGGER.info("Map render benchmark not started: wait for map animations to finish");
+            return;
+        }
+
+        RenderBenchmarkCamera origin = new RenderBenchmarkCamera(conf.centerX, conf.centerY, conf.scale);
+        renderBenchmarkRun = new RenderBenchmarkRun(origin, getWidth(), getHeight(), campaign.getLocalDate(),
+              getSelectedMapMode().name(), optTerritory.isSelected(), optHPGNetwork.isSelected(),
+              optOperations.isSelected(), optReachability.isSelected(), optEmptySystems.isSelected());
+        renderBenchmarkMeasuring = false;
+        renderBenchmarkPhaseStartedNanos = System.nanoTime();
+        renderPerformanceTracker.reset(renderBenchmarkPhaseStartedNanos);
+        renderBenchmarkTimer.start();
+        LOGGER.info("Map render benchmark warmup started: path={} warmup={}s measurement={}s",
+              RENDER_BENCHMARK_PATH_ID, RENDER_BENCHMARK_WARMUP_NS / 1_000_000_000L,
+              RENDER_BENCHMARK_DURATION_NS / 1_000_000_000L);
+    }
+
+    private void updateRenderBenchmark() {
+        RenderBenchmarkRun benchmarkRun = renderBenchmarkRun;
+        if (benchmarkRun == null) {
+            renderBenchmarkTimer.stop();
+            return;
+        }
+        if ((getWidth() != benchmarkRun.width()) || (getHeight() != benchmarkRun.height())) {
+            cancelRenderBenchmark("viewport changed");
+            return;
+        }
+        if (hasActiveRenderAnimation()) {
+            cancelRenderBenchmark("another map animation started");
+            return;
+        }
+
+        long nowNanos = System.nanoTime();
+        long phaseDuration = renderBenchmarkMeasuring
+              ? RENDER_BENCHMARK_DURATION_NS
+              : RENDER_BENCHMARK_WARMUP_NS;
+        double progress = Math.min(1.0,
+              (double) (nowNanos - renderBenchmarkPhaseStartedNanos) / phaseDuration);
+        applyRenderBenchmarkCamera(renderBenchmarkCameraAt(benchmarkRun.origin(), progress));
+        if (progress < 1.0) {
+            return;
+        }
+
+        if (!renderBenchmarkMeasuring) {
+            renderBenchmarkMeasuring = true;
+            renderBenchmarkPhaseStartedNanos = nowNanos;
+            renderPerformanceTracker.reset(nowNanos);
+            LOGGER.info("Map render benchmark measurement started: path={}", RENDER_BENCHMARK_PATH_ID);
+            return;
+        }
+        finishRenderBenchmark(nowNanos);
+    }
+
+    private boolean hasActiveRenderAnimation() {
+        return layerAnimationTimer.isRunning() || selectionAnimationTimer.isRunning()
+              || proposedRouteAnimationTimer.isRunning() || travelAnimationTimer.isRunning()
+              || systemDiveAnimationTimer.isRunning();
+    }
+
+    private void applyRenderBenchmarkCamera(RenderBenchmarkCamera camera) {
+        conf.centerX = camera.centerX();
+        conf.centerY = camera.centerY();
+        conf.scale = camera.scale();
+        repaint();
+    }
+
+    private void finishRenderBenchmark(long nowNanos) {
+        RenderBenchmarkRun benchmarkRun = renderBenchmarkRun;
+        renderBenchmarkTimer.stop();
+        if (benchmarkRun == null) {
+            return;
+        }
+
+        long measuredMillis = (nowNanos - renderBenchmarkPhaseStartedNanos) / 1_000_000L;
+        String report;
+        if (renderPerformanceTracker.hasSamples()) {
+            report = renderPerformanceTracker.reportAndReset(nowNanos);
+        } else {
+            renderPerformanceTracker.reset(nowNanos);
+            report = "Map render: frames=0";
+        }
+        LOGGER.info("Map render benchmark result: path={} viewport={}x{} date={} mode={} "
+                    + "layers[territory={} hpg={} operations={} reachability={} empty={}] "
+                    + "center=({}, {}) scale={} measured={}ms {}",
+              RENDER_BENCHMARK_PATH_ID, benchmarkRun.width(), benchmarkRun.height(), benchmarkRun.date(),
+              benchmarkRun.mapMode(), benchmarkRun.territory(), benchmarkRun.hpgNetwork(),
+              benchmarkRun.operations(), benchmarkRun.reachability(), benchmarkRun.emptySystems(),
+              benchmarkRun.origin().centerX(), benchmarkRun.origin().centerY(), benchmarkRun.origin().scale(),
+              measuredMillis, report);
+        restoreRenderBenchmarkOrigin(benchmarkRun);
+    }
+
+    private void cancelRenderBenchmark(String reason) {
+        RenderBenchmarkRun benchmarkRun = renderBenchmarkRun;
+        if (benchmarkRun == null) {
+            return;
+        }
+        renderBenchmarkTimer.stop();
+        renderPerformanceTracker.reset(System.nanoTime());
+        LOGGER.info("Map render benchmark cancelled: path={} reason={}", RENDER_BENCHMARK_PATH_ID, reason);
+        restoreRenderBenchmarkOrigin(benchmarkRun);
+    }
+
+    private void restoreRenderBenchmarkOrigin(RenderBenchmarkRun benchmarkRun) {
+        renderBenchmarkRun = null;
+        renderBenchmarkMeasuring = false;
+        applyRenderBenchmarkCamera(benchmarkRun.origin());
     }
 
     private void updateAnimationVisibility() {
@@ -4267,9 +4489,15 @@ public class InterstellarMapPanel extends JPanel {
 
     /** Refreshes immutable navigation snapshots after explicit campaign, route, date, or option changes. */
     public void refreshNavigationAnalysis() {
+        refreshMapPresentationData();
         refreshRouteAssessments();
         refreshReachability();
         refreshMeasurementAssessment();
+        repaint();
+    }
+
+    public void refreshPresentationData() {
+        refreshMapPresentationData();
         repaint();
     }
 
@@ -4339,6 +4567,7 @@ public class InterstellarMapPanel extends JPanel {
         String selectedSystemId = selectedSystem == null ? null : selectedSystem.getId();
         this.systems = campaign.getSystems();
         systemSpatialIndex = new SystemSpatialIndex(systems);
+        refreshMapPresentationData();
         cartographyDataRevision++;
         territoryPreparationQueue.cancel();
         preparedTerritoryAtlas.clear();
@@ -5026,6 +5255,32 @@ public class InterstellarMapPanel extends JPanel {
             }
             return Map.copyOf(renderData);
         });
+    }
+
+    private double getMaximumSystemLabelWidth(Graphics2D graphics,
+          Map<String, SystemRenderData> systemRenderData) {
+        Font font = graphics.getFont();
+        FontRenderContext fontRenderContext = graphics.getFontRenderContext();
+        if ((systemRenderData == systemLabelWidthRenderData)
+              && font.equals(systemLabelWidthFont)
+              && fontRenderContext.equals(systemLabelWidthFontRenderContext)) {
+            return maximumSystemLabelWidth;
+        }
+
+        FontMetrics metrics = graphics.getFontMetrics(font);
+        double maximumWidth = 0.0;
+        for (SystemRenderData renderData : systemRenderData.values()) {
+            double width = metrics.stringWidth(renderData.printableName());
+            if (renderData.stellarDetail() != null) {
+                width += metrics.stringWidth(renderData.stellarDetail());
+            }
+            maximumWidth = Math.max(maximumWidth, width);
+        }
+        systemLabelWidthRenderData = systemRenderData;
+        systemLabelWidthFont = font;
+        systemLabelWidthFontRenderContext = fontRenderContext;
+        maximumSystemLabelWidth = maximumWidth + 1.0;
+        return maximumSystemLabelWidth;
     }
 
     private void scheduleTerritoryPreparation(TerritoryDataKey requestedKey) {
@@ -5866,9 +6121,24 @@ public class InterstellarMapPanel extends JPanel {
         }
     }
 
-    private Map<String, StrategicMarker> buildStrategicMarkers() {
-          return buildStrategicMarkers(campaign.getActiveContracts(), campaign.getActiveScenarios(),
-              campaign::getContract);
+    private void refreshMapPresentationData() {
+        List<AbstractContract> activeContracts = campaign.getActiveContracts();
+          mapPresentationData = createMapPresentationData(activeContracts, campaign.getActiveScenarios(),
+              campaign::getContract, playerBaseCountsBySystem());
+        }
+
+        static MapPresentationData createMapPresentationData(List<AbstractContract> activeContracts,
+            List<Scenario> activeScenarios, Function<java.util.UUID, AbstractContract> missionLookup,
+            Map<String, Integer> playerBaseCounts) {
+        Set<Faction> contractEmployers = new HashSet<>();
+        Set<Faction> contractTargets = new HashSet<>();
+        for (AbstractContract contract : activeContracts) {
+            contractEmployers.add(contract.getEmployerFaction());
+            contractTargets.add(contract.getEnemyFaction());
+        }
+          return new MapPresentationData(
+              buildStrategicMarkers(activeContracts, activeScenarios, missionLookup),
+              playerBaseCounts, contractEmployers, contractTargets);
     }
 
         static Map<String, StrategicMarker> buildStrategicMarkers(List<AbstractContract> activeMissions,

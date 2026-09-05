@@ -99,6 +99,8 @@ import mekhq.campaign.events.LocationAddedEvent;
 import mekhq.campaign.events.LocationRemovedEvent;
 import mekhq.campaign.events.NewDayEvent;
 import mekhq.campaign.events.OptionsChangedEvent;
+import mekhq.campaign.events.missions.MissionEvent;
+import mekhq.campaign.events.scenarios.ScenarioEvent;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.market.personnelMarket.markets.NewPersonnelMarket;
 import mekhq.campaign.mission.utilities.TransportCostCalculations;
@@ -1652,14 +1654,24 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
 
     @Subscribe
     public void handle(LocationAddedEvent event) {
-        panMap.repaint();
+        panMap.refreshPresentationData();
         panSystem.repaint();
     }
 
     @Subscribe
     public void handle(LocationRemovedEvent event) {
-        panMap.repaint();
+        panMap.refreshPresentationData();
         panSystem.repaint();
+    }
+
+    @Subscribe
+    public void handle(MissionEvent event) {
+        panMap.refreshPresentationData();
+    }
+
+    @Subscribe
+    public void handle(ScenarioEvent event) {
+        panMap.refreshPresentationData();
     }
 
     private enum RouteStripState {

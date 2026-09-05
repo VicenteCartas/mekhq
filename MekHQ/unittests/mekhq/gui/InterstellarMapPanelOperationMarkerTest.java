@@ -43,12 +43,15 @@ import static org.mockito.Mockito.when;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import mekhq.campaign.mission.contract.AbstractContract;
 import mekhq.campaign.mission.scenarios.Scenario;
+import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.enums.HPGRating;
 import org.junit.jupiter.api.Test;
 
@@ -156,6 +159,28 @@ class InterstellarMapPanelOperationMarkerTest {
 
         assertEquals(1, markers.size(), "systems receive one flag regardless of operation count");
         assertEquals(new InterstellarMapPanel.StrategicMarker(2, 3), markers.get("system-a"));
+    }
+
+    @Test
+    void presentationSnapshotOwnsAggregatedPaintInputs() {
+        AbstractContract mission = missionAt("system-a");
+        Faction employer = mock(Faction.class);
+        Faction target = mock(Faction.class);
+        when(mission.getEmployerFaction()).thenReturn(employer);
+        when(mission.getEnemyFaction()).thenReturn(target);
+        Scenario scenario = scenarioFor(FIRST_MISSION_ID);
+        Map<String, Integer> baseCounts = new HashMap<>(Map.of("system-a", 2));
+
+        InterstellarMapPanel.MapPresentationData presentationData =
+              InterstellarMapPanel.createMapPresentationData(List.of(mission), List.of(scenario),
+                    missionId -> mission, baseCounts);
+        baseCounts.clear();
+
+        assertEquals(new InterstellarMapPanel.StrategicMarker(1, 1),
+              presentationData.strategicMarkers().get("system-a"));
+        assertEquals(2, presentationData.playerBaseCounts().get("system-a"));
+        assertEquals(Set.of(employer), presentationData.contractEmployers());
+        assertEquals(Set.of(target), presentationData.contractTargets());
     }
 
     @Test

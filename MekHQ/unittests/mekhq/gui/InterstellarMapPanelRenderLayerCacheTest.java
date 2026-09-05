@@ -156,6 +156,65 @@ class InterstellarMapPanelRenderLayerCacheTest {
     }
 
     @Test
+    void renderBenchmarkCameraPathIsRepeatableAndReturnsToItsOrigin() {
+      InterstellarMapPanel.RenderBenchmarkCamera origin =
+          new InterstellarMapPanel.RenderBenchmarkCamera(12.5, -7.25, 2.0);
+
+      assertEquals(origin, InterstellarMapPanel.renderBenchmarkCameraAt(origin, 0.0));
+      assertEquals(new InterstellarMapPanel.RenderBenchmarkCamera(332.5, -7.25, 2.0),
+          InterstellarMapPanel.renderBenchmarkCameraAt(origin, 0.125));
+      assertEquals(new InterstellarMapPanel.RenderBenchmarkCamera(-307.5, -7.25, 2.0),
+          InterstellarMapPanel.renderBenchmarkCameraAt(origin, 0.375));
+      assertEquals(new InterstellarMapPanel.RenderBenchmarkCamera(12.5, 172.75, 2.0),
+          InterstellarMapPanel.renderBenchmarkCameraAt(origin, 0.625));
+      assertEquals(new InterstellarMapPanel.RenderBenchmarkCamera(12.5, -187.25, 2.0),
+          InterstellarMapPanel.renderBenchmarkCameraAt(origin, 0.875));
+      assertEquals(origin, InterstellarMapPanel.renderBenchmarkCameraAt(origin, 1.0));
+      assertEquals(InterstellarMapPanel.renderBenchmarkCameraAt(origin, 0.4375),
+          InterstellarMapPanel.renderBenchmarkCameraAt(origin, 0.4375));
+
+      InterstellarMapPanel.RenderBenchmarkCamera fractionalSample =
+          InterstellarMapPanel.renderBenchmarkCameraAt(origin, 0.173_205_080_7);
+      double pixelDeltaX = (fractionalSample.centerX() - origin.centerX()) * origin.scale();
+      double pixelDeltaY = (fractionalSample.centerY() - origin.centerY()) * origin.scale();
+      assertEquals(Math.rint(pixelDeltaX), pixelDeltaX, 0.000_001);
+      assertEquals(Math.rint(pixelDeltaY), pixelDeltaY, 0.000_001);
+    }
+
+    @Test
+    void renderBenchmarkRequiresBothExplicitProperties() {
+        assertFalse(InterstellarMapPanel.isRenderBenchmarkEnabled(false, false));
+        assertFalse(InterstellarMapPanel.isRenderBenchmarkEnabled(false, true));
+        assertFalse(InterstellarMapPanel.isRenderBenchmarkEnabled(true, false));
+        assertTrue(InterstellarMapPanel.isRenderBenchmarkEnabled(true, true));
+    }
+
+    @Test
+    void renderBenchmarkConsecutiveSamplesReusePannableRaster() {
+      InterstellarMapPanel.RenderBenchmarkCamera origin =
+          new InterstellarMapPanel.RenderBenchmarkCamera(34.6363849316409, -14.791390894775407,
+              1.7859556018152163);
+      InterstellarMapPanel.RenderBenchmarkCamera first =
+          InterstellarMapPanel.renderBenchmarkCameraAt(origin, 0.1);
+      InterstellarMapPanel.RenderBenchmarkCamera second =
+          InterstellarMapPanel.renderBenchmarkCameraAt(origin, 0.1005);
+      InterstellarMapPanel.PannableRenderLayerCache<String> cache =
+          new InterstellarMapPanel.PannableRenderLayerCache<>();
+      AtomicInteger rendererCalls = new AtomicInteger();
+
+      cache.getOrRender("territory",
+          viewKey(1032, 561, first.centerX(), first.centerY(), first.scale()), 20,
+          graphics -> rendererCalls.incrementAndGet());
+      cache.getOrRender("territory",
+          viewKey(1032, 561, second.centerX(), second.centerY(), second.scale()), 20,
+          graphics -> rendererCalls.incrementAndGet());
+
+      assertEquals(1, rendererCalls.get());
+      assertEquals(1, cache.getReuseCount());
+      assertEquals(1, cache.getFullRenderCount());
+    }
+
+    @Test
     void optionViewLayoutComparisonDetectsGeometryChanges() {
         JPanel control = new JPanel();
         JViewport view = new JViewport();
@@ -533,6 +592,17 @@ class InterstellarMapPanelRenderLayerCacheTest {
         assertEquals(-39.0, bounds.minY());
         assertEquals(29.0, bounds.maxX());
         assertEquals(29.0, bounds.maxY());
+    }
+
+    @Test
+    void viewportSystemQueryBoundsIncludeRightExtendingVisualBeyondLeftEdge() {
+        InterstellarMapPanel.MapQueryBounds bounds = InterstellarMapPanel.viewportSystemQueryBounds(
+              viewKey(100, 80, 10.0, -5.0, 2.0), 8.0, 48.0);
+
+        assertEquals(-59.0, bounds.minX());
+        assertEquals(-29.0, bounds.minY());
+        assertEquals(19.0, bounds.maxX());
+        assertEquals(19.0, bounds.maxY());
     }
 
     private static void assertPremultipliedImagesEquivalent(BufferedImage expected, BufferedImage actual) {

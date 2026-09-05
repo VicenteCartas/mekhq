@@ -6,6 +6,47 @@ Restore the preferred intrinsic star colors and crisp ownership or analytical ri
 
 The development laptop is substantially faster than the intended baseline hardware. A result near 16.7 ms on this machine is therefore not sufficient. The dense-map target on this machine is an average frame time below 10 ms, leaving meaningful headroom for slower systems.
 
+## Current Status (2026-09-05)
+
+The core implementation has reached Phase 3. Controlled three-run `pan-v2` dense-medium, detail-view, and atlas baselines meet the average, p95, p99, maximum, cache-reuse, and threshold targets. Transition, broader visual/HiDPI, and lower-end hardware acceptance remain incomplete; no performance results from the lower-end tester have been recorded here yet.
+
+The rendering model and numbered phases below retain the original design targets. This table distinguishes implemented behavior from remaining work; an implemented phase is not a claim that all of its acceptance checks have passed.
+
+| Phase | Status | Implemented and remaining |
+| --- | --- | --- |
+| 0. Reproducible benchmark | Partial | Percentiles, threshold counts, visible-system counts, cache outcomes, render-phase timings, JFR captures, and opt-in deterministic `pan-v2` playback are available. Dense-medium, detail, and atlas scenarios have valid three-run baselines; complete environment metadata and the rest of the repeated matrix remain. |
+| 1. Earlier density reduction | Core implemented | Compact contacts and priority labels persist through medium zoom; rings, ordinary labels, and secondary details appear later. Explicit hysteresis is not implemented; formal transition review remains. |
+| 2. Restore detail fidelity | Implemented | Intrinsic stars, crisp vector ownership and analytical rings, equal shared-faction segments, and corresponding legend/test updates are in place. Final normal/HiDPI visual acceptance remains. |
+| 3. Consolidated pannable cartography | Core implemented; sampled target met | Hierarchical retained layers, overscan, exposed-strip refresh, spatial indexing, and asynchronous cartography regeneration are in place. See implementation differences below; final benchmark acceptance remains. |
+| 4. GPU-aware Java2D surfaces | Not started; deferred | No demonstrated need to change the Java2D pipeline or introduce accelerated surface mirrors. Revisit only if measurements reach the escalation gate. |
+| 5. Tiled and parallel preparation | Not started; deferred | Background cartography preparation is already part of Phase 3, but a tile cache and parallel tile workers are not implemented. |
+| 6. Dedicated GPU renderer | Not started; deferred | No GPU backend or renderer rewrite is justified by the recorded results. |
+
+### Completed Work
+
+- Retained exact-scale premultiplied-ARGB surfaces reuse pixels during pan and refresh exposed strips. Spatial queries and prepared system/contract data reduce repeated domain work during painting.
+- An immutable presentation snapshot now prepares operation markers, player-base counts, and active-contract employer/target sets on campaign refresh events instead of rebuilding those collections during every paint. Current baselines include the snapshot, but no paired run isolates its individual performance impact.
+- An opt-in deterministic `pan-v2` harness now provides a closed whole-screen-pixel warm-pan path, separate warm-up and aggregate measurement windows, explicit run metadata, cancellation on invalidating lifecycle changes, and exact camera restoration. Controlled dense-medium, detail, and atlas result sets are recorded below.
+- Required cache margins and expanded system-query bounds address black seams and clipped markers at viewport/cache edges.
+- Detail-view live queries include the measured rightward label extent beyond the left viewport edge, preventing labels and associated live system content from popping during horizontal movement.
+- Background cartography regeneration retains a transformed previous raster while preparing its exact-scale replacement, then installs current results on the EDT. Latest-request handling covers superseded work, A-B-A requests, cancellation, and hide/show lifecycle changes.
+- Inspector scrolling uses GUI-scaled increments and cancels dossier reveal animation when scrolling begins.
+- Continuous star shimmer, HPG packets, active-route flow pulses, and JumpShip navigation lights are removed. Finite route activation and actual jump transitions remain.
+
+Phase 3 uses a hierarchy of cartography, system-art, and navigation caches rather than one all-inclusive surface. System labels and map-mode transition overlays still have live rendering paths; the proposed fully retained label rendering and prepared previous/target map-mode surface crossfade are not complete. These are implementation differences to measure, not reasons by themselves to begin a GPU rewrite.
+
+### Remaining Acceptance Work
+
+1. Run the remaining interaction scenarios at least three times with complete build, campaign, layer, Java, pipeline, and display metadata. Dense, detail, and atlas warm-pan scenarios now have fixed baselines.
+2. Report first render and cache regeneration separately from warm pan. Dense, detail, and atlas p99, maximum, and warm-frame thresholds now pass; transition and cold-regeneration evidence remains open.
+3. Finish visual checks for semantic boundaries, HiDPI ring sharpness, layer transitions, rapid pan/zoom, marker clipping, and inspector scrolling. The corrected normal-scale detail and atlas pans no longer exhibit edge popping or seams in their tested configurations.
+4. Collect the lower-end tester's timings, hardware/display details, exact build, and responsiveness observations.
+5. Run the full MekHQ test suite and required build/Checkstyle gates on the final publication candidate. The 17 focused faction-standing tests passed during the latest merge-conflict resolution, but that is not full renderer or publication validation.
+
+Remain on the Phase 3 Java2D architecture unless these checks demonstrate a need to escalate. The current dense-medium, detail, and atlas baselines provide no reason to escalate.
+
+Optional follow-up optimizations and evidence-gated experiments for JumpShip lights and a smooth active-route pulse are tracked separately in [Interstellar Map Rendering Improvement Ideas](improvement-ideas.md). They do not replace this plan or alter its current implementation status.
+
 ## Non-Negotiable Behavior
 
 - Never hide systems, labels, overlays, or controls merely because the user is panning or zooming.
@@ -17,7 +58,7 @@ The development laptop is substantially faster than the intended baseline hardwa
 - Preserve selection, hover, current location, route, capital, operation, GM override, restricted-system, base, HPG, and navigation semantics.
 - Preserve equal faction segmentation for shared systems.
 - Treat visual simplification as a semantic-zoom decision, not a temporary interaction-quality reduction.
-- Keep the current ringless renderer available as a measured baseline until a higher-fidelity path meets the performance target.
+- Preserve the recorded ringless baselines for comparison; the current renderer restores full-fidelity stars and rings at detail zoom.
 
 ## Performance Targets
 
@@ -44,7 +85,56 @@ Measure after warm-up at the same window size, date, map layer, route state, and
 
 Record average, median, p95, p99, maximum, frames over 16.7 ms, frames over 33 ms, visible-system count, cache regeneration count, and per-phase timings. Use JFR to investigate CPU and allocation regressions. Use `-Dsun.java2d.trace=count` only for pipeline diagnosis because tracing itself distorts timing.
 
-## Current Baselines
+## Recorded Measurements
+
+### Current Dense-Medium Baseline (2026-09-05)
+
+Three `pan-v2` runs used the same camera and settings: viewport 1032x555, campaign date 3050-12-23, faction mode, territory and operations enabled, HPG/reachability/empty systems disabled, center `(31.954061812498395, -44.68992663107749)`, and scale `1.7859556018152165`. The view contained approximately 582-583 visible systems. At this semantic zoom, ordinary labels and ownership rings are intentionally suppressed; this is the intended dense-medium workload, not the detail-view workload.
+
+| Run | Frames | Average | p50 | p95 | p99 | Maximum | `>16ms` / `>33ms` | Cache outcome |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 1,001 | 6.4 ms | 6.3 ms | 7.1 ms | 7.9 ms | 11.6 ms | 0 / 0 | 985 hit, 16 strip, 0 full |
+| 2 | 997 | 6.4 ms | 6.3 ms | 7.1 ms | 7.8 ms | 9.4 ms | 0 / 0 | 980 hit, 17 strip, 0 full |
+| 3 | 1,000 | 6.3 ms | 6.2 ms | 7.1 ms | 7.6 ms | 9.0 ms | 0 / 0 | 985 hit, 15 strip, 0 full |
+| Median | 1,000 | 6.4 ms | 6.3 ms | 7.1 ms | 7.8 ms | 9.4 ms | 0 / 0 | 985 hit, 16 strip, 0 full |
+
+The median average is below 10 ms, median p95 is below 16.7 ms, all p99 values are below 8 ms, and no measured frame exceeded 16 ms or 33 ms. All frames used retained cartography and merged navigation, with no full cache regeneration. This scenario passes its paint-duration and cache-reuse gates. These values remain paint durations, not delivered FPS or end-to-end input latency.
+
+The earlier pre-merge manual samples were approximately 6.8-7.4 ms average and 8.9-9.3 ms p95 at approximately 500 visible systems. They remain directional history rather than an apples-to-apples comparison because their paths and settings were not controlled.
+
+### Current Detail-View Baseline (2026-09-05)
+
+Three post-fix `pan-v2` runs used viewport 1032x561, campaign date 3050-12-23, faction mode, territory and operations enabled, HPG/reachability/empty systems disabled, center `(26.04583387562245, -12.198253480081465)`, and scale `4.700000000000001`. This view displayed ordinary labels, stellar suffixes, intrinsic stars, and ownership rings across 167 live-query systems. Visual review confirmed that the previous left-edge popping was gone.
+
+| Run | Frames | Average | p50 | p95 | p99 | Maximum | `>16ms` / `>33ms` | Cache outcome |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 980 | 7.8 ms | 7.8 ms | 8.5 ms | 9.9 ms | 10.5 ms | 0 / 0 | 964 hit, 16 strip, 0 full |
+| 2 | 988 | 7.9 ms | 7.8 ms | 8.6 ms | 10.2 ms | 13.8 ms | 0 / 0 | 972 hit, 16 strip, 0 full |
+| 3 | 984 | 7.9 ms | 7.8 ms | 8.5 ms | 10.3 ms | 15.4 ms | 0 / 0 | 969 hit, 15 strip, 0 full |
+| Median | 984 | 7.9 ms | 7.8 ms | 8.5 ms | 10.2 ms | 13.8 ms | 0 / 0 | 969 hit, 16 strip, 0 full |
+
+The median average is below 10 ms, median p95 is below 16.7 ms, no measured frame exceeded 16 ms or 33 ms, and no full cache regeneration occurred. The widest observed frame was 15.4 ms. The corrected query increased the live set from approximately 149-150 to 167 systems without a material timing regression. This scenario passes its paint-duration, cache-reuse, and normal-scale horizontal-pan visual gates.
+
+### Current Atlas Baseline (2026-09-05)
+
+Three `pan-v2` runs used viewport 1032x561, campaign date 3050-12-23, faction mode, territory and operations enabled, HPG/reachability/empty systems disabled, center `(86.08705126705404, 33.602598569941605)`, and scale `0.9369559896737012`. The long-zoom workload queried 1,229 systems and displayed compact contacts and strategic faction emblems without ordinary system labels or ownership rings. The supplied still image showed no static seam or clipping defect, and visual review during all three replays found no popping, clipping, black seams, or disappearing content.
+
+| Run | Frames | Average | p50 | p95 | p99 | Maximum | `>16ms` / `>33ms` | Cache outcome |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 977 | 7.0 ms | 7.1 ms | 7.8 ms | 8.5 ms | 10.3 ms | 0 / 0 | 961 hit, 16 strip, 0 full |
+| 2 | 991 | 6.9 ms | 7.1 ms | 7.7 ms | 8.3 ms | 13.6 ms | 0 / 0 | 976 hit, 15 strip, 0 full |
+| 3 | 986 | 7.0 ms | 7.2 ms | 7.8 ms | 8.5 ms | 9.1 ms | 0 / 0 | 970 hit, 16 strip, 0 full |
+| Median | 986 | 7.0 ms | 7.1 ms | 7.8 ms | 8.5 ms | 10.3 ms | 0 / 0 | 970 hit, 16 strip, 0 full |
+
+The median average is below 10 ms, median p95 is below 16.7 ms, no measured frame exceeded 16 ms or 33 ms, and no full cache regeneration occurred. All 2,954 measured frames used retained cartography and merged navigation. This scenario passes its paint-duration, cache-reuse, static-presentation, and horizontal-pan visual gates.
+
+The profiler is enabled with `-Dmekhq.map.renderProfiling=true` and emits `Map render:` aggregates during painting at roughly five-second reporting intervals through the normal MekHQ logger. Its `>16ms` counter uses 16.0 ms, not the 16.7 ms p95 target; `>33ms` is reported separately.
+
+For deterministic warm-pan playback, also set `-Dmekhq.map.renderBenchmark=true`, open the interstellar map at the intended starting view, and press `Ctrl+Shift+B`. The `pan-v2` harness runs a 5-second warm-up and one 30-second measured pass, then restores the exact starting camera. Its self-contained `Map render benchmark result:` line is written to `MekHQ/logs/mekhq.log`. Repeat each unchanged configuration at least three times.
+
+Three 2026-09-05 `pan-v1` runs are diagnostic-only and excluded from baselines. They reported 53.3-55.8 ms averages and 56.6-62.6 ms p95, with exactly two full retained-layer renders per paint and 50.6-52.9 ms spent in territory work. The harness had generated fractional screen-pixel camera positions, which the retained caches correctly reject to avoid blurred translations. `pan-v2` quantizes absolute samples to whole screen pixels; it requires a fresh three-run result set.
+
+### Historical Baselines
 
 These samples establish direction, not exact apples-to-apples comparisons, because pan paths and cache refresh counts differed.
 
@@ -128,6 +218,8 @@ Full-fidelity vectors become active only when zoom has reduced the number of vis
 ## Implementation Phases
 
 ### Phase 0: Reproducible Benchmark
+
+Implementation note: deterministic `pan-v2` playback is available behind the profiling and benchmark system properties. The remaining steps are to establish fixed scenario origins and metadata, execute the repeated matrix, and extend instrumentation beyond paint duration.
 
 1. Define saved camera positions and pan paths for dense, medium, and detail views.
 2. Extend aggregate profiling with percentile reporting and explicit cache-hit, strip-refresh, and full-regeneration counts.
