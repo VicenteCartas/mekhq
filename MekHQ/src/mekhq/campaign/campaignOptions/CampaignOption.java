@@ -55,6 +55,7 @@ import mekhq.campaign.market.enums.UnitMarketMethod;
 import mekhq.campaign.market.personnelMarket.enums.PersonnelMarketStyle;
 import mekhq.campaign.personnel.enums.*;
 import mekhq.campaign.personnel.familiarity.Familiarity;
+import mekhq.campaign.personnel.quartermaster.ArmorKitCatalog;
 import mekhq.campaign.randomEvents.prisoners.PrisonerCaptureStyle;
 import mekhq.campaign.universe.PlanetarySystem.PlanetaryRating;
 import mekhq.campaign.universe.PlanetarySystem.PlanetarySophistication;
@@ -136,6 +137,8 @@ public final class CampaignOption<T> {
           of(Boolean.class, false, "chaosDebtPenaltiesStack");
     public static final CampaignOption<Boolean> CHAOS_NO_PARTIAL_SUCCESS_REPUTATION =
           of(Boolean.class, true, "chaosNoPartialSuccessReputation");
+    public static final CampaignOption<Boolean> USE_FAILED_CONTRACT_REPUTATION_LOSS =
+          of(Boolean.class, false, "useFailedContractReputationLoss");
     public static final CampaignOption<Boolean> CHAOS_PERSONALITY_AFFECTS_REPUTATION =
           of(Boolean.class, false, "chaosPersonalityAffectsReputation");
     public static final CampaignOption<Boolean> CHAOS_NEW_RECRUITS_HAVE_REPUTATION =
@@ -222,6 +225,10 @@ public final class CampaignOption<T> {
           of(Integer.class, 15, "autoLogisticsHeadComponents");
     public static final CampaignOption<Integer> AUTO_LOGISTICS_OTHER =
           of(Integer.class, 0, "autoLogisticsOther");
+    public static final CampaignOption<Integer> AUTO_LOGISTICS_ARMOR_KIT =
+          of(Integer.class, 0, "autoLogisticsArmorKit");
+    public static final CampaignOption<Integer> AUTO_LOGISTICS_BOMB =
+          of(Integer.class, 0, "autoLogisticsBomb");
     public static final CampaignOption<Integer> UNIT_TRANSIT_TIME =
           of(Integer.class, CampaignOptions.TRANSIT_UNIT_MONTH, "unitTransitTime");
     public static final CampaignOption<Boolean> NO_DELIVERIES_IN_TRANSIT =
@@ -296,8 +303,20 @@ public final class CampaignOption<T> {
           of(Boolean.class, false, "useAgeEffects");
     public static final CampaignOption<Boolean> USE_TRANSFERS =
           of(Boolean.class, true, "useTransfers");
+    public static final CampaignOption<String> MEKWARRIOR_DEFAULT_KIT =
+          of(String.class, ArmorKitCatalog.DEFAULT_ARMOR_KIT_NAME, "mekWarriorDefaultKit");
+    public static final CampaignOption<String> VEHICLE_CREW_DEFAULT_KIT =
+          of(String.class, ArmorKitCatalog.DEFAULT_ARMOR_KIT_NAME, "vehicleCrewDefaultKit");
+    public static final CampaignOption<String> AIRCRAFT_DEFAULT_KIT =
+          of(String.class, ArmorKitCatalog.DEFAULT_ARMOR_KIT_NAME, "aircraftDefaultKit");
+    public static final CampaignOption<Boolean> ADD_DEFAULT_KIT_TO_PROCUREMENT =
+          of(Boolean.class, false, "addDefaultKitToProcurement");
+    public static final CampaignOption<Boolean> NPC_FACTION_ARMOR_KITS =
+          of(Boolean.class, false, "npcFactionArmorKits");
+    public static final CampaignOption<Boolean> REQUIRE_MEKWARRIOR_KIT_TO_DEPLOY =
+          of(Boolean.class, false, "requireMekWarriorKitToDeploy");
     public static final CampaignOption<Boolean> USE_EXTENDED_TOE_FORCE_NAME =
-          of(Boolean.class, false, "useExtendedTOEForceName");
+          of(Boolean.class, true, "useExtendedTOEForceName");
     public static final CampaignOption<Boolean> PERSONNEL_LOG_SKILL_GAIN =
           of(Boolean.class, false, "personnelLogSkillGain");
     public static final CampaignOption<Boolean> PERSONNEL_LOG_ABILITY_GAIN =
@@ -440,6 +459,8 @@ public final class CampaignOption<T> {
           ofMutable(RandomOriginOptions.class, () -> new RandomOriginOptions(true), "randomOriginOptions");
     public static final CampaignOption<Boolean> USE_RANDOM_PERSONALITIES =
           of(Boolean.class, false, "useRandomPersonalities");
+    public static final CampaignOption<Boolean> USE_RANDOM_TALENT =
+          of(Boolean.class, false, "useRandomTalent");
     public static final CampaignOption<Boolean> USE_PERSONALITY_LABELS_ONLY =
           of(Boolean.class, false, "usePersonalityLabelsOnly");
     public static final CampaignOption<Boolean> USE_RANDOM_PERSONALITY_REPUTATION =
@@ -767,10 +788,22 @@ public final class CampaignOption<T> {
           of(Boolean.class, true, "useChaosSupportPointConversion");
     public static final CampaignOption<Boolean> USE_CHAOS_SCALE_SUPPORT_POINT_CONVERSION =
           of(Boolean.class, true, "useChaosScaleSupportPointConversion");
+    public static final CampaignOption<Boolean> MULTIPLY_TRACK_INTENSITY_BY_SCALE =
+          of(Boolean.class, true, "multiplyTrackIntensityByScale");
     public static final CampaignOption<Boolean> USE_CONTRACT_FACTION_MODIFIERS =
           of(Boolean.class, true, "useContractFactionModifiers");
     public static final CampaignOption<Boolean> USE_INTEL_OBFUSCATION =
           of(Boolean.class, true, "useIntelObfuscation");
+    public static final CampaignOption<Boolean> USE_NON_NEGOTIABLE_TERMS =
+          of(Boolean.class, true, "useNonNegotiableTerms");
+    public static final CampaignOption<Boolean> USE_ACTIVE_NEGOTIATORS =
+          of(Boolean.class, true, "useActiveNegotiators");
+    public static final CampaignOption<Boolean> USE_RANDOM_CONTRACT_CHARACTERISTICS =
+          of(Boolean.class, true, "useRandomContractCharacteristics");
+    public static final CampaignOption<Boolean> USE_OPERATION_CODENAMES =
+          of(Boolean.class, false, "useOperationCodenames");
+    public static final CampaignOption<Boolean> HIDE_CONTRACT_TYPE =
+          of(Boolean.class, false, "hideContractType");
     public static final CampaignOption<Double> CONTRACT_BASE_PAY_MULTIPLIER =
           of(Double.class, 1.0, "contractBasePayMultiplier");
     public static final CampaignOption<Double> CONTRACT_STRAIGHT_SUPPORT_MULTIPLIER =
@@ -901,6 +934,8 @@ public final class CampaignOption<T> {
           of(StratConPlayType.class, StratConPlayType.DISABLED, "stratConPlayType");
     public static final CampaignOption<Boolean> USE_ADVANCED_SCOUTING =
           of(Boolean.class, false, "useAdvancedScouting");
+    public static final CampaignOption<Boolean> ESSENTIAL_SCENARIOS_ONLY =
+          of(Boolean.class, false, "essentialScenariosOnly");
     public static final CampaignOption<StratConSectorCountMethod> STRAT_CON_SECTOR_COUNT_METHOD =
           of(StratConSectorCountMethod.class,
                 StratConSectorCountMethod.ALTERNATE_REGIMENTAL,

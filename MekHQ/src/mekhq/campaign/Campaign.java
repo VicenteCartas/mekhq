@@ -154,6 +154,7 @@ import mekhq.campaign.finances.Loan;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.finances.enums.TransactionType;
 import mekhq.campaign.force.CombatTeam;
+import mekhq.campaign.force.Detachment;
 import mekhq.campaign.force.Formation;
 import mekhq.campaign.force.PlayerForce;
 import mekhq.campaign.icons.StandardFormationIcon;
@@ -308,6 +309,13 @@ public class Campaign implements ITechManager {
     private transient CampaignNewDayManager newDayManager = null;
 
     private final DailyReportLog dailyReportLog = new DailyReportLog();
+
+    // Set while a bulk operation (force generation) is adding many units/parts off the EDT. Guards
+    // event-driven GUI work from firing mid-operation and reading half-built campaign state off the
+    // EDT: addNewUnit skips its per-unit UnitNewEvent, and timer-driven tab refreshes (e.g. the
+    // Command Center cargo/summary computation, which walks the mutating location tree) skip while it
+    // is set. The operation fires one refresh event when it completes.
+    private transient boolean bulkGenerationInProgress;
 
     private Person genericAcquisitionPerson;
 
@@ -1068,7 +1076,7 @@ public class Campaign implements ITechManager {
      * hasActiveContract based on that check. This value should not be set elsewhere
      */
     public void setHasActiveContract() {
-        hasActiveContract = getActiveContracts().size() > 0;
+        hasActiveContract = !getActiveContracts().isEmpty();
     }
     // endregion Missions/Contracts
 
@@ -1421,9 +1429,38 @@ public class Campaign implements ITechManager {
 
         checkDuplicateNamesDuringAdd(en);
         addReport(ACQUISITIONS, unit.getHyperlinkedName() + " has been added to the unit roster.");
-        MekHQ.triggerEvent(new UnitNewEvent(unit));
+        if (!bulkGenerationInProgress) {
+            MekHQ.triggerEvent(new UnitNewEvent(unit));
+        }
 
         return unit;
+    }
+
+    /**
+     * Whether a bulk generation (for example the force generator) is currently adding units/parts off
+     * the Swing event dispatch thread. See {@link #setBulkGenerationInProgress(boolean)}.
+     *
+     * @return {@code true} while a bulk generation is in progress
+     */
+    public boolean isBulkGenerationInProgress() {
+        return bulkGenerationInProgress;
+    }
+
+    /**
+     * Marks that a bulk operation is adding many units/parts off the Swing event dispatch thread (for
+     * example force generation). A caller should set this to {@code true} for the operation's duration -
+     * always in a {@code try}/{@code finally} so it is cleared even on failure - so that event-driven
+     * GUI work does not fire mid-operation and read half-built campaign state off the EDT:
+     * {@link #addNewUnit(Entity, boolean, int, PartQuality)} skips its per-unit {@link UnitNewEvent},
+     * and timer-driven tab refreshes that walk the mutating campaign (such as the Command Center
+     * cargo/summary computation) skip while it is set. The operation is responsible for firing a single
+     * refresh event (such as {@link mekhq.campaign.events.OrganizationChangedEvent}) once it completes.
+     *
+     * @param bulkGenerationInProgress {@code true} while the bulk operation runs, {@code false} to restore
+     *                                 normal GUI updates
+     */
+    public void setBulkGenerationInProgress(boolean bulkGenerationInProgress) {
+        this.bulkGenerationInProgress = bulkGenerationInProgress;
     }
 
     /**
@@ -1845,7 +1882,7 @@ public class Campaign implements ITechManager {
      */
     public List<Unit> getServiceableUnits() {
         List<Unit> service = new ArrayList<>();
-        for (Unit u : getUnits()) {
+        for (Unit u : new ArrayList<>(getUnits())) {
             if (u.isAvailable() && u.isServiceable() && !StratConRulesManager.isUnitDeployedToStratCon(u)) {
                 service.add(u);
             }
@@ -2160,7 +2197,11 @@ public class Campaign implements ITechManager {
             return true;
         }
         int maxAcquisitions = getCampaignOptions().get(CampaignOption.MAX_ACQUISITIONS);
-        return maxAcquisitions <= 0 || person.getAcquisitions() < maxAcquisitions;
+        if (maxAcquisitions <= 0) {
+            return true;
+        }
+
+        return person.getAcquisitions() < ForceHumanResources.maxAcquisitionsFor(person, maxAcquisitions);
     }
 
     /***
@@ -3132,8 +3173,6 @@ public class Campaign implements ITechManager {
                                                                  getLocalDate()),
                   "HELLO", chosenFaction,
                   FactionStandingJudgmentType.WELCOME, ImmersiveDialogWidth.MEDIUM, null, null);
-        } else if (chosenFaction == null) {
-            LOGGER.warn("Unable to find a suitable faction for a new mercenary organization start up");
         }
     }
 
@@ -3216,7 +3255,9 @@ public class Campaign implements ITechManager {
         }
 
         // remove from automatic mothballing
-        getPlayerForce().getAutomatedMothballUnits().remove(unit.getId());
+        for (Detachment detachment : getPlayerForce().getDetachments()) {
+            detachment.getAutomatedMothballUnits().remove(unit.getId());
+        }
 
         // finally, remove the unit
         getPlayerForce().getHangar().removeUnit(unit.getId());
@@ -3784,10 +3825,7 @@ public class Campaign implements ITechManager {
             storyArc.writeToXml(writer, indent);
         }
 
-        // Markets
-        if (getPlayerForce().getHumanResources().getPersonnelMarket() != null) {
-            getPlayerForce().getHumanResources().getPersonnelMarket().writeToXML(writer, indent, this);
-        }
+        // The personnel market is written inside <humanResources>; writing it here as well doubled the load time
 
         // Windchild: implicit DEPENDS-ON to the <campaignOptions> node, do not move
         // this above it
@@ -3811,7 +3849,7 @@ public class Campaign implements ITechManager {
         }
 
         MHQXMLUtility.writeSimpleXMLOpenTag(writer, indent++, "automatedMothballUnits");
-        for (UUID unitId : getPlayerForce().getAutomatedMothballUnits()) {
+        for (UUID unitId : getPlayerForce().getForceDetachment().getAutomatedMothballUnits()) {
             MHQXMLUtility.writeSimpleXMLTag(writer, indent, "mothballedUnit", unitId);
         }
         MHQXMLUtility.writeSimpleXMLCloseTag(writer, --indent, "automatedMothballUnits");
@@ -4496,6 +4534,7 @@ public class Campaign implements ITechManager {
             }
             if (getCampaignOptions().get(CampaignOption.USE_PLANETARY_CONDITIONS)) {
                 planetaryConditions.setAtmosphere(atBScenario.getAtmosphere());
+                planetaryConditions.setAtmosphericTaint(atBScenario.getAtmosphericTaint());
                 planetaryConditions.setGravity(atBScenario.getGravity());
             }
         } else {

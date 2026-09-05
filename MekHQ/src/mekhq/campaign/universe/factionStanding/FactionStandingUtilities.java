@@ -426,6 +426,8 @@ public class FactionStandingUtilities {
      * <p>The rules for entry are as follows:</p>
      * <ol>
      *   <li>If the target system is empty (population zero), entry is always permitted.</li>
+     *   <li>If the target system has no controlling faction (uncolonized or abandoned), entry is always permitted, even
+     *   if it retains a residual population. There is no government present to bar entry.</li>
      *   <li>If the target system is owned by any faction that is either an employer or a contract target, entry is
      *   allowed.</li>
      *   <li>If the player is outlawed in their current system, they may always exit to another system (unless {@code
@@ -451,6 +453,21 @@ public class FactionStandingUtilities {
     public static boolean canEnterTargetSystem(Faction campaignFaction, FactionStandings factionStandings,
           @Nullable PlanetarySystem currentSystem, PlanetarySystem targetSystem, LocalDate when,
           List<AbstractContract> activeContracts, FactionHints factionHints) {
+        // Always allowed in empty systems
+        long targetPopulation = targetSystem.getPopulation(when);
+        if (targetPopulation == 0) {
+            LOGGER.debug("Target system is empty, access granted");
+            return true;
+        }
+
+        Set<Faction> systemFactions = targetSystem.getFactionSet(when);
+
+        // Always allowed in systems with no controlling faction.
+        if (systemFactions.isEmpty()) {
+            LOGGER.debug("Target system has no controlling faction, access granted");
+            return true;
+        }
+
         Set<Faction> contractEmployers = new HashSet<>();
         Set<Faction> contractTargets = new HashSet<>();
         for (AbstractContract contract : activeContracts) {
@@ -458,7 +475,7 @@ public class FactionStandingUtilities {
             contractTargets.add(contract.getEnemyFaction());
         }
         return canEnterTargetSystem(campaignFaction, factionStandings, currentSystem,
-              targetSystem.getPopulation(when), targetSystem.getFactionSet(when), when,
+              targetPopulation, systemFactions, when,
               contractEmployers, contractTargets, factionHints);
     }
 
@@ -473,6 +490,12 @@ public class FactionStandingUtilities {
         // Always allowed in empty systems
         if (targetPopulation == 0) {
             LOGGER.debug("Target system is empty, access granted");
+            return true;
+        }
+
+        // Always allowed in systems with no controlling faction.
+        if (systemFactions.isEmpty()) {
+            LOGGER.debug("Target system has no controlling faction, access granted");
             return true;
         }
 
@@ -535,6 +558,11 @@ public class FactionStandingUtilities {
     }
 
     private static boolean isOutlawedInSystem(FactionStandings factionStandings, Set<Faction> targetFactions) {
+        // A system with no controlling faction cannot outlaw anyone.
+        if (targetFactions.isEmpty()) {
+            return false;
+        }
+
         double highestRegard = FactionStandingLevel.STANDING_LEVEL_0.getMinimumRegard();
         for (Faction faction : targetFactions) {
             double currentRegard = factionStandings.getRegardForFaction(faction.getShortName(), true);

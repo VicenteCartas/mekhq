@@ -72,6 +72,7 @@ import static mekhq.campaign.randomEvents.prisoners.PrisonerEventManager.checkFo
 import static mekhq.campaign.randomEvents.prisoners.PrisonerEventManager.processAdHocExecution;
 import static mekhq.utilities.MHQInternationalization.getFormattedText;
 import static mekhq.utilities.MHQInternationalization.getText;
+import static mekhq.utilities.MHQInternationalization.getTextAt;
 import static mekhq.utilities.ReportingUtilities.CLOSING_SPAN_TAG;
 import static mekhq.utilities.ReportingUtilities.getAmazingColor;
 import static mekhq.utilities.ReportingUtilities.getNegativeColor;
@@ -152,6 +153,7 @@ import mekhq.campaign.personnel.medical.BodyLocation;
 import mekhq.campaign.personnel.medical.advancedMedical.InjuryUtil;
 import mekhq.campaign.personnel.medical.advancedMedicalAlternate.DiseaseService;
 import mekhq.campaign.personnel.medical.advancedMedicalAlternate.Inoculations;
+import mekhq.campaign.personnel.quartermaster.ArmorKitCatalog;
 import mekhq.campaign.personnel.ranks.Rank;
 import mekhq.campaign.personnel.ranks.RankSystem;
 import mekhq.campaign.personnel.ranks.RankValidator;
@@ -175,6 +177,7 @@ import mekhq.gui.PersonnelTab;
 import mekhq.gui.baseComponents.JScrollableMenu;
 import mekhq.gui.control.EditLogControl.LogType;
 import mekhq.gui.dialog.*;
+import mekhq.gui.dialog.quartermaster.IssueArmorKitsDialog;
 import mekhq.gui.displayWrappers.RankDisplay;
 import mekhq.gui.menus.AssignPersonToUnitMenu;
 import mekhq.gui.menus.LocationMenu;
@@ -2425,14 +2428,16 @@ public class PersonnelTableMouseAdapter extends JPopupMenuAdapter {
 
         JMenu changeStatusMenu = new JMenu(resources.getString("changeStatus.text"));
 
-        if (StaticChecks.areAllEmployed(selected)) {
+        boolean areAllEmployed = StaticChecks.areAllEmployed(selected);
+        if (areAllEmployed) {
             menuItem = new JMenuItem(resources.getString("sack.text"));
             menuItem.setActionCommand(CMD_SACK);
             menuItem.addActionListener(this);
             changeStatusMenu.add(menuItem);
         }
 
-        if (!StaticChecks.areAllEmployed(selected)) {
+        boolean areAllFree = StaticChecks.areAllFreeOrBondsman(selected);
+        if (!areAllEmployed && areAllFree) {
             menuItem = new JMenuItem(resources.getString("employ.text"));
             menuItem.setActionCommand(CMD_EMPLOY);
             menuItem.addActionListener(this);
@@ -2445,7 +2450,6 @@ public class PersonnelTableMouseAdapter extends JPopupMenuAdapter {
 
         changeStatusMenu.addSeparator();
 
-        boolean areAllFree = Stream.of(selected).allMatch(p -> p.getPrisonerStatus().isFreeOrBondsman());
         for (final PersonnelStatus status : PersonnelStatus.getImplementedStatuses(areAllFree, false)) {
             cbMenuItem = new JCheckBoxMenuItem(status.toString());
             cbMenuItem.setToolTipText(status.getToolTipText());
@@ -2557,7 +2561,7 @@ public class PersonnelTableMouseAdapter extends JPopupMenuAdapter {
                               selectedPerson.getHyperlinkedFullTitle());
                         getCampaign().addReport(MEDICAL, report);
                     } else {
-                        new AdvancedReplacementLimbDialog(getCampaign(), gui.getIconPackage(), selectedPerson, false);
+                        new AdvancedSurgeriesDialog(getCampaign(), gui, selectedPerson, false);
                     }
                 }
             });
@@ -2566,6 +2570,15 @@ public class PersonnelTableMouseAdapter extends JPopupMenuAdapter {
         JMenuHelpers.addMenuIfNonEmpty(popup, healthcareMenu);
 
         JMenuHelpers.addMenuIfNonEmpty(popup, new AssignPersonToUnitMenu(getCampaign(), selected));
+
+        if (Arrays.stream(selected).anyMatch(ArmorKitCatalog::canBeIssuedKit)) {
+            JMenuItem issueArmorKits = new JMenuItem(getTextAt("mekhq.resources.IssueArmorKitsDialog",
+                  "menu.issueArmorKits"));
+            issueArmorKits.addActionListener(ev -> IssueArmorKitsDialog.showFor(getFrame(),
+                  getCampaign(), Arrays.asList(selected), null));
+            popup.add(issueArmorKits);
+        }
+
         List<mekhq.campaign.personnel.Person> selectedPeople = Arrays.asList(selected);
         JMenuHelpers.addMenuIfNonEmpty(popup, new LocationMenu(getCampaign(), getFrame(), selectedPeople));
 
@@ -4646,7 +4659,8 @@ public class PersonnelTableMouseAdapter extends JPopupMenuAdapter {
                 personalityMenu.add(menuItem);
             }
 
-            if (getCampaignOptions().get(CampaignOption.USE_RANDOM_PERSONALITIES)) {
+            if (getCampaignOptions().get(CampaignOption.USE_RANDOM_PERSONALITIES) ||
+                      getCampaignOptions().get(CampaignOption.USE_RANDOM_TALENT)) {
                 menuItem = new JMenuItem(resources.getString("regeneratePersonality.text"));
                 menuItem.setActionCommand(CMD_PERSONALITY);
                 menuItem.addActionListener(this);

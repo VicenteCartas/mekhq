@@ -45,7 +45,7 @@ public enum ContractObjectiveType {
     ASSASSINATION("ContractObjectiveType.ASSASSINATION.text", "ContractObjectiveType.ASSASSINATION.toolTipText",
           ChaosObjectiveType.GUERILLA_OPERATION,
           1.9,
-          EnemySelectionProfile.COVERT,
+          EnemySelectionProfile.DEFAULT,
           MissionLocationProfile.DEEP_RAID,
           CombatRole.MANEUVER),
     CADRE_DUTY("ContractObjectiveType.CADRE_DUTY.text", "ContractObjectiveType.CADRE_DUTY.toolTipText",
@@ -64,7 +64,7 @@ public enum ContractObjectiveType {
     ESPIONAGE("ContractObjectiveType.ESPIONAGE.text", "ContractObjectiveType.ESPIONAGE.toolTipText",
           ChaosObjectiveType.EXPEDITION,
           2.4,
-          EnemySelectionProfile.COVERT,
+          EnemySelectionProfile.DEFAULT,
           MissionLocationProfile.HIGH_VALUE,
           CombatRole.PATROL),
     EXTRACTION_RAID("ContractObjectiveType.EXTRACTION_RAID.text", "ContractObjectiveType.EXTRACTION_RAID.toolTipText",
@@ -145,7 +145,7 @@ public enum ContractObjectiveType {
     SABOTAGE("ContractObjectiveType.SABOTAGE.text", "ContractObjectiveType.SABOTAGE.toolTipText",
           ChaosObjectiveType.EXPEDITION,
           2.4,
-          EnemySelectionProfile.COVERT,
+          EnemySelectionProfile.DEFAULT,
           MissionLocationProfile.HIGH_VALUE,
           CombatRole.MANEUVER),
     SECURITY_DUTY("ContractObjectiveType.SECURITY_DUTY.text", "ContractObjectiveType.SECURITY_DUTY.toolTipText",
@@ -157,7 +157,7 @@ public enum ContractObjectiveType {
     TERRORISM("ContractObjectiveType.TERRORISM.text", "ContractObjectiveType.TERRORISM.toolTipText",
           ChaosObjectiveType.EXPEDITION,
           1.9,
-          EnemySelectionProfile.COVERT,
+          EnemySelectionProfile.DEFAULT,
           MissionLocationProfile.HIGH_VALUE,
           CombatRole.MANEUVER),
     UNDEFINED("ContractObjectiveType.UNDEFINED.text", "ContractObjectiveType.UNDEFINED.toolTipText",
@@ -293,6 +293,16 @@ public enum ContractObjectiveType {
 
     public boolean isObservationRaid() {
         return this == OBSERVATION_RAID;
+    }
+
+    /**
+     * @return {@code true} if this is the {@link #UNDEFINED} sentinel value. UNDEFINED is a placeholder (used, for
+     *       example, as the opposing objective of a blank GM-created contract or when converting legacy saves) and is
+     *       never a real, playable objective. It must not be produced by contract generation, as it has no StratCon
+     *       contract definition and would crash on contract acceptance.
+     */
+    public boolean isUndefined() {
+        return this == UNDEFINED;
     }
 
     public boolean isGarrisonType() {
