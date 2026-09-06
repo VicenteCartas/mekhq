@@ -107,10 +107,19 @@ class InterstellarMapPanelRenderLayerCacheTest {
 
     @Test
     void mergedNavigationRequiresStableRouteRendering() {
-        assertTrue(InterstellarMapPanel.canUseMergedNavigation(true, false, false));
-        assertFalse(InterstellarMapPanel.canUseMergedNavigation(false, false, false));
-        assertFalse(InterstellarMapPanel.canUseMergedNavigation(true, true, false));
-        assertFalse(InterstellarMapPanel.canUseMergedNavigation(true, false, true));
+        assertTrue(InterstellarMapPanel.canUseMergedNavigation(true, false, false, false));
+        assertFalse(InterstellarMapPanel.canUseMergedNavigation(false, false, false, false));
+        assertFalse(InterstellarMapPanel.canUseMergedNavigation(true, true, false, false));
+        assertFalse(InterstellarMapPanel.canUseMergedNavigation(true, false, true, false));
+        assertFalse(InterstellarMapPanel.canUseMergedNavigation(true, false, false, true));
+    }
+
+    @Test
+    void activeZoomKeepsSystemArtLiveUntilExactRenderingSettles() {
+        assertTrue(InterstellarMapPanel.canUseRetainedSystemArt(true, false, false));
+        assertFalse(InterstellarMapPanel.canUseRetainedSystemArt(true, false, true));
+        assertTrue(InterstellarMapPanel.canUseRetainedSystemArt(true, true, true));
+        assertFalse(InterstellarMapPanel.canUseRetainedSystemArt(false, false, false));
     }
 
     @Test
@@ -198,6 +207,68 @@ class InterstellarMapPanelRenderLayerCacheTest {
     }
 
     @Test
+    void zoomBenchmarkCameraPathCrossesSemanticBandsAndPreservesItsAnchor() {
+      InterstellarMapPanel.RenderBenchmarkCamera origin =
+          new InterstellarMapPanel.RenderBenchmarkCamera(12.5, -7.25, 2.0);
+      InterstellarMapPanel.ZoomBenchmarkRange range = InterstellarMapPanel.zoomBenchmarkRange(3.0);
+      int width = 1_032;
+      int height = 561;
+      int anchorX = width * 2 / 3;
+      int anchorY = height / 3;
+      double anchorMapX = (anchorX - width / 2.0) / origin.scale() - origin.centerX();
+      double anchorMapY = (height / 2.0 - anchorY) / origin.scale() + origin.centerY();
+
+      assertEquals(0.95, range.atlasScale(), 0.000_001);
+      assertEquals(5.04, range.detailScale(), 0.000_001);
+      assertEquals(origin, InterstellarMapPanel.zoomBenchmarkCameraAt(
+          origin, width, height, anchorX, anchorY, range, 0.0));
+      assertEquals(range.atlasScale(), InterstellarMapPanel.zoomBenchmarkCameraAt(
+          origin, width, height, anchorX, anchorY, range, 0.25).scale(), 0.000_001);
+      assertEquals(range.detailScale(), InterstellarMapPanel.zoomBenchmarkCameraAt(
+          origin, width, height, anchorX, anchorY, range, 0.5).scale(), 0.000_001);
+      assertEquals(range.atlasScale(), InterstellarMapPanel.zoomBenchmarkCameraAt(
+          origin, width, height, anchorX, anchorY, range, 0.75).scale(), 0.000_001);
+      assertEquals(origin, InterstellarMapPanel.zoomBenchmarkCameraAt(
+          origin, width, height, anchorX, anchorY, range, 1.0));
+
+      for (double progress : List.of(0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875)) {
+        InterstellarMapPanel.RenderBenchmarkCamera camera = InterstellarMapPanel.zoomBenchmarkCameraAt(
+            origin, width, height, anchorX, anchorY, range, progress);
+        assertEquals(anchorMapX,
+            (anchorX - width / 2.0) / camera.scale() - camera.centerX(), 0.000_001);
+        assertEquals(anchorMapY,
+            (height / 2.0 - anchorY) / camera.scale() + camera.centerY(), 0.000_001);
+      }
+    }
+
+    @Test
+    void zoomBenchmarkRejectsInvalidOriginsAndMapScaleStaysBounded() {
+      assertFalse(InterstellarMapPanel.isValidZoomBenchmarkOrigin(
+          new InterstellarMapPanel.RenderBenchmarkCamera(0.0, 0.0, 0.001)));
+      assertFalse(InterstellarMapPanel.isValidZoomBenchmarkOrigin(
+          new InterstellarMapPanel.RenderBenchmarkCamera(Double.NaN, 0.0, 1.0)));
+      assertTrue(InterstellarMapPanel.isValidZoomBenchmarkOrigin(
+          new InterstellarMapPanel.RenderBenchmarkCamera(12.5, -7.25, 0.5)));
+
+      assertEquals(0.1, InterstellarMapPanel.boundedMapScale(0.001), 0.000_001);
+      assertEquals(4.7, InterstellarMapPanel.boundedMapScale(4.7), 0.000_001);
+      assertEquals(100.0, InterstellarMapPanel.boundedMapScale(1_000.0), 0.000_001);
+    }
+
+    @Test
+    void zoomBenchmarkScaleAdvancesInDeterministicWheelLikeSteps() {
+        double first = InterstellarMapPanel.zoomBenchmarkScaleAt(4.7, 0.95, 0.0);
+        double held = InterstellarMapPanel.zoomBenchmarkScaleAt(4.7, 0.95, 0.01);
+        double next = InterstellarMapPanel.zoomBenchmarkScaleAt(4.7, 0.95, 0.11);
+
+        assertEquals(4.7, first, 0.000_001);
+        assertEquals(first, held, 0.000_001);
+        assertTrue(next < held);
+        assertTrue((held / next) <= 1.175);
+        assertEquals(0.95, InterstellarMapPanel.zoomBenchmarkScaleAt(4.7, 0.95, 1.0), 0.000_001);
+    }
+
+    @Test
     void renderBenchmarkRequiresBothExplicitProperties() {
         assertFalse(InterstellarMapPanel.isRenderBenchmarkEnabled(false, false));
         assertFalse(InterstellarMapPanel.isRenderBenchmarkEnabled(false, true));
@@ -212,6 +283,14 @@ class InterstellarMapPanelRenderLayerCacheTest {
         assertFalse(InterstellarMapPanel.isExactTransitionBenchmarkFrame(false, false, false, true));
         assertFalse(InterstellarMapPanel.isExactTransitionBenchmarkFrame(false, false, true, false));
         assertTrue(InterstellarMapPanel.isExactTransitionBenchmarkFrame(false, false, true, true));
+    }
+
+    @Test
+    void zoomBenchmarkRequiresSettledExactRetainedFrame() {
+        assertFalse(InterstellarMapPanel.isExactZoomBenchmarkFrame(true, true, true));
+        assertFalse(InterstellarMapPanel.isExactZoomBenchmarkFrame(false, false, true));
+        assertFalse(InterstellarMapPanel.isExactZoomBenchmarkFrame(false, true, false));
+        assertTrue(InterstellarMapPanel.isExactZoomBenchmarkFrame(false, true, true));
     }
 
     @Test
@@ -379,6 +458,10 @@ class InterstellarMapPanelRenderLayerCacheTest {
               assertNull(cache.getOrRefresh("territory", initialView, 20, 0,
                   graphics -> rendererCalls.incrementAndGet()));
               BufferedImage prepared = new BufferedImage(140, 120, BufferedImage.TYPE_INT_ARGB_PRE);
+              Graphics2D preparedGraphics = prepared.createGraphics();
+              preparedGraphics.setColor(Color.RED);
+              preparedGraphics.fillRect(0, 0, prepared.getWidth(), prepared.getHeight());
+              preparedGraphics.dispose();
               cache.install("territory", initialView, 20, prepared);
 
               InterstellarMapPanel.PannableRenderLayer available = cache.getOrRefresh(
@@ -391,7 +474,16 @@ class InterstellarMapPanelRenderLayerCacheTest {
               InterstellarMapPanel.RenderViewKey zoomedView = viewKey(100, 80, 0.0, 0.0, 3.0);
               assertNull(cache.getOrRefresh("territory", zoomedView, 20, 0,
                   graphics -> rendererCalls.incrementAndGet()));
+              InterstellarMapPanel.PannableRenderLayerSnapshot<String> snapshot =
+                  cache.snapshot("territory");
+              BufferedImage target = new BufferedImage(100, 80, BufferedImage.TYPE_INT_ARGB_PRE);
+              Graphics2D targetGraphics = target.createGraphics();
+              InterstellarMapPanel.drawPannableSnapshot(targetGraphics, snapshot, zoomedView, 1.0);
+              targetGraphics.dispose();
+
+              assertEquals(Color.RED.getRGB(), target.getRGB(50, 40));
               assertSame(prepared, cache.snapshot("territory").image());
+              assertEquals(1, cache.getFullRenderCount());
               assertNull(cache.snapshot("other"));
             }
 

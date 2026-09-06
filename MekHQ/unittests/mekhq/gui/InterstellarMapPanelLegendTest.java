@@ -57,6 +57,7 @@ import javax.swing.SwingUtilities;
 
 import megamek.client.ui.util.UIUtil;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.CampaignLocationManager;
 import org.junit.jupiter.api.Test;
 
 class InterstellarMapPanelLegendTest {
@@ -283,6 +284,7 @@ class InterstellarMapPanelLegendTest {
         SwingUtilities.invokeAndWait(() -> {
             Campaign campaign = mock(Campaign.class);
             when(campaign.getSystems()).thenReturn(new ArrayList<>());
+            when(campaign.getCampaignLocationManager()).thenReturn(mock(CampaignLocationManager.class));
             InterstellarMapPanel mapPanel = new InterstellarMapPanel(campaign, mock(CampaignGUI.class));
             assertTrue(descendantsOf(mapPanel).stream()
                   .filter(JButton.class::isInstance)

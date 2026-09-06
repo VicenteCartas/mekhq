@@ -262,6 +262,13 @@ public class InterstellarMapPanel extends JPanel {
     private static final long RENDER_BENCHMARK_DURATION_NS = 30_000_000_000L;
     private static final String TRANSITION_BENCHMARK_PATH_ID = "transition-cold-v1";
     private static final long TRANSITION_BENCHMARK_TIMEOUT_NS = 10_000_000_000L;
+    private static final String ZOOM_BENCHMARK_PATH_ID = "zoom-v1";
+    private static final long ZOOM_BENCHMARK_DURATION_NS = 8_000_000_000L;
+    private static final long ZOOM_BENCHMARK_TIMEOUT_NS = 10_000_000_000L;
+    private static final double ZOOM_WHEEL_FACTOR = 1.175;
+    private static final int ZOOM_SETTLE_DELAY_MS = 180;
+    private static final double MINIMUM_MAP_SCALE = 0.1;
+    private static final double MAXIMUM_MAP_SCALE = 100.0;
     private static final double[] RENDER_BENCHMARK_X_OFFSETS = { 0.0, 640.0, 0.0, -640.0, 0.0, 0.0, 0.0,
         0.0, 0.0 };
     private static final double[] RENDER_BENCHMARK_Y_OFFSETS = { 0.0, 0.0, 0.0, 0.0, 0.0, 360.0, 0.0,
@@ -365,6 +372,12 @@ public class InterstellarMapPanel extends JPanel {
         MODE_TRANSITION,
         CACHE_REGENERATION,
         RESTORE
+    }
+
+    private enum ZoomBenchmarkPhase {
+        WARMUP,
+        ACTIVE_ZOOM,
+        SETTLED_REGENERATION
     }
 
     private enum MapModeTransitionCacheStage {
@@ -790,6 +803,15 @@ public class InterstellarMapPanel extends JPanel {
               boolean reachability, boolean emptySystems) {
           }
 
+                record ZoomBenchmarkRange(double atlasScale, double detailScale) {
+                }
+
+                record ZoomBenchmarkRun(RenderBenchmarkCamera origin, int width, int height, LocalDate date,
+                            MapMode mapMode, boolean territory, boolean hpgNetwork, boolean operations, boolean reachability,
+                            boolean emptySystems, int anchorX, int anchorY, double semanticReference,
+                            ZoomBenchmarkRange range) {
+                }
+
         static boolean isRenderBenchmarkEnabled(boolean profilingEnabled, boolean benchmarkRequested) {
             return profilingEnabled && benchmarkRequested;
         }
@@ -799,6 +821,11 @@ public class InterstellarMapPanel extends JPanel {
                             boolean mergedNavigation) {
                         return !mapModeAnimating && !retainedCartographyProvisional
                                     && retainedCartography && mergedNavigation;
+                }
+
+                static boolean isExactZoomBenchmarkFrame(boolean retainedCartographyProvisional,
+                            boolean retainedCartography, boolean mergedNavigation) {
+                        return !retainedCartographyProvisional && retainedCartography && mergedNavigation;
                 }
 
         static RenderBenchmarkCamera renderBenchmarkCameraAt(RenderBenchmarkCamera origin, double progress) {
@@ -812,6 +839,67 @@ public class InterstellarMapPanel extends JPanel {
               RENDER_BENCHMARK_Y_OFFSETS[startIndex + 1], segmentProgress));
           return new RenderBenchmarkCamera(origin.centerX() + (xOffset / origin.scale()),
               origin.centerY() + (yOffset / origin.scale()), origin.scale());
+        }
+
+        static ZoomBenchmarkRange zoomBenchmarkRange(double semanticReference) {
+            double boundedReference = Math.clamp(semanticReference, 2.4, 3.6);
+            double atlasEnd = Math.clamp(boundedReference / 3.0, 0.8, 1.0);
+            double fullSystemDetail = Math.clamp(boundedReference * 1.6, 4.2, 5.6);
+            return new ZoomBenchmarkRange(atlasEnd * 0.95, fullSystemDetail * 1.05);
+        }
+
+        static boolean isValidZoomBenchmarkOrigin(RenderBenchmarkCamera origin) {
+            return Double.isFinite(origin.centerX()) && Double.isFinite(origin.centerY())
+                  && Double.isFinite(origin.scale())
+                  && (origin.scale() >= MINIMUM_MAP_SCALE) && (origin.scale() <= MAXIMUM_MAP_SCALE);
+        }
+
+        static double boundedMapScale(double scale) {
+            return Math.clamp(scale, MINIMUM_MAP_SCALE, MAXIMUM_MAP_SCALE);
+        }
+
+        static RenderBenchmarkCamera zoomBenchmarkCameraAt(RenderBenchmarkCamera origin, int width, int height,
+              int anchorX, int anchorY, ZoomBenchmarkRange range, double progress) {
+            double clampedProgress = Math.clamp(progress, 0.0, 1.0);
+            if ((clampedProgress == 0.0) || (clampedProgress == 1.0)) {
+                return origin;
+            }
+
+            double pathPosition = clampedProgress * 4.0;
+            int segment = Math.min((int) pathPosition, 3);
+            double segmentProgress = pathPosition - segment;
+            double startScale = switch (segment) {
+                case 0 -> origin.scale();
+                case 1, 3 -> range.atlasScale();
+                case 2 -> range.detailScale();
+                default -> throw new IllegalStateException("Unexpected zoom benchmark segment: " + segment);
+            };
+            double endScale = switch (segment) {
+                case 0, 2 -> range.atlasScale();
+                case 1 -> range.detailScale();
+                case 3 -> origin.scale();
+                default -> throw new IllegalStateException("Unexpected zoom benchmark segment: " + segment);
+            };
+            double scale = zoomBenchmarkScaleAt(startScale, endScale, segmentProgress);
+            return zoomBenchmarkCameraAtScale(origin, width, height, anchorX, anchorY, scale);
+        }
+
+        static double zoomBenchmarkScaleAt(double startScale, double endScale, double progress) {
+            double scaleDistance = Math.abs(Math.log(endScale / startScale));
+            int stepCount = Math.max(1, (int) Math.ceil(scaleDistance / Math.log(ZOOM_WHEEL_FACTOR)));
+            int completedSteps = Math.min(stepCount,
+                  (int) Math.floor(Math.clamp(progress, 0.0, 1.0) * stepCount));
+            double stepProgress = (double) completedSteps / stepCount;
+            return Math.exp(interpolate(Math.log(startScale), Math.log(endScale), stepProgress));
+        }
+
+        private static RenderBenchmarkCamera zoomBenchmarkCameraAtScale(RenderBenchmarkCamera origin,
+              int width, int height, int anchorX, int anchorY, double scale) {
+            double anchorMapX = (anchorX - width / 2.0) / origin.scale() - origin.centerX();
+            double anchorMapY = (height / 2.0 - anchorY) / origin.scale() + origin.centerY();
+            double centerX = (anchorX - width / 2.0) / scale - anchorMapX;
+            double centerY = anchorMapY - (height / 2.0 - anchorY) / scale;
+            return new RenderBenchmarkCamera(centerX, centerY, scale);
         }
 
     record TerritoryRenderKey(RenderViewKey viewKey, LocalDate date, long dataRevision) {
@@ -1946,6 +2034,8 @@ public class InterstellarMapPanel extends JPanel {
     private final Timer systemDiveAnimationTimer;
     private final Timer renderBenchmarkTimer;
     private final Timer transitionBenchmarkTimer;
+    private final Timer zoomBenchmarkTimer;
+    private final Timer zoomSettlingTimer;
     private final RenderPerformanceTracker renderPerformanceTracker =
           new RenderPerformanceTracker(System.nanoTime());
     private boolean optionPanelHidden;
@@ -2030,6 +2120,14 @@ public class InterstellarMapPanel extends JPanel {
     private TransitionBenchmarkPhase transitionBenchmarkPhase;
     private long transitionBenchmarkPhaseStartedNanos;
     private boolean transitionBenchmarkExactFramePainted;
+    private ZoomBenchmarkRun zoomBenchmarkRun;
+    private ZoomBenchmarkPhase zoomBenchmarkPhase;
+    private long zoomBenchmarkPhaseStartedNanos;
+    private RenderBenchmarkCamera zoomBenchmarkExpectedCamera;
+    private boolean zoomBenchmarkCameraPainted;
+    private boolean zoomBenchmarkExactFramePainted;
+    private boolean zoomBenchmarkPathComplete;
+    private boolean zoomInteractionActive;
     private NavigationRouteAnalysis.Reachability cachedReachability;
     private long reachabilityRevision;
     private PathAssessment cachedProposedRouteAssessment = emptyPathAssessment();
@@ -2115,6 +2213,10 @@ public class InterstellarMapPanel extends JPanel {
             transitionBenchmarkTimer = new Timer(RENDER_BENCHMARK_DELAY_MS,
                 e -> updateTransitionBenchmark());
             transitionBenchmarkTimer.setCoalesce(true);
+            zoomBenchmarkTimer = new Timer(RENDER_BENCHMARK_DELAY_MS, e -> updateZoomBenchmark());
+            zoomBenchmarkTimer.setCoalesce(true);
+            zoomSettlingTimer = new Timer(ZOOM_SETTLE_DELAY_MS, e -> finishZoomInteraction());
+            zoomSettlingTimer.setRepeats(false);
 
         setBorder(BorderFactory.createLineBorder(Color.black));
 
@@ -2444,8 +2546,18 @@ public class InterstellarMapPanel extends JPanel {
                     toggleTransitionBenchmark();
                 }
             });
-            LOGGER.info("Map render benchmarks enabled; Ctrl+Shift+B runs warm pan and "
-                  + "Ctrl+Shift+T runs transition/cache regeneration");
+            getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(
+                  KeyStroke.getKeyStroke(KeyEvent.VK_Z,
+                        InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
+                  "toggleZoomBenchmark");
+            getActionMap().put("toggleZoomBenchmark", new AbstractAction() {
+                @Override
+                public void actionPerformed(ActionEvent event) {
+                    toggleZoomBenchmark();
+                }
+            });
+            LOGGER.info("Map render benchmarks enabled; Ctrl+Shift+B runs warm pan, "
+                  + "Ctrl+Shift+T runs transition/cache regeneration, and Ctrl+Shift+Z runs zoom");
         }
 
         addMouseWheelListener(new MouseAdapter() {
@@ -2590,9 +2702,12 @@ public class InterstellarMapPanel extends JPanel {
                         }
                 boolean useRetainedCartography = canUseRetainedCartography(
                       atlas != null, hasActiveRetainedCartographyAnimation());
-                boolean useMergedNavigation = canUseMergedNavigation(useRetainedCartography,
-                      proposedRouteAnimationTimer.isRunning(), showRouteActivation);
+                    boolean scaleChanging = isZoomInteractionActive();
+                    boolean useMergedNavigation = canUseMergedNavigation(useRetainedCartography,
+                        proposedRouteAnimationTimer.isRunning(), showRouteActivation, scaleChanging);
                     boolean useRetainedNavigation = useMergedNavigation || useRetainedMapModeTransition;
+                    boolean useRetainedSystemArt = canUseRetainedSystemArt(
+                        useRetainedCartography, useRetainedMapModeTransition, scaleChanging);
                 long territoryStartedNanos = RENDER_PROFILING_ENABLED ? System.nanoTime() : 0L;
                     int territoryCacheHitsBefore = RENDER_PROFILING_ENABLED
                         ? territoryRenderCache.getReuseCount()
@@ -2678,7 +2793,8 @@ public class InterstellarMapPanel extends JPanel {
                           semanticZoom.detailedOverlayAlpha());
                 }
                 long routePhaseFinishedNanos = RENDER_PROFILING_ENABLED ? System.nanoTime() : 0L;
-                if (useRetainedCartography && !useMergedNavigation && (territoryRenderKey != null)) {
+                    if (useRetainedSystemArt && useRetainedCartography && !useMergedNavigation
+                        && (territoryRenderKey != null)) {
                     paintRetainedSystemArtLayer(g2, territoryRenderKey, systemRenderData,
                           targetMapMode, hpgNetworkDetail, size, visibleTerritoryAlpha,
                           visibleFactionLogoAlpha * FACTION_LOGO_OPACITY,
@@ -2789,7 +2905,7 @@ public class InterstellarMapPanel extends JPanel {
                             || isSameSystem(system, currentSystem)
                             || isSameSystem(system, selectedSystem)
                                                         || routeWaypoint;
-                        boolean systemArtRetained = (useRetainedCartography || useRetainedMapModeTransition)
+                        boolean systemArtRetained = useRetainedSystemArt
                             && (!systemEmpty || optEmptySystems.isSelected());
                         if (showRouteContact) {
                             drawNavigationContact(g2, arc, x, y, size);
@@ -3014,7 +3130,18 @@ public class InterstellarMapPanel extends JPanel {
                               useMergedNavigation || useRetainedMapModeTransition)) {
                         transitionBenchmarkExactFramePainted = true;
                     }
+                    if (zoomBenchmarkRun != null) {
+                        RenderBenchmarkCamera paintedCamera = new RenderBenchmarkCamera(
+                              conf.centerX, conf.centerY, conf.scale);
+                        zoomBenchmarkCameraPainted = paintedCamera.equals(zoomBenchmarkExpectedCamera);
+                        if (isExactZoomBenchmarkFrame(retainedCartographyProvisional,
+                              useRetainedCartography || useRetainedMapModeTransition,
+                              useMergedNavigation || useRetainedMapModeTransition)) {
+                            zoomBenchmarkExactFramePainted = true;
+                        }
+                    }
                       if (!renderBenchmarkTimer.isRunning() && !transitionBenchmarkTimer.isRunning()
+                          && !zoomBenchmarkTimer.isRunning()
                           && renderPerformanceTracker.shouldReport(frameFinishedNanos)) {
                         LOGGER.info("{} timers[layer={}, selection={}, proposedRoute={}, travel={}, dive={}]",
                               renderPerformanceTracker.reportAndReset(frameFinishedNanos),
@@ -3225,9 +3352,15 @@ public class InterstellarMapPanel extends JPanel {
                 && !proposedRouteAnimating && !routeActivationAnimating;
           }
 
-        static boolean canUseMergedNavigation(boolean retainedCartography,
-                    boolean proposedRouteAnimating, boolean routeActivationAnimating) {
-                return retainedCartography && !proposedRouteAnimating && !routeActivationAnimating;
+          static boolean canUseMergedNavigation(boolean retainedCartography,
+              boolean proposedRouteAnimating, boolean routeActivationAnimating, boolean scaleChanging) {
+            return retainedCartography && !proposedRouteAnimating && !routeActivationAnimating
+                && !scaleChanging;
+          }
+
+          static boolean canUseRetainedSystemArt(boolean retainedCartography,
+              boolean retainedMapModeTransition, boolean scaleChanging) {
+            return retainedMapModeTransition || (retainedCartography && !scaleChanging);
         }
 
         private boolean hasActiveRetainedCartographyAnimation() {
@@ -3245,6 +3378,9 @@ public class InterstellarMapPanel extends JPanel {
     public void removeNotify() {
         cancelRenderBenchmark("map hidden");
         cancelTransitionBenchmark("map hidden");
+        cancelZoomBenchmark("map hidden");
+        zoomSettlingTimer.stop();
+        zoomInteractionActive = false;
         travelAnimationTimer.stop();
         suspendSystemDiveAnimation();
         disposeMapLegendDialog();
@@ -3256,6 +3392,10 @@ public class InterstellarMapPanel extends JPanel {
     private void toggleRenderBenchmark() {
         if (transitionBenchmarkRun != null) {
             LOGGER.info("Map render benchmark not started: transition benchmark is running");
+            return;
+        }
+        if (zoomBenchmarkRun != null) {
+            LOGGER.info("Map render benchmark not started: zoom benchmark is running");
             return;
         }
         if (renderBenchmarkTimer.isRunning()) {
@@ -3379,6 +3519,10 @@ public class InterstellarMapPanel extends JPanel {
     private void toggleTransitionBenchmark() {
         if (transitionBenchmarkRun != null) {
             cancelTransitionBenchmark("cancelled by user");
+            return;
+        }
+        if (zoomBenchmarkRun != null) {
+            LOGGER.info("Map transition benchmark not started: zoom benchmark is running");
             return;
         }
         if (renderBenchmarkTimer.isRunning()) {
@@ -3551,6 +3695,229 @@ public class InterstellarMapPanel extends JPanel {
         repaint();
         LOGGER.info("Map transition benchmark cancelled: path={} reason={}",
               TRANSITION_BENCHMARK_PATH_ID, reason);
+    }
+
+    private void toggleZoomBenchmark() {
+        if (zoomBenchmarkRun != null) {
+            cancelZoomBenchmark("cancelled by user");
+            return;
+        }
+        if (renderBenchmarkTimer.isRunning()) {
+            LOGGER.info("Map zoom benchmark not started: warm-pan benchmark is running");
+            return;
+        }
+        if (transitionBenchmarkRun != null) {
+            LOGGER.info("Map zoom benchmark not started: transition benchmark is running");
+            return;
+        }
+        if (!isShowing() || (getWidth() <= 0) || (getHeight() <= 0)) {
+            LOGGER.info("Map zoom benchmark not started: map is not visible");
+            return;
+        }
+        if (hasActiveRenderAnimation()) {
+            LOGGER.info("Map zoom benchmark not started: wait for map animations to finish");
+            return;
+        }
+
+        RenderBenchmarkCamera origin = new RenderBenchmarkCamera(conf.centerX, conf.centerY, conf.scale);
+        if (!isValidZoomBenchmarkOrigin(origin)) {
+            LOGGER.info("Map zoom benchmark not started: invalid camera center=({}, {}) scale={}",
+                  origin.centerX(), origin.centerY(), origin.scale());
+            return;
+        }
+        double semanticReference = getSemanticZoomReference(conf.showPlanetNamesThreshold);
+        ZoomBenchmarkRange range = zoomBenchmarkRange(semanticReference);
+        int anchorX = getWidth() * 2 / 3;
+        int anchorY = getHeight() / 3;
+        zoomBenchmarkRun = new ZoomBenchmarkRun(origin, getWidth(), getHeight(), campaign.getLocalDate(),
+              getSelectedMapMode(), optTerritory.isSelected(), optHPGNetwork.isSelected(),
+              optOperations.isSelected(), optReachability.isSelected(), optEmptySystems.isSelected(),
+              anchorX, anchorY, semanticReference, range);
+        zoomBenchmarkPhase = ZoomBenchmarkPhase.WARMUP;
+        zoomBenchmarkPhaseStartedNanos = System.nanoTime();
+        zoomBenchmarkExpectedCamera = origin;
+        zoomBenchmarkCameraPainted = false;
+        zoomBenchmarkExactFramePainted = false;
+        zoomBenchmarkPathComplete = false;
+        renderPerformanceTracker.reset(zoomBenchmarkPhaseStartedNanos);
+        zoomBenchmarkTimer.start();
+        requestStaticCartographyPreparation();
+        repaint();
+        LOGGER.info("Map zoom benchmark warmup started: path={} atlasScale={} detailScale={} duration={}s",
+              ZOOM_BENCHMARK_PATH_ID, range.atlasScale(), range.detailScale(),
+              ZOOM_BENCHMARK_DURATION_NS / 1_000_000_000L);
+    }
+
+    private void updateZoomBenchmark() {
+        ZoomBenchmarkRun benchmarkRun = zoomBenchmarkRun;
+        if (benchmarkRun == null) {
+            zoomBenchmarkTimer.stop();
+            return;
+        }
+        if (!isZoomBenchmarkConfigurationCurrent(benchmarkRun)) {
+            cancelZoomBenchmark("map configuration changed");
+            return;
+        }
+        if (hasActiveRenderAnimation()) {
+            cancelZoomBenchmark("another map animation started");
+            return;
+        }
+
+        long nowNanos = System.nanoTime();
+        switch (zoomBenchmarkPhase) {
+            case WARMUP -> updateZoomBenchmarkWarmup(nowNanos);
+            case ACTIVE_ZOOM -> updateActiveZoomBenchmark(benchmarkRun, nowNanos);
+            case SETTLED_REGENERATION -> updateSettledZoomBenchmark(benchmarkRun, nowNanos);
+        }
+    }
+
+    private void updateZoomBenchmarkWarmup(long nowNanos) {
+        if ((nowNanos - zoomBenchmarkPhaseStartedNanos) > ZOOM_BENCHMARK_TIMEOUT_NS) {
+            cancelZoomBenchmark("warmup timed out");
+            return;
+        }
+        if (!zoomBenchmarkExactFramePainted) {
+            return;
+        }
+
+        zoomBenchmarkPhase = ZoomBenchmarkPhase.ACTIVE_ZOOM;
+        zoomBenchmarkPhaseStartedNanos = nowNanos;
+        zoomBenchmarkCameraPainted = false;
+        zoomBenchmarkExactFramePainted = false;
+        zoomBenchmarkPathComplete = false;
+        renderPerformanceTracker.reset(nowNanos);
+        LOGGER.info("Map zoom benchmark measurement started: path={} phase=active-zoom",
+              ZOOM_BENCHMARK_PATH_ID);
+    }
+
+    private void updateActiveZoomBenchmark(ZoomBenchmarkRun benchmarkRun, long nowNanos) {
+        if ((nowNanos - zoomBenchmarkPhaseStartedNanos)
+              > (ZOOM_BENCHMARK_DURATION_NS + ZOOM_BENCHMARK_TIMEOUT_NS)) {
+            cancelZoomBenchmark("active zoom timed out");
+            return;
+        }
+        if (zoomBenchmarkPathComplete) {
+            if (!zoomBenchmarkCameraPainted) {
+                return;
+            }
+            finishActiveZoomMeasurement(benchmarkRun, nowNanos);
+            return;
+        }
+
+        double progress = Math.min(1.0,
+              (double) (nowNanos - zoomBenchmarkPhaseStartedNanos) / ZOOM_BENCHMARK_DURATION_NS);
+          RenderBenchmarkCamera camera = zoomBenchmarkCameraAt(benchmarkRun.origin(), benchmarkRun.width(),
+              benchmarkRun.height(), benchmarkRun.anchorX(), benchmarkRun.anchorY(), benchmarkRun.range(),
+              progress);
+          if (!camera.equals(zoomBenchmarkExpectedCamera)) {
+            applyZoomBenchmarkCamera(camera);
+          }
+        zoomBenchmarkPathComplete = progress >= 1.0;
+    }
+
+    private void finishActiveZoomMeasurement(ZoomBenchmarkRun benchmarkRun, long nowNanos) {
+        logZoomBenchmarkResult(benchmarkRun, "active-zoom", nowNanos);
+        zoomBenchmarkPhase = ZoomBenchmarkPhase.SETTLED_REGENERATION;
+        zoomBenchmarkPhaseStartedNanos = nowNanos;
+        zoomBenchmarkExactFramePainted = false;
+        zoomBenchmarkPathComplete = false;
+        renderPerformanceTracker.reset(nowNanos);
+        clearRenderLayerCaches();
+        applyZoomBenchmarkCamera(benchmarkRun.origin());
+        requestStaticCartographyPreparation();
+        LOGGER.info("Map zoom benchmark measurement started: path={} phase=settled-regeneration",
+              ZOOM_BENCHMARK_PATH_ID);
+    }
+
+    private void updateSettledZoomBenchmark(ZoomBenchmarkRun benchmarkRun, long nowNanos) {
+        if ((nowNanos - zoomBenchmarkPhaseStartedNanos) > ZOOM_BENCHMARK_TIMEOUT_NS) {
+            cancelZoomBenchmark("settled regeneration timed out");
+            return;
+        }
+        if (!zoomBenchmarkExactFramePainted) {
+            return;
+        }
+
+        logZoomBenchmarkResult(benchmarkRun, "settled-regeneration", nowNanos);
+        zoomBenchmarkTimer.stop();
+        zoomBenchmarkRun = null;
+        zoomBenchmarkPhase = null;
+        zoomBenchmarkExpectedCamera = null;
+        zoomBenchmarkCameraPainted = false;
+        zoomBenchmarkExactFramePainted = false;
+        renderPerformanceTracker.reset(nowNanos);
+        LOGGER.info("Map zoom benchmark completed: path={} restoredScale={}",
+              ZOOM_BENCHMARK_PATH_ID, benchmarkRun.origin().scale());
+    }
+
+    private boolean isZoomBenchmarkConfigurationCurrent(ZoomBenchmarkRun benchmarkRun) {
+        return (getWidth() == benchmarkRun.width()) && (getHeight() == benchmarkRun.height())
+              && campaign.getLocalDate().equals(benchmarkRun.date())
+              && (getSelectedMapMode() == benchmarkRun.mapMode())
+              && (optTerritory.isSelected() == benchmarkRun.territory())
+              && (optHPGNetwork.isSelected() == benchmarkRun.hpgNetwork())
+              && (optOperations.isSelected() == benchmarkRun.operations())
+              && (optReachability.isSelected() == benchmarkRun.reachability())
+              && (optEmptySystems.isSelected() == benchmarkRun.emptySystems())
+              && (Double.doubleToLongBits(getSemanticZoomReference(conf.showPlanetNamesThreshold))
+                    == Double.doubleToLongBits(benchmarkRun.semanticReference()))
+              && new RenderBenchmarkCamera(conf.centerX, conf.centerY, conf.scale)
+                    .equals(zoomBenchmarkExpectedCamera);
+    }
+
+    private void applyZoomBenchmarkCamera(RenderBenchmarkCamera camera) {
+        zoomBenchmarkExpectedCamera = camera;
+        zoomBenchmarkCameraPainted = false;
+        applyRenderBenchmarkCamera(camera);
+    }
+
+    private void logZoomBenchmarkResult(ZoomBenchmarkRun benchmarkRun, String phase, long nowNanos) {
+        String report = renderPerformanceTracker.hasSamples()
+              ? renderPerformanceTracker.reportAndReset(nowNanos)
+              : "Map render: frames=0";
+        long elapsedMillis = (nowNanos - zoomBenchmarkPhaseStartedNanos) / 1_000_000L;
+        LOGGER.info("Map zoom benchmark result: path={} phase={} viewport={}x{} date={} mode={} "
+                    + "layers[territory={} hpg={} operations={} reachability={} empty={}] "
+                    + "center=({}, {}) scale={} anchor=({}, {}) range=({}, {}) elapsed={}ms {}",
+              ZOOM_BENCHMARK_PATH_ID, phase, benchmarkRun.width(), benchmarkRun.height(), benchmarkRun.date(),
+              benchmarkRun.mapMode(), benchmarkRun.territory(), benchmarkRun.hpgNetwork(),
+              benchmarkRun.operations(), benchmarkRun.reachability(), benchmarkRun.emptySystems(),
+              benchmarkRun.origin().centerX(), benchmarkRun.origin().centerY(), benchmarkRun.origin().scale(),
+              benchmarkRun.anchorX(), benchmarkRun.anchorY(), benchmarkRun.range().atlasScale(),
+              benchmarkRun.range().detailScale(), elapsedMillis, report);
+    }
+
+    private void cancelZoomBenchmark(String reason) {
+        ZoomBenchmarkRun benchmarkRun = zoomBenchmarkRun;
+        if (benchmarkRun == null) {
+            return;
+        }
+        zoomBenchmarkTimer.stop();
+        zoomBenchmarkRun = null;
+        zoomBenchmarkPhase = null;
+        zoomBenchmarkExpectedCamera = null;
+        zoomBenchmarkCameraPainted = false;
+        zoomBenchmarkExactFramePainted = false;
+        zoomBenchmarkPathComplete = false;
+        renderPerformanceTracker.reset(System.nanoTime());
+        applyRenderBenchmarkCamera(benchmarkRun.origin());
+        LOGGER.info("Map zoom benchmark cancelled: path={} reason={}", ZOOM_BENCHMARK_PATH_ID, reason);
+    }
+
+    private boolean isZoomInteractionActive() {
+        return zoomInteractionActive || ((zoomBenchmarkRun != null)
+              && (zoomBenchmarkPhase == ZoomBenchmarkPhase.ACTIVE_ZOOM));
+    }
+
+    private void finishZoomInteraction() {
+        zoomSettlingTimer.stop();
+        if (!zoomInteractionActive) {
+            return;
+        }
+        zoomInteractionActive = false;
+        retainedSystemArtRenderCache.clear();
+        retainedNavigationRenderCache.clear();
+        repaint();
     }
 
     private void updateAnimationVisibility() {
@@ -5323,9 +5690,40 @@ public class InterstellarMapPanel extends JPanel {
           RetainedCartographyKey key = createRetainedCartographyKey(
               renderKey, mapMode, hpgNetworkDetail, systemSize, territoryAlpha,
               factionLogoAlpha, hpgNetworkAlpha, semanticZoom, factionLogoRenderKey);
+          if (isZoomInteractionActive()) {
+              paintActiveZoomCartographyLayer(graphics, key, viewKey, overscan, atlas,
+                    factionLogoRenderKey, territoryAlpha, factionLogoAlpha);
+              return;
+          }
           PannableRenderLayer retainedLayer = getRetainedCartographyLayer(
               key, viewKey, overscan, 0, atlas, factionLogoRenderKey, territoryAlpha, factionLogoAlpha);
           drawPannableRenderLayer(graphics, retainedLayer, viewKey.width(), viewKey.height(), 1.0);
+        }
+
+        private void paintActiveZoomCartographyLayer(Graphics2D graphics, RetainedCartographyKey key,
+              RenderViewKey viewKey, int overscan, TerritoryAtlas atlas,
+              FactionLogoRenderKey factionLogoRenderKey, double territoryAlpha, double factionLogoAlpha) {
+            RetainedCartographyRenderRequest request = new RetainedCartographyRenderRequest(
+                  key, viewKey, overscan, atlas, factionLogoRenderKey, territoryAlpha, factionLogoAlpha);
+            PannableRenderLayer availableLayer = retainedCartographyRenderCache.getOrRefresh(
+                  key, viewKey, overscan, 0,
+                  layerGraphics -> drawRetainedCartographyLayer(layerGraphics, atlas,
+                        factionLogoRenderKey, territoryAlpha, factionLogoAlpha, overscan));
+            if (availableLayer != null) {
+                drawPannableRenderLayer(graphics, availableLayer, viewKey.width(), viewKey.height(), 1.0);
+                return;
+            }
+
+            PannableRenderLayerSnapshot<RetainedCartographyKey> previousLayer =
+                  retainedCartographyRenderCache.snapshot();
+            retainedCartographyPreparationQueue.request(request);
+            if ((previousLayer != null) && previousLayer.key().dataKey().equals(key.dataKey())) {
+                retainedCartographyProvisional = true;
+                drawPannableSnapshot(graphics, previousLayer, viewKey, 1.0);
+            } else {
+                drawRetainedCartographyLayer(graphics, atlas,
+                      factionLogoRenderKey, territoryAlpha, factionLogoAlpha, 0);
+            }
         }
 
         private PannableRenderLayer getRetainedCartographyLayer(RetainedCartographyKey key,
@@ -8439,10 +8837,17 @@ public class InterstellarMapPanel extends JPanel {
     }
 
     private void zoom(double percent, Point pos) {
-        double newScale = conf.scale * percent;
-        if (!Double.isFinite(percent) || (percent <= 0) || !Double.isFinite(newScale) || (newScale <= 0)) {
+        double requestedScale = conf.scale * percent;
+        if (!Double.isFinite(percent) || (percent <= 0) || !Double.isFinite(requestedScale)
+              || (requestedScale <= 0)) {
             return;
         }
+        double newScale = boundedMapScale(requestedScale);
+        if (Double.doubleToLongBits(newScale) == Double.doubleToLongBits(conf.scale)) {
+            return;
+        }
+        zoomInteractionActive = true;
+        zoomSettlingTimer.restart();
 
         int width = getWidth();
         int height = getHeight();

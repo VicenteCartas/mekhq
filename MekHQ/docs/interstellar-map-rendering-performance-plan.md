@@ -4,20 +4,20 @@
 
 Restore the preferred intrinsic star colors and crisp ownership or analytical rings without making the map feel crowded or sacrificing interaction performance on ordinary hardware.
 
-The development laptop is substantially faster than the intended baseline hardware. A result near 16.7 ms on this machine is therefore not sufficient. The dense-map target on this machine is an average frame time below 10 ms, leaving meaningful headroom for slower systems.
+The development laptop is substantially faster than the intended baseline hardware. The target user's lower-end Mac report says warm panning looks good, but no repeatable timings were captured. External Mac benchmarking is therefore deferred and is not a completion gate. Use the deterministic development-machine baselines as the repeatable proxy: preserve the existing sub-10 ms average and sub-16.7 ms p95 guardrails, and aim to reduce each current warm-pan scenario's median average and p95 by approximately 50% without weakening visuals.
 
 ## Current Status (2026-09-05)
 
-The core implementation has reached Phase 3. Controlled three-run `pan-v2` dense-medium, detail-view, and atlas baselines meet the average, p95, p99, maximum, cache-reuse, and threshold targets. Map-mode transitions now stage exact-scale stable and endpoint surfaces before crossfading: all measured animation cache-hit frames stayed below 16.7 ms and no final transition run exceeded 33 ms. The aggregate cold-transition p95 remains above 16.7 ms, and one first-run same-view regeneration paint reached 39.7 ms. Broader visual/HiDPI and lower-end hardware acceptance remain incomplete; no performance results from the lower-end tester have been recorded here yet.
+The core implementation has reached Phase 3. Controlled three-run `pan-v2` dense-medium, detail-view, and atlas baselines meet the original average, p95, p99, maximum, cache-reuse, and threshold targets. Map-mode transitions now stage exact-scale stable and endpoint surfaces before crossfading: all measured animation cache-hit frames stayed below 16.7 ms and no final transition run exceeded 33 ms. Active zoom now draws systems and navigation live while directly transforming the last compatible cartography snapshot until an exact replacement is ready. Compared with the prior active-zoom implementation, this removed all 42 synchronous full fallback renders and reduced median average/p95/maximum from 30.9/63.6/67.8 ms to 12.6/21.0/22.6 ms without visual defects. No measured active frame exceeded 33 ms, although average and p95 remain above their interaction targets. Broader visual/HiDPI acceptance and the new approximately 50% local warm-pan improvement target remain incomplete; external Mac timing is deferred.
 
 The rendering model and numbered phases below retain the original design targets. This table distinguishes implemented behavior from remaining work; an implemented phase is not a claim that all of its acceptance checks have passed.
 
 | Phase | Status | Implemented and remaining |
 | --- | --- | --- |
-| 0. Reproducible benchmark | Partial | Percentiles, threshold counts, visible-system counts, cache outcomes, render-phase timings, JFR captures, deterministic `pan-v2` playback, and separate `transition-cold-v1` mode-transition/cache-regeneration measurement are available. Dense-medium, detail, atlas, transition, and same-view regeneration scenarios have valid three-run baselines; complete environment metadata and the rest of the repeated matrix remain. |
+| 0. Reproducible benchmark | Partial | Percentiles, threshold counts, visible-system counts, cache outcomes, render-phase timings, JFR captures, deterministic `pan-v2` playback, separate `transition-cold-v1` mode-transition/cache-regeneration measurement, and separate `zoom-v1` active-zoom/settled-regeneration measurement are available. Dense-medium, detail, atlas, transition, same-view regeneration, and zoom scenarios have valid three-run baselines; complete environment metadata and the rest of the repeated matrix remain. |
 | 1. Earlier density reduction | Core implemented | Compact contacts and priority labels persist through medium zoom; rings, ordinary labels, and secondary details appear later. Explicit hysteresis is not implemented; formal transition review remains. |
 | 2. Restore detail fidelity | Implemented | Intrinsic stars, crisp vector ownership and analytical rings, equal shared-faction segments, and corresponding legend/test updates are in place. Final normal/HiDPI visual acceptance remains. |
-| 3. Consolidated pannable cartography | Core implemented; sampled target met | Hierarchical retained layers, overscan, exposed-strip refresh, spatial indexing, asynchronous cartography regeneration, and retained map-mode endpoint crossfades are in place. See implementation differences below; final visual and lower-end acceptance remain. |
+| 3. Consolidated pannable cartography | Core implemented; sampled target met | Hierarchical retained layers, overscan, exposed-strip refresh, spatial indexing, asynchronous cartography regeneration, and retained map-mode endpoint crossfades are in place. See implementation differences below; final visual acceptance and the new local stretch target remain. |
 | 4. GPU-aware Java2D surfaces | Not started; deferred | No demonstrated need to change the Java2D pipeline or introduce accelerated surface mirrors. Revisit only if measurements reach the escalation gate. |
 | 5. Tiled and parallel preparation | Not started; deferred | Background cartography preparation is already part of Phase 3, but a tile cache and parallel tile workers are not implemented. |
 | 6. Dedicated GPU renderer | Not started; deferred | No GPU backend or renderer rewrite is justified by the recorded results. |
@@ -28,10 +28,13 @@ The rendering model and numbered phases below retain the original design targets
 - An immutable presentation snapshot now prepares operation markers, player-base counts, and active-contract employer/target sets on campaign refresh events instead of rebuilding those collections during every paint. Current baselines include the snapshot, but no paired run isolates its individual performance impact.
 - An opt-in deterministic `pan-v2` harness now provides a closed whole-screen-pixel warm-pan path, separate warm-up and aggregate measurement windows, explicit run metadata, cancellation on invalidating lifecycle changes, and exact camera restoration. Controlled dense-medium, detail, and atlas result sets are recorded below.
 - An opt-in `transition-cold-v1` harness measures a Faction-to-Technology transition, or a return to Faction when started in another mode, until an exact retained frame is painted. It then clears the exact-scale render caches and measures same-view regeneration separately before restoring the original mode.
+- An opt-in `zoom-v1` harness uses a fixed off-center viewport anchor to cross atlas, navigation, and detail bands in both directions. It reports active scale changes separately from cold exact-scale regeneration and restores the exact camera.
 - Stable cartography/navigation, intrinsic system art, and previous/target analytical overlays are prepared in separate exact-scale retained surfaces while the source view remains unchanged. Animation ticks composite those surfaces; capitals and other dynamic markers remain live and crisp above them.
 - Required cache margins and expanded system-query bounds address black seams and clipped markers at viewport/cache edges.
 - Detail-view live queries include the measured rightward label extent beyond the left viewport edge, preventing labels and associated live system content from popping during horizontal movement.
 - Background cartography regeneration retains a transformed previous raster while preparing its exact-scale replacement, then installs current results on the EDT. Latest-request handling covers superseded work, A-B-A requests, cancellation, and hide/show lifecycle changes.
+- During active zoom, compatible cartography snapshots are transformed directly into the viewport instead of first allocating, repainting, installing, and then drawing a full overscanned fallback raster. Exact-scale replacements continue to prepare asynchronously.
+- Publication validation ran both Checkstyle tasks and the complete MekHQ unit-test suite. The map fixture regression found by that run was repaired and its focused test passes; all remaining tests pass when the independently reproduced, unchanged `CommandGeneratorAugmentationRulesTest.theChosenRulesAreWrittenToTheCampaign` baseline failure is excluded.
 - Inspector scrolling uses GUI-scaled increments and cancels dossier reveal animation when scrolling begins.
 - Continuous star shimmer, HPG packets, active-route flow pulses, and JumpShip navigation lights are removed. Finite route activation and actual jump transitions remain.
 
@@ -39,11 +42,10 @@ Phase 3 uses a hierarchy of cartography, system-art, navigation, and transition 
 
 ### Remaining Acceptance Work
 
-1. Finish visual checks for retained map-mode transitions, including endpoint sharpness, rapid reversal, semantic boundaries, HiDPI rings, rapid pan/zoom, marker clipping, and inspector scrolling. Initial transition review looked smooth but was not certain enough for final visual acceptance.
-2. Report first render separately from same-view regeneration. Dense, detail, and atlas warm-pan thresholds pass; transition animation cache-hit frames now pass 16.7 ms, but aggregate cold preparation remains above that target and the final regeneration set contains one first-run paint above 33 ms.
-3. Revisit asynchronous or more granular cold preparation only if visual review, lower-end testing, or repeated first-run evidence shows a user-visible hitch. Do not destabilize the passing warm-pan path merely to improve the aggregate cold-transition percentile.
-4. Collect the lower-end tester's timings, hardware/display details, exact build, and responsiveness observations.
-5. Run the full MekHQ test suite and required build/Checkstyle gates on the final publication candidate. The 17 focused faction-standing tests passed during the latest merge-conflict resolution, but that is not full renderer or publication validation.
+1. Capture a focused JFR and split direct-snapshot transform time from live-system and background work during the 42 new-scale `zoom-v1` frames. Continue zoom optimization only if that evidence identifies a bounded path toward the sub-10 ms average and sub-16.7 ms p95 targets; otherwise accept the no-frame-above-33 ms result and move to final visual/HiDPI acceptance.
+2. Finish visual checks for retained map-mode transitions, including endpoint sharpness, rapid reversal, semantic boundaries, HiDPI rings, rapid pan/zoom, marker clipping, and inspector scrolling. Initial transition review looked smooth but was not certain enough for final visual acceptance.
+3. Revisit asynchronous or more granular cold preparation only if zoom evidence, visual review, or repeated first-render evidence shows a user-visible hitch. Do not destabilize the passing warm-pan path merely to improve a cold percentile.
+4. Pursue the approximately 50% development-machine warm-pan targets below as the repeatable proxy for additional slower-hardware headroom. The deferred Mac benchmark may be recorded if it later becomes available, but it does not block acceptance.
 
 Remain on the Phase 3 Java2D architecture unless these checks demonstrate a need to escalate. The current dense-medium, detail, and atlas baselines provide no reason to escalate.
 
@@ -66,6 +68,16 @@ Optional follow-up optimizations and evidence-gated experiments for JumpShip lig
 
 Measure after warm-up at the same window size, date, map layer, route state, and camera path.
 
+The current baselines already pass the original interaction guardrails. For further optimization, use three-run medians and target approximately half of each current warm-pan median average and p95:
+
+| Warm-pan scenario | Current average / p95 | Approximate 50% target average / p95 |
+| --- | ---: | ---: |
+| Dense medium | 6.4 ms / 7.1 ms | 3.2 ms / 3.6 ms |
+| Detail | 7.9 ms / 8.5 ms | 4.0 ms / 4.3 ms |
+| Atlas | 7.0 ms / 7.8 ms | 3.5 ms / 3.9 ms |
+
+These are development-machine stretch targets, not claims about a particular Mac's delivered FPS. Preserve the exact scenario, fidelity, cache-correctness, and no-frame-above-33 ms guardrails while pursuing them.
+
 ### Primary Dense Scenario
 
 - Approximately 500 visible systems at medium zoom.
@@ -79,6 +91,7 @@ Measure after warm-up at the same window size, date, map layer, route state, and
 
 - Detail zoom with full stars, rings, labels, and service markers.
 - Long zoom with strategic contacts and priority information.
+- Repeated cursor-anchored zoom across atlas, navigation, and detail bands, with the active scale sweep and settled exact-scale regeneration reported separately.
 - Map-layer transition between faction and analytical modes.
 - Active and proposed routes, including warnings and waypoint badges.
 - Hover and selection movement across dense systems.
@@ -130,6 +143,65 @@ Three `pan-v2` runs used viewport 1032x561, campaign date 3050-12-23, faction mo
 
 The median average is below 10 ms, median p95 is below 16.7 ms, no measured frame exceeded 16 ms or 33 ms, and no full cache regeneration occurred. All 2,954 measured frames used retained cartography and merged navigation. This scenario passes its paint-duration, cache-reuse, static-presentation, and horizontal-pan visual gates.
 
+### Pre-Optimization Zoom Baseline (2026-09-05)
+
+Three valid `zoom-v1` runs used viewport 1032x555, campaign date 3050-12-23, faction mode, territory and operations enabled, HPG/reachability/empty systems disabled, a scale near 4.7, anchor `(688, 185)`, and the semantic scale range 0.95-5.04. The path uses deterministic wheel-like steps through atlas and full detail in both directions before restoring the captured camera. Visual review found no flashes after adopting stepped samples. The first run used a nearby camera; runs 2-3 used the same origin, so the median is directional rather than a strictly paired three-run camera baseline.
+
+| Active zoom run | Elapsed | Frames | Average | p50 | p95 | p99/max | `>16ms` / `>33ms` | Cache totals |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 8,079 ms | 83 | 34.6 ms | 41.9 ms | 65.4 ms | 72.4 ms | 51 / 42 | 41 hit, 125 full |
+| 2 | 8,074 ms | 83 | 33.4 ms | 42.2 ms | 64.4 ms | 77.1 ms | 50 / 42 | 41 hit, 125 full |
+| 3 | 8,074 ms | 83 | 34.0 ms | 42.0 ms | 67.7 ms | 73.2 ms | 50 / 42 | 41 hit, 125 full |
+| Median | 8,074 ms | 83 | 34.0 ms | 42.0 ms | 65.4 ms | 73.2 ms | 50 / 42 | 41 hit, 125 full |
+
+Median static work was 32.5 ms, including 30.1 ms attributed to territory/merged retained surfaces. Every measured frame involved a full render because each wheel-like scale step invalidated the exact-scale cartography and merged-navigation keys; held samples could reuse one surface while the other rebuilt. Active zoom fails the interaction timing and cache-reuse gates.
+
+| Settled regeneration run | Elapsed | Frames | Average | p50 | p95/p99/max | `>16ms` / `>33ms` | Cache totals |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 88 ms | 3 | 13.4 ms | 16.6 ms | 17.1 ms | 2 / 0 | 3 hit, 3 full |
+| 2 | 116 ms | 3 | 15.7 ms | 16.6 ms | 20.6 ms | 2 / 0 | 3 hit, 3 full |
+| 3 | 87 ms | 3 | 13.3 ms | 16.5 ms | 16.6 ms | 2 / 0 | 3 hit, 3 full |
+| Median | 88 ms | 3 | 13.4 ms | 16.6 ms | 17.1 ms | 2 / 0 | 3 hit, 3 full |
+
+Settled regeneration is bounded and has no frame above 33 ms. This isolates repeated active scale-key churn, rather than one final exact rebuild, as the controlling zoom cost. An earlier run that captured scale `0.0001548` and a continuous 16 ms scale sweep are diagnostic-only and excluded: `zoom-v1` now rejects invalid origins, production zoom is bounded to 0.1-100, and the harness uses wheel-like held steps.
+
+### Active-Zoom Live-System Verification (2026-09-05)
+
+During scale changes, the renderer now retains transformed cartography while drawing routes, HPG content, and system art live; exact merged navigation resumes after settlement. Three `zoom-v1` runs used an unchanged 1032x555 view at center `(11.37539228723405, -8.669644946808447)`, scale 4.7, and the same layer configuration and semantic range as the baseline. Visual review found no flashes, missing content, blur, or settlement jump.
+
+| Active zoom run | Elapsed | Frames | Average | p50 | p95 | p99/max | `>16ms` / `>33ms` | Cache totals |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 8,089 ms | 83 | 30.9 ms | 40.8 ms | 63.2 ms | 67.8 ms | 42 / 42 | 41 hit, 42 full |
+| 2 | 8,077 ms | 83 | 30.9 ms | 41.1 ms | 63.6 ms | 67.4 ms | 43 / 42 | 41 hit, 42 full |
+| 3 | 8,089 ms | 83 | 30.6 ms | 39.6 ms | 66.7 ms | 69.3 ms | 42 / 42 | 41 hit, 42 full |
+| Median | 8,089 ms | 83 | 30.9 ms | 40.8 ms | 63.6 ms | 67.8 ms | 42 / 42 | 41 hit, 42 full |
+
+Relative to the pre-optimization median, average fell 9%, p50 fell 3%, p95 fell 3%, and full renders fell 66% from 125 to 42. Cache-hit frames averaged 9.0-9.3 ms with 15.1-17.4 ms maxima, while each of the 42 new-scale frames still performed one full cartography fallback and averaged approximately 52 ms. Median territory work fell from 30.1 to 24.0 ms. The change is visually accepted and directionally beneficial, but active zoom still fails the p95 and over-33 ms gates.
+
+The paired settled phases recorded 99-106 ms wall time, 12.9-14.1 ms average, 16.5-19.4 ms maximum, and no frame above 33 ms. Settlement did not regress materially. These results isolated synchronous full-size fallback-raster allocation/reprojection as the next experiment, measured below.
+
+### Direct-Snapshot Active-Zoom Verification (2026-09-05)
+
+The active zoom path now draws the last compatible cartography snapshot directly into the viewport while requesting its exact-scale replacement. It no longer allocates or installs a full overscanned transformed fallback raster for each new wheel step. Three unchanged `zoom-v1` runs used viewport 1032x561, center `(27.65305851063829, 11.561611702127681)`, scale 4.7, anchor `(688, 187)`, and the same campaign date, layer configuration, and semantic range as the prior measurements. Visual review found no blank edges, stale content, blur, flashes, or settlement jump.
+
+| Active zoom run | Elapsed | Frames | Average | p50 | p95 | p99/max | `>16ms` / `>33ms` | Cache outcome |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 8,040 ms | 83 | 12.8 ms | 13.6 ms | 21.3 ms | 22.1 ms | 11 / 0 | 41 hit, 42 direct snapshot, 0 full |
+| 2 | 8,054 ms | 83 | 12.5 ms | 13.3 ms | 21.0 ms | 22.6 ms | 10 / 0 | 41 hit, 42 direct snapshot, 0 full |
+| 3 | 8,053 ms | 83 | 12.6 ms | 13.4 ms | 20.9 ms | 27.5 ms | 11 / 0 | 41 hit, 42 direct snapshot, 0 full |
+| Median | 8,053 ms | 83 | 12.6 ms | 13.4 ms | 21.0 ms | 22.6 ms | 11 / 0 | 41 hit, 42 direct snapshot, 0 full |
+
+Relative to the live-system verification median, direct snapshot compositing reduced average by 59%, p50 by 67%, p95 by 67%, maximum by 67%, frames above 16 ms from 42 to 11, frames above 33 ms from 42 to zero, and synchronous full cartography renders from 42 to zero. Cache-hit frames averaged 9.3-9.5 ms; direct-snapshot frames averaged 15.6-16.0 ms. This removes the identified allocation/reprojection bottleneck and passes the no-frame-above-33 ms gate, but the 12.6 ms average and 21.0 ms p95 remain above the active interaction targets.
+
+| Settled regeneration run | Elapsed | Frames | Average | p50 | p95/p99/max | `>16ms` / `>33ms` | Cache totals |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 126 ms | 3 | 13.3 ms | 16.5 ms | 16.7 ms | 2 / 0 | 3 hit, 3 full |
+| 2 | 123 ms | 3 | 13.2 ms | 16.2 ms | 17.2 ms | 2 / 0 | 3 hit, 3 full |
+| 3 | 135 ms | 3 | 13.0 ms | 16.2 ms | 16.5 ms | 2 / 0 | 3 hit, 3 full |
+| Median | 126 ms | 3 | 13.2 ms | 16.2 ms | 16.7 ms | 2 / 0 | 3 hit, 3 full |
+
+Settled paint cost remains within the previous range and no settlement frame exceeded 33 ms. The exact retained cartography and merged-navigation stack still replaces the transformed snapshot after interaction becomes idle.
+
 ### Pre-Optimization Transition and Same-View Regeneration Baseline (2026-09-05)
 
 Three `transition-cold-v1` runs used viewport 1032x555, campaign date 3050-12-23, territory and operations enabled, HPG/reachability/empty systems disabled, center `(10.363297872340421, -1.9441063829787082)`, scale `4.7`, and 184 visible systems. Each run measured Faction-to-Technology animation through the first exact retained target frame, then cleared the exact-scale render caches and measured same-view Technology regeneration separately.
@@ -172,13 +244,15 @@ Every transition paint used retained cartography and merged navigation. The ten 
 | 3 | 94 ms | 2 | 17.7 ms | 17.2 ms | 18.1 ms | 2 / 0 | 2 full |
 | Median | 94 ms | 2 | 17.7 ms | 17.3 ms | 18.1 ms | 2 / 0 | 2 full |
 
-Same-view regeneration retains a bounded 94 ms median wall time and 18.1 ms median maximum, but the first run's 39.7 ms paint prevents an unconditional under-33 ms claim. No exception has been assigned to that outlier. Regeneration remains separate from the now-retained transition animation and should be reevaluated on lower-end hardware before further cache complexity is justified.
+Same-view regeneration retains a bounded 94 ms median wall time and 18.1 ms median maximum, but the first run's 39.7 ms paint prevents an unconditional under-33 ms claim. No exception has been assigned to that outlier. Regeneration remains separate from the now-retained transition animation; repeated first-render or visual hitch evidence is required before further cache complexity is justified.
 
 The profiler is enabled with `-Dmekhq.map.renderProfiling=true` and emits `Map render:` aggregates during painting at roughly five-second reporting intervals through the normal MekHQ logger. Its `>16ms` counter uses 16.0 ms, not the 16.7 ms p95 target; `>33ms` is reported separately.
 
 For deterministic warm-pan playback, also set `-Dmekhq.map.renderBenchmark=true`, open the interstellar map at the intended starting view, and press `Ctrl+Shift+B`. The `pan-v2` harness runs a 5-second warm-up and one 30-second measured pass, then restores the exact starting camera. Its self-contained `Map render benchmark result:` line is written to `MekHQ/logs/mekhq.log`. Repeat each unchanged configuration at least three times.
 
 With the same properties enabled, press `Ctrl+Shift+T` to run `transition-cold-v1`. The harness first waits for a settled exact retained frame, changes from Faction to Technology or from the current analytical mode to Faction, and emits a `phase=mode-transition` result when the target mode's exact frame has been painted. It then clears only the exact-scale render caches and emits a separate `phase=cache-regeneration` result when the rebuilt exact frame has been painted. Each line includes elapsed wall time and the paint-only aggregate. The original map mode is restored automatically. Repeat the unchanged configuration at least three times and do not interact with the map while a run is active.
+
+Press `Ctrl+Shift+Z` to run `zoom-v1`. The harness waits for an exact retained starting frame, then uses a fixed off-center viewport anchor and deterministic wheel-like held steps to move from the captured scale into the atlas band, through full detail, back through atlas, and finally to the exact captured camera. It emits `phase=active-zoom`, clears the exact-scale caches, and emits `phase=settled-regeneration` after the restored camera has painted an exact retained frame. Both lines include the semantic-band scale range, anchor, elapsed wall time, cache outcomes, and paint aggregate. Repeat the unchanged configuration at least three times and do not interact with the map while a run is active.
 
 Three 2026-09-05 `pan-v1` runs are diagnostic-only and excluded from baselines. They reported 53.3-55.8 ms averages and 56.6-62.6 ms p95, with exactly two full retained-layer renders per paint and 50.6-52.9 ms spent in territory work. The harness had generated fractional screen-pixel camera positions, which the retained caches correctly reject to avoid blurred translations. `pan-v2` quantizes absolute samples to whole screen pixels; it requires a fresh three-run result set.
 
@@ -305,7 +379,7 @@ Exit gate: visual review accepts the detail renderer, and detail-zoom performanc
 5. During map-mode transitions, crossfade prepared previous and target retained surfaces without rerasterizing both on every animation frame.
 6. Regenerate asynchronously from immutable prepared data where possible, retain the previous valid surface until replacement is ready, and swap on the EDT.
 
-Exit gate: the primary dense scenario averages below 10 ms with p95 below 16.7 ms while using the intended medium-band visuals.
+Exit gate: the primary dense scenario retains the sub-10 ms average and sub-16.7 ms p95 guardrails while using the intended medium-band visuals. Further optimization aims for the approximately 50% local proxy targets recorded above.
 
 ### Phase 4: GPU-Aware Java2D Surfaces
 
@@ -337,7 +411,7 @@ Exit gate: cache regeneration no longer causes interaction stalls and warm dense
 
 ### Phase 6: Dedicated GPU Renderer Decision
 
-Proceed only if the retained Java2D design cannot meet the target on the development laptop or representative lower-end hardware.
+Proceed only if the retained Java2D design cannot meet the development-machine proxy target and measured evidence still identifies a user-visible performance problem.
 
 1. Extract an immutable `MapSceneSnapshot` containing prepared visual data, geometry, style, and interaction state without campaign-domain lookups during drawing.
 2. Define a narrow renderer boundary shared by Java2D and an experimental GPU backend.
@@ -393,7 +467,7 @@ Pan translation may reuse pixels only at the exact rendered scale. Fractional de
 
 - Run the fixed benchmark matrix at least three times per candidate.
 - Report medians across runs as well as individual p95 and p99 values.
-- Profile representative lower-end hardware before declaring the work complete; the development-laptop target is a proxy, not proof of broad performance.
+- Compare the fixed warm-pan matrix against the approximately 50% local proxy targets. External Mac timing is deferred and non-blocking; retain the target user's positive panning report as qualitative evidence only.
 
 ## Decision Gates
 
