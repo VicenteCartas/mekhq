@@ -1159,7 +1159,7 @@ public class ImmersiveDialogCore extends JDialog {
         private final Runnable dialogDisposer;
         private boolean responseActivated;
 
-          ResponseActivationController(Runnable dialogDisposer) {
+                ResponseActivationController(Runnable dialogDisposer) {
             this.dialogDisposer = dialogDisposer;
         }
 
