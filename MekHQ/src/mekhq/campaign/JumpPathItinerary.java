@@ -109,12 +109,26 @@ public final class JumpPathItinerary {
     public static Plan calculate(JumpPath path, LocalDate startDate, double accelerationG,
           @Nullable PlanetarySystem fleetSystem, double currentTransit, CircuitPlan circuitPlan,
           @Nullable JumpDriveProfile jumpDriveProfile) {
+        return calculate(path, startDate, accelerationG, fleetSystem, currentTransit, circuitPlan, jumpDriveProfile,
+              0.0);
+    }
+
+    /**
+     * Calculates an immutable itinerary that also waits for the drive to finish recharging at the fleet's system.
+     *
+     * @param originRechargeHours hours the drive must still charge at {@code fleetSystem} before it can jump; only
+     *                            applied when the route departs from that system
+     */
+    public static Plan calculate(JumpPath path, LocalDate startDate, double accelerationG,
+          @Nullable PlanetarySystem fleetSystem, double currentTransit, CircuitPlan circuitPlan,
+          @Nullable JumpDriveProfile jumpDriveProfile, double originRechargeHours) {
         Objects.requireNonNull(path);
         JumpDriveProfile profile = Objects.requireNonNullElse(jumpDriveProfile, JumpDriveProfile.STANDARD);
         Objects.requireNonNull(startDate);
           Objects.requireNonNull(circuitPlan);
         requirePositiveFinite(accelerationG, "accelerationG");
         requireNonNegativeFinite(currentTransit, "currentTransit");
+        requireNonNegativeFinite(originRechargeHours, "originRechargeHours");
 
         List<PlanetarySystem> systems = List.copyOf(path.getSystems());
         if (systems.isEmpty()) {
@@ -132,6 +146,12 @@ public final class JumpPathItinerary {
         int[] rechargeHours = new int[systems.size()];
         int totalRechargeHours = 0;
         int remainingStoredJumpCharges = profile.storedJumpCharges();
+        if (originNeedsRecharge(systems, fleetSystem, originRechargeHours) && (remainingStoredJumpCharges > 0)) {
+            // The stored charge powers the first jump instead of waiting for the drive
+            remainingStoredJumpCharges--;
+        }
+        double originDeparture = Math.max(startingTransit,
+              originRechargeWaitDays(systems, fleetSystem, originRechargeHours, profile));
         for (int index = 1; index < systems.size() - 1; index++) {
             if (remainingStoredJumpCharges > 0) {
                 // A stored charge lets the fleet jump on immediately
@@ -145,7 +165,7 @@ public final class JumpPathItinerary {
         }
 
         double rechargeDays = totalRechargeHours / 24.0;
-        double totalDays = rechargeDays + startingTransit + endingTransit;
+        double totalDays = rechargeDays + originDeparture + endingTransit;
         List<TimelineEntry> entries = new ArrayList<>(systems.size());
         double elapsedDays = 0.0;
         for (int index = 0; index < systems.size(); index++) {
@@ -154,7 +174,7 @@ public final class JumpPathItinerary {
             double arrivalDays = elapsedDays;
             double departureDays;
             if (origin) {
-                departureDays = startingTransit;
+                departureDays = originDeparture;
             } else {
                 departureDays = arrivalDays + (rechargeHours[index] / 24.0);
             }
@@ -207,9 +227,22 @@ public final class JumpPathItinerary {
     public static RequiredAcceleration solveRequiredAcceleration(JumpPath path, LocalDate startDate,
           double desiredTotalDays, @Nullable PlanetarySystem fleetSystem, double currentTransit,
           CircuitPlan circuitPlan, @Nullable JumpDriveProfile jumpDriveProfile) {
+        return solveRequiredAcceleration(path, startDate, desiredTotalDays, fleetSystem, currentTransit, circuitPlan,
+              jumpDriveProfile, 0.0);
+    }
+
+    /**
+     * Solves the inverse-square transit relationship while the first departure may also wait for the drive to finish
+     * recharging at the fleet's system.
+     *
+     * @return a required acceleration, or an empty result when no positive endpoint-transit budget exists
+     */
+    public static RequiredAcceleration solveRequiredAcceleration(JumpPath path, LocalDate startDate,
+          double desiredTotalDays, @Nullable PlanetarySystem fleetSystem, double currentTransit,
+          CircuitPlan circuitPlan, @Nullable JumpDriveProfile jumpDriveProfile, double originRechargeHours) {
         requirePositiveFinite(desiredTotalDays, "desiredTotalDays");
         Plan baseline = calculate(path, startDate, DEFAULT_ACCELERATION_G, fleetSystem, currentTransit,
-              circuitPlan, jumpDriveProfile);
+              circuitPlan, jumpDriveProfile, originRechargeHours);
         double transitAtOneG = baseline.startingTransitDays() + baseline.appliedCurrentTransitDays()
                                    + baseline.endingTransitDays();
         double transitBudget = desiredTotalDays - baseline.rechargeDays() + baseline.appliedCurrentTransitDays();
@@ -221,7 +254,38 @@ public final class JumpPathItinerary {
         if (!(requiredAcceleration > 0.0) || !Double.isFinite(requiredAcceleration)) {
             return RequiredAcceleration.impossible();
         }
+        List<PlanetarySystem> systems = path.getSystems();
+        double originWait = originRechargeWaitDays(systems, fleetSystem, originRechargeHours,
+              Objects.requireNonNullElse(jumpDriveProfile, JumpDriveProfile.STANDARD));
+        double startingTransit = ((baseline.startingTransitDays() + baseline.appliedCurrentTransitDays())
+              / Math.sqrt(requiredAcceleration)) - baseline.appliedCurrentTransitDays();
+        if ((originWait <= 0.0) || (startingTransit >= originWait)) {
+            return new RequiredAcceleration(OptionalDouble.of(requiredAcceleration));
+        }
+
+        // The recharge wait outlasts the outbound transit, so only the ending transit can absorb the budget
+        double endingBudget = desiredTotalDays - baseline.rechargeDays() - originWait;
+        if (!(baseline.endingTransitDays() > 0.0) || !(endingBudget > 0.0)) {
+            return RequiredAcceleration.impossible();
+        }
+        requiredAcceleration = Math.pow(baseline.endingTransitDays() / endingBudget, 2);
+        if (!(requiredAcceleration > 0.0) || !Double.isFinite(requiredAcceleration)) {
+            return RequiredAcceleration.impossible();
+        }
         return new RequiredAcceleration(OptionalDouble.of(requiredAcceleration));
+    }
+
+    private static boolean originNeedsRecharge(List<PlanetarySystem> systems, @Nullable PlanetarySystem fleetSystem,
+          double originRechargeHours) {
+        return (systems.size() > 1) && (originRechargeHours > 0.0) && systems.getFirst().equals(fleetSystem);
+    }
+
+    private static double originRechargeWaitDays(List<PlanetarySystem> systems,
+          @Nullable PlanetarySystem fleetSystem, double originRechargeHours, JumpDriveProfile profile) {
+        if (!originNeedsRecharge(systems, fleetSystem, originRechargeHours) || (profile.storedJumpCharges() > 0)) {
+            return 0.0;
+        }
+        return originRechargeHours / 24.0;
     }
 
     private static void requirePositiveFinite(double value, String name) {
