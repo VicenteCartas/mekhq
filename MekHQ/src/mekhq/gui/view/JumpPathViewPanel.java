@@ -301,9 +301,10 @@ public class JumpPathViewPanel extends JScrollablePanel {
 
         int metricIndex = 0;
         addMetric(summary, metricIndex++, "metric.jumps.text", Integer.toString(path.getJumps()));
-        nextJumpValue = addMetric(summary, metricIndex++, "metric.nextJump.text",
+        String nextJumpKey = path.size() == 1 ? "metric.arrival" : "metric.nextJump";
+        nextJumpValue = addMetric(summary, metricIndex++, nextJumpKey + ".text",
               formatDays(getNextJumpDays()));
-        nextJumpValue.setToolTipText(MHQInternationalization.getTextAt(RESOURCE_BUNDLE, "metric.nextJump.tooltip"));
+        nextJumpValue.setToolTipText(MHQInternationalization.getTextAt(RESOURCE_BUNDLE, nextJumpKey + ".tooltip"));
         startingTransitValue = addMetric(summary, metricIndex++, "metric.startTransit.text",
               formatDays(itineraryPlan.startingTransitDays()));
         endingTransitValue = addMetric(summary, metricIndex++, "metric.endTransit.text",
@@ -1500,6 +1501,10 @@ public class JumpPathViewPanel extends JScrollablePanel {
     }
 
     private double getNextJumpDays() {
+        if (path.size() == 1) {
+            // No jump remains: an active final leg's transit time is the time left to arrival
+            return isActiveRoute() ? getCurrentTransit(getCurrentLocation()) : itineraryPlan.totalDays();
+        }
         return itineraryPlan.entries().isEmpty() ? 0.0 : itineraryPlan.entries().getFirst().departureElapsedDays();
     }
 

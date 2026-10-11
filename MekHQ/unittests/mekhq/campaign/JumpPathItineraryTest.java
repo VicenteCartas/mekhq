@@ -290,6 +290,45 @@ class JumpPathItineraryTest {
     }
 
     @Test
+    void storedChargeIsKeptWhenTheDriveFinishesChargingDuringOutboundTransit() {
+        PlanetarySystem origin = system("ORIGIN", 4.0, 0.0);
+        PlanetarySystem recharge = system("RECHARGE", 3.0, 48.0);
+        PlanetarySystem destination = system("DESTINATION", 6.0, 0.0);
+        JumpPath path = pathOf(origin, recharge, destination);
+        JumpDriveProfile battery = new JumpDriveProfile(1.0, 1);
+
+        Plan plan = JumpPathItinerary.calculate(path, TEST_DATE, 1.0, origin, 0.0, CircuitPlan.none(), battery,
+              24.0);
+
+        assertEquals(4.0, plan.entries().getFirst().departureElapsedDays(), TOLERANCE);
+        assertEquals(0, plan.entries().get(1).rechargeHours());
+        assertEquals(10.0, plan.totalDays(), TOLERANCE);
+    }
+
+    @Test
+    void requiredAccelerationFollowsWhereTheStoredChargeIsSpent() {
+        PlanetarySystem origin = system("ORIGIN", 4.0, 0.0);
+        PlanetarySystem recharge = system("RECHARGE", 3.0, 48.0);
+        PlanetarySystem destination = system("DESTINATION", 6.0, 0.0);
+        JumpPath path = pathOf(origin, recharge, destination);
+        JumpDriveProfile battery = new JumpDriveProfile(1.0, 1);
+
+        // Transit outlasts the recharge, so the battery skips the intermediate recharge
+        double keptBattery = JumpPathItinerary.solveRequiredAcceleration(path, TEST_DATE, 5.0, origin, 0.0,
+              CircuitPlan.none(), battery, 24.0).accelerationG().orElseThrow();
+        assertEquals(4.0, keptBattery, TOLERANCE);
+        assertEquals(5.0, JumpPathItinerary.calculate(path, TEST_DATE, keptBattery, origin, 0.0, CircuitPlan.none(),
+              battery, 24.0).totalDays(), TOLERANCE);
+
+        // Recharge outlasts the transit, so the battery is spent at the origin
+        double spentBattery = JumpPathItinerary.solveRequiredAcceleration(path, TEST_DATE, 7.0, origin, 0.0,
+              CircuitPlan.none(), battery, 72.0).accelerationG().orElseThrow();
+        assertEquals(4.0, spentBattery, TOLERANCE);
+        assertEquals(7.0, JumpPathItinerary.calculate(path, TEST_DATE, spentBattery, origin, 0.0,
+              CircuitPlan.none(), battery, 72.0).totalDays(), TOLERANCE);
+    }
+
+    @Test
     void requiredAccelerationAccountsForTheOriginRechargeWait() {
         PlanetarySystem origin = system("ORIGIN", 4.0, 0.0);
         PlanetarySystem recharge = system("RECHARGE", 3.0, 48.0);
