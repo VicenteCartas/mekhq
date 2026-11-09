@@ -42,6 +42,7 @@ import java.io.FilenameFilter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import javax.swing.JFrame;
 import javax.swing.SwingWorker;
@@ -52,6 +53,7 @@ import megamek.client.ui.clientGUI.boardview.gpu.StartMenuItem;
 import megamek.client.ui.clientGUI.boardview.gpu.StartMenuItem.Button;
 import megamek.client.ui.clientGUI.boardview.gpu.StartMenuItem.Emphasis;
 import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent;
+import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent.StarChart;
 import megamek.common.preference.PreferenceManager;
 import megamek.common.ui.AppIcons;
 import megamek.logging.MMLogger;
@@ -77,6 +79,12 @@ public final class MHQStartScreen extends StartScreenContent {
               && !lower.equals(PreferenceManager.DEFAULT_CFG_FILE_NAME.toLowerCase(Locale.ROOT));
     };
 
+    private static final String STAR_CHART_FACTIONS = "data/universe/factions";
+    private static final String STAR_CHART_DATE = "3025-01-01";
+    /** The mercenaries' hub. */
+    private static final String STAR_CHART_FOCUS = "Galatea";
+    private static @Nullable CompletableFuture<StarChart> starChart;
+
     private final MekHQ app;
     /** Hidden; owns the forms the menu opens, which the start window keeps above itself. */
     private final JFrame anchor;
@@ -93,6 +101,7 @@ public final class MHQStartScreen extends StartScreenContent {
 
     /** EDT: shows the start screen, with the greeting when {@code greet}, as MekHQ starts. */
     public static void show(MekHQ app, boolean greet) {
+        chart();
         MHQStartScreen screen = new MHQStartScreen(app);
         GpuStartWindow.install(screen.anchor, screen);
         GpuStartWindow.open(greet);
@@ -108,6 +117,29 @@ public final class MHQStartScreen extends StartScreenContent {
     public @Nullable File art() {
         // The largest; the screen scales it down to the window
         return new File(app.getIconPackage().getStartupScreenImagesScreenImages().lastEntry().getValue());
+    }
+
+    @Override
+    public @Nullable StarChart starChart() {
+        try {
+            return chart().get();
+        } catch (ExecutionException e) {
+            LOGGER.warn("The start screen has no star chart: {}", e.getMessage());
+            return null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
+    }
+
+    /** The Inner Sphere in 3025 around Galatea, read once on a thread of its own as the start screen first shows. */
+    private static synchronized CompletableFuture<StarChart> chart() {
+        if (starChart == null) {
+            starChart = CompletableFuture.supplyAsync(() -> StartStarChart.read(
+                  new File(MHQConstants.PLANETARY_SYSTEM_DIRECTORY_PATH, "canon_systems.zip"),
+                  new File(STAR_CHART_FACTIONS), STAR_CHART_DATE, STAR_CHART_FOCUS));
+        }
+        return starChart;
     }
 
     @Override
