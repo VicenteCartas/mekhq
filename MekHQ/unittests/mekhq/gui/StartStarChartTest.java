@@ -39,10 +39,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.Color;
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import javax.xml.stream.XMLStreamException;
 
 import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent.Star;
 import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent.StarChart;
@@ -118,5 +121,54 @@ class StartStarChartTest {
         assertEquals(34.077, chart.focusY(), 0.001);
         Star terra = chart.stars().stream().filter(star -> star.x() == 0 && star.y() == 0).findFirst().orElseThrow();
         assertEquals(colours.get("CS"), terra.color());
+    }
+
+    @Test
+    void anUnknownFocusFallsBackToTheNextOne() {
+        StarChart chart = StartStarChart.read(new File("data/universe/planetary_systems/canon_systems.zip"),
+              new File("data/universe/factions"), "3025-01-01", "Nowhere At All", "Galatea");
+
+        assertNotNull(chart);
+        assertEquals(-53.775, chart.focusX(), 0.001);
+        assertEquals(34.077, chart.focusY(), 0.001);
+    }
+
+    @Test
+    void aSaveTellsItsDateAndItsForcesSystem() throws XMLStreamException {
+        String save = """
+              <?xml version="1.0" encoding="UTF-8"?>
+              <campaign version="0.51.00">
+                  <info>
+                      <id>x</id>
+                      <calendar>3025-04-08</calendar>
+                  </info>
+                  <contracts><contract><calendar>3030-01-01</calendar></contract></contracts>
+                  <locations>
+                      <location>
+                          <currentSystemId>Canopus IV</currentSystemId>
+                      </location>
+                      <location>
+                          <currentSystemId>Terra</currentSystemId>
+                      </location>
+                  </locations>
+              </campaign>
+              """;
+
+        StartStarChart.Whereabouts whereabouts = StartStarChart.whereabouts(
+              new ByteArrayInputStream(save.getBytes(StandardCharsets.UTF_8)));
+
+        assertEquals("3025-04-08", whereabouts.date());
+        assertEquals("Canopus IV", whereabouts.system());
+    }
+
+    @Test
+    void aSaveWithoutThemTellsNothing() throws XMLStreamException {
+        String save = "<campaign><info><calendar>someday</calendar></info></campaign>";
+
+        StartStarChart.Whereabouts whereabouts = StartStarChart.whereabouts(
+              new ByteArrayInputStream(save.getBytes(StandardCharsets.UTF_8)));
+
+        assertNull(whereabouts.date());
+        assertNull(whereabouts.system());
     }
 }

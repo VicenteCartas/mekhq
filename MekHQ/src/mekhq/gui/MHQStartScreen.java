@@ -80,16 +80,19 @@ public final class MHQStartScreen extends StartScreenContent {
     };
 
     private static final String STAR_CHART_FACTIONS = "data/universe/factions";
+    /** With no campaign to continue, the star map shows the Inner Sphere in 3025 around the mercenaries' hub. */
     private static final String STAR_CHART_DATE = "3025-01-01";
-    /** The mercenaries' hub. */
     private static final String STAR_CHART_FOCUS = "Galatea";
-    private static @Nullable CompletableFuture<StarChart> starChart;
 
     private final MekHQ app;
     /** Hidden; owns the forms the menu opens, which the start window keeps above itself. */
     private final JFrame anchor;
     private final File quickstartFile = new File(LAUNCHER_NEW_PLAYER_QUICKSTART_PATH);
     private volatile @Nullable File lastSave;
+    /** The campaign to continue, looked for on a thread of its own as the screen shows; holds null when there is none. */
+    private final CompletableFuture<File> lastSaveFound = new CompletableFuture<>();
+    /** The star map around the campaign to continue, where and when it is, once the last save is known. */
+    private final CompletableFuture<StarChart> starChart = lastSaveFound.thenApplyAsync(MHQStartScreen::chart);
     /** EDT: a campaign is loading, so the menu does nothing until it fails. */
     private boolean loading;
 
@@ -101,7 +104,6 @@ public final class MHQStartScreen extends StartScreenContent {
 
     /** EDT: shows the start screen, with the greeting when {@code greet}, as MekHQ starts. */
     public static void show(MekHQ app, boolean greet) {
-        chart();
         MHQStartScreen screen = new MHQStartScreen(app);
         GpuStartWindow.install(screen.anchor, screen);
         GpuStartWindow.open(greet);
@@ -122,7 +124,7 @@ public final class MHQStartScreen extends StartScreenContent {
     @Override
     public @Nullable StarChart starChart() {
         try {
-            return chart().get();
+            return starChart.get();
         } catch (ExecutionException e) {
             LOGGER.warn("The start screen has no star chart: {}", e.getMessage());
             return null;
@@ -132,14 +134,18 @@ public final class MHQStartScreen extends StartScreenContent {
         }
     }
 
-    /** The Inner Sphere in 3025 around Galatea, read once on a thread of its own as the start screen first shows. */
-    private static synchronized CompletableFuture<StarChart> chart() {
-        if (starChart == null) {
-            starChart = CompletableFuture.supplyAsync(() -> StartStarChart.read(
-                  new File(MHQConstants.PLANETARY_SYSTEM_DIRECTORY_PATH, "canon_systems.zip"),
-                  new File(STAR_CHART_FACTIONS), STAR_CHART_DATE, STAR_CHART_FOCUS));
-        }
-        return starChart;
+    /**
+     * The star map around where the campaign {@code save} left its force, when it was saved; with no save, or where it
+     * cannot tell, the Inner Sphere in 3025 around Galatea.
+     */
+    private static @Nullable StarChart chart(@Nullable File save) {
+        StartStarChart.Whereabouts whereabouts = save == null ? new StartStarChart.Whereabouts(null, null)
+              : StartStarChart.whereabouts(save);
+        String date = whereabouts.date() == null ? STAR_CHART_DATE : whereabouts.date();
+        String[] focus = whereabouts.system() == null ? new String[] { STAR_CHART_FOCUS }
+              : new String[] { whereabouts.system(), STAR_CHART_FOCUS };
+        return StartStarChart.read(new File(MHQConstants.PLANETARY_SYSTEM_DIRECTORY_PATH, "canon_systems.zip"),
+              new File(STAR_CHART_FACTIONS), date, focus);
     }
 
     @Override
@@ -222,7 +228,14 @@ public final class MHQStartScreen extends StartScreenContent {
         new SwingWorker<File, Void>() {
             @Override
             protected File doInBackground() {
-                return Utilities.lastFileModified(directory, SAVE_FILTER);
+                try {
+                    File found = Utilities.lastFileModified(directory, SAVE_FILTER);
+                    lastSaveFound.complete(found);
+                    return found;
+                } catch (RuntimeException ex) {
+                    lastSaveFound.complete(null);
+                    throw ex;
+                }
             }
 
             @Override

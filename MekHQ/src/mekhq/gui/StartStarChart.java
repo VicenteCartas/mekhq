@@ -35,18 +35,28 @@ package mekhq.gui;
 import java.awt.Color;
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
+import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
 
 import jakarta.annotation.Nullable;
 import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent.Star;
@@ -61,19 +71,21 @@ final class StartStarChart {
     private static final MMLogger LOGGER = MMLogger.create(StartStarChart.class);
     /** Systems that no one holds, or that are lost, show this dim grey rather than black. */
     private static final Color UNHELD = new Color(110, 110, 110);
+    private static final Pattern DATE = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
 
     private StartStarChart() {
     }
 
     /**
      * The canon systems in {@code systemsZip} in their owners' colours from the faction files in {@code factions} as of
-     * {@code date} (yyyy-mm-dd), focused on the system {@code focus}; null when the files cannot be read.
+     * {@code date} (yyyy-mm-dd), focused on the first of the systems {@code focus} that is there, else on Terra; null
+     * when the files cannot be read.
      */
-    static @Nullable StarChart read(File systemsZip, File factions, String date, String focus) {
+    static @Nullable StarChart read(File systemsZip, File factions, String date, String... focus) {
         Map<String, Color> colours = colours(factions);
         List<Star> stars = new ArrayList<>();
-        double focusX = 0;
-        double focusY = 0;
+        List<String> wanted = List.of(focus);
+        Map<String, Star> found = new HashMap<>();
         try (ZipFile zip = new ZipFile(systemsZip)) {
             Enumeration<? extends ZipEntry> entries = zip.entries();
             while (entries.hasMoreElements()) {
@@ -88,10 +100,10 @@ final class StartStarChart {
                         continue;
                     }
                     Color colour = system.owner() == null ? UNHELD : colours.getOrDefault(system.owner(), UNHELD);
-                    stars.add(new Star(system.x(), system.y(), colour));
-                    if (system.id().equals(focus)) {
-                        focusX = system.x();
-                        focusY = system.y();
+                    Star star = new Star(system.x(), system.y(), colour);
+                    stars.add(star);
+                    if (wanted.contains(system.id())) {
+                        found.put(system.id(), star);
                     }
                 }
             }
@@ -99,7 +111,62 @@ final class StartStarChart {
             LOGGER.warn("The start screen could not read the star systems: {}", e.getMessage());
             return null;
         }
-        return stars.isEmpty() ? null : new StarChart(stars, focusX, focusY);
+        if (stars.isEmpty()) {
+            return null;
+        }
+        Star centre = wanted.stream().map(found::get).filter(star -> star != null).findFirst().orElse(null);
+        return centre == null ? new StarChart(stars, 0, 0) : new StarChart(stars, centre.x(), centre.y());
+    }
+
+    /** Where and when a campaign save left its force: its date (yyyy-mm-dd) and system id, each null when not found. */
+    record Whereabouts(@Nullable String date, @Nullable String system) { }
+
+    /** The campaign {@code save}'s date and its force's system, read only as far as both are found. */
+    static Whereabouts whereabouts(File save) {
+        try (InputStream file = new FileInputStream(save);
+              InputStream in = save.getName().toLowerCase(Locale.ROOT).endsWith(".gz") ? new GZIPInputStream(file)
+                    : file) {
+            return whereabouts(in);
+        } catch (IOException | XMLStreamException e) {
+            LOGGER.warn("The start screen could not read where the campaign {} is: {}", save, e.getMessage());
+            return new Whereabouts(null, null);
+        }
+    }
+
+    /** A campaign save's {@code <info><calendar>} and its force's {@code <location><currentSystemId>}. */
+    static Whereabouts whereabouts(InputStream save) throws XMLStreamException {
+        XMLInputFactory factory = XMLInputFactory.newFactory();
+        factory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
+        factory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
+        XMLStreamReader reader = factory.createXMLStreamReader(save);
+        try {
+            String date = null;
+            String system = null;
+            Deque<String> open = new ArrayDeque<>();
+            while (reader.hasNext() && (date == null || system == null)) {
+                int event = reader.next();
+                if (event == XMLStreamConstants.END_ELEMENT) {
+                    open.pop();
+                    continue;
+                } else if (event != XMLStreamConstants.START_ELEMENT) {
+                    continue;
+                }
+                String name = reader.getLocalName();
+                String parent = open.peek();
+                if (date == null && name.equals("calendar") && "info".equals(parent)) {
+                    String text = reader.getElementText().trim();
+                    date = DATE.matcher(text).matches() ? text : null;
+                } else if (system == null && name.equals("currentSystemId") && "location".equals(parent)) {
+                    String text = reader.getElementText().trim();
+                    system = text.isEmpty() ? null : text;
+                } else {
+                    open.push(name);
+                }
+            }
+            return new Whereabouts(date, system);
+        } finally {
+            reader.close();
+        }
     }
 
     /** A system's id, place and owner at a date, from its file's lines. */
