@@ -68,7 +68,7 @@ import megamek.logging.MMLogger;
  * The Inner Sphere as the start screen's star map shows it: every canon system where it lies, in its owner's colour at a
  * date. A quick read of the shipped files rather than MekHQ's full universe, which loads only with a campaign.
  */
-final class StartStarChart {
+public final class StartStarChart {
     private static final MMLogger LOGGER = MMLogger.create(StartStarChart.class);
     /** Systems that no one holds, or that are lost, show this dim grey rather than black. */
     private static final Color UNHELD = new Color(110, 110, 110);
@@ -82,7 +82,7 @@ final class StartStarChart {
      * {@code date} (yyyy-mm-dd), focused on the first of the systems {@code focus} that is there, else on Terra; null
      * when the files cannot be read.
      */
-    static @Nullable StarChart read(File systemsZip, File factions, String date, String... focus) {
+    public static @Nullable StarChart read(File systemsZip, File factions, String date, String... focus) {
         Map<String, Color> colours = colours(factions);
         List<Star> stars = new ArrayList<>();
         List<String> wanted = List.of(focus);
