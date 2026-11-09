@@ -88,6 +88,9 @@ Each phase ships something playable and keeps everything else reachable through 
   shipped file.
 - MekHQ: the `CampaignSession` bridge (the EDT owner, the event-bus-to-snapshot pump and the command
   dispatch) and a first view-model test harness. Reuse the lobby's probes and smoke-test style.
+  - In `mekhq.gui.model.view`: `CampaignSession`, `ViewModel`, `CampaignCommand` and the first
+    snapshot, `TopBar`. Tests drive a session with `SessionHarness` (unittests), which gives it its own
+    event bus and runs the Swing and GPU threads as queues by hand.
 - MekHQ: the campaign shell scene: a top bar (date, funds, location, alerts), the HQ hub, the nav
   rail and the command palette. Every destination still opens the Swing tab for now.
 
