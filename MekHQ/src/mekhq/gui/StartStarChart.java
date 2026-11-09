@@ -49,6 +49,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipEntry;
@@ -133,6 +134,9 @@ final class StartStarChart {
         }
     }
 
+    /** The location tags that hold the system id; older saves use the planet names, as CurrentLocation reads. */
+    private static final Set<String> SYSTEM_TAGS = Set.of("currentsystemid", "currentplanetid", "currentplanetname");
+
     /** A campaign save's {@code <info><calendar>} and its force's {@code <location><currentSystemId>}. */
     static Whereabouts whereabouts(InputStream save) throws XMLStreamException {
         XMLInputFactory factory = XMLInputFactory.newFactory();
@@ -156,7 +160,8 @@ final class StartStarChart {
                 if (date == null && name.equals("calendar") && "info".equals(parent)) {
                     String text = reader.getElementText().trim();
                     date = DATE.matcher(text).matches() ? text : null;
-                } else if (system == null && name.equals("currentSystemId") && "location".equals(parent)) {
+                } else if (system == null && SYSTEM_TAGS.contains(name.toLowerCase(Locale.ROOT))
+                      && "location".equals(parent)) {
                     String text = reader.getElementText().trim();
                     system = text.isEmpty() ? null : text;
                 } else {
@@ -203,6 +208,10 @@ final class StartStarChart {
                 inValue = inline.isEmpty();
                 inFaction = inValue;
                 key = inline.isEmpty() ? null : inline.split(",")[0].trim();
+            } else if (inFaction && !inValue && trimmed.startsWith("- ")) {
+                // An unsourced claim lists its factions straight under "faction:"
+                key = trimmed.substring(2).trim();
+                inFaction = false;
             } else if (inValue) {
                 key = trimmed.startsWith("- ") ? trimmed.substring(2).trim() : null;
                 inFaction = false;

@@ -50,6 +50,8 @@ import javax.xml.stream.XMLStreamException;
 import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent.Star;
 import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent.StarChart;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class StartStarChartTest {
     private static final String SYSTEM = """
@@ -108,6 +110,35 @@ class StartStarChartTest {
     }
 
     @Test
+    void unsourcedClaimsCount() throws IOException {
+        String system = """
+              id: Elsewhere
+              xcood: 1
+              ycood: 2
+              planet:
+                - name: Elsewhere
+                  event:
+                    - date: '2800-01-01'
+                      faction:
+                        - FS
+                        - CC
+                    - date: '3000-01-01'
+                      faction:
+                        - ABN
+              """;
+
+        StartStarChart.SystemLines early = StartStarChart.system(new BufferedReader(new StringReader(system)),
+              "2900-01-01");
+        StartStarChart.SystemLines late = StartStarChart.system(new BufferedReader(new StringReader(system)),
+              "3025-01-01");
+
+        assertNotNull(early);
+        assertEquals("FS", early.owner());
+        assertNotNull(late);
+        assertEquals("ABN", late.owner());
+    }
+
+    @Test
     void readsTheShippedInnerSphere() {
         Map<String, Color> colours = StartStarChart.colours(new File("data/universe/factions"));
         assertEquals(new Color(255, 221, 0), colours.get("FS"));
@@ -159,6 +190,19 @@ class StartStarChartTest {
 
         assertEquals("3025-04-08", whereabouts.date());
         assertEquals("Canopus IV", whereabouts.system());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { "currentPlanetId", "currentPlanetName", "CURRENTSYSTEMID" })
+    void anOlderSaveTellsItsSystemByItsOldTag(String tag) throws XMLStreamException {
+        String save = ("<campaign><info><calendar>3010-02-03</calendar></info>"
+              + "<location><%s>Tharkad</%s></location></campaign>").formatted(tag, tag);
+
+        StartStarChart.Whereabouts whereabouts = StartStarChart.whereabouts(
+              new ByteArrayInputStream(save.getBytes(StandardCharsets.UTF_8)));
+
+        assertEquals("3010-02-03", whereabouts.date());
+        assertEquals("Tharkad", whereabouts.system());
     }
 
     @Test
