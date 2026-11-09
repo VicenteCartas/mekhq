@@ -58,17 +58,14 @@ import megamek.logging.MMLogger;
 import mekhq.MHQConstants;
 import mekhq.MekHQ;
 import mekhq.Utilities;
-import mekhq.campaign.storyArc.StoryArc;
-import mekhq.campaign.storyArc.StoryArcStub;
 import mekhq.gui.dialog.DataLoadingDialog;
 import mekhq.gui.dialog.MHQOptionsTreeDialog;
 import mekhq.gui.dialog.NewPlayerQuickstartDialog;
-import mekhq.gui.dialog.StoryArcSelectionDialog;
 
 /**
  * MekHQ's start screen, shown in the suite's native start window: the MekHQ art, the greeting and a menu to continue
- * the last campaign, start or load one, or pick a story arc. It ends once a campaign has loaded and the campaign's own
- * window takes over, and {@link MekHQ#restart} shows it again.
+ * the last campaign, start or load one, or start the new player quickstart. It ends once a campaign has loaded and the
+ * campaign's own window takes over, and {@link MekHQ#restart} shows it again.
  */
 public final class MHQStartScreen extends StartScreenContent {
     private static final MMLogger LOGGER = MMLogger.create(MHQStartScreen.class);
@@ -145,20 +142,24 @@ public final class MHQStartScreen extends StartScreenContent {
     }
 
     @Override
+    public Ambience ambience() {
+        return Ambience.COMMAND;
+    }
+
+    @Override
     public List<StartMenuItem> menu() {
         List<StartMenuItem> menu = new ArrayList<>();
         File save = lastSave;
         if (save != null) {
             menu.add(new Button(getText("StartScreen.continue"), saveTitle(save.getName()) + "  \u00b7  "
-                  + ago(save.lastModified()), Emphasis.PRIMARY, () -> startCampaign(save, null)));
+                  + ago(save.lastModified()), Emphasis.PRIMARY, () -> startCampaign(save)));
         }
         menu.add(new Button(getText("btnNewCampaign.text"), save == null ? Emphasis.PRIMARY : Emphasis.SECONDARY,
-              () -> startCampaign(null, null)));
+              () -> startCampaign(null)));
         menu.add(new Button(getText("btnLoadCampaign.text"), Emphasis.SECONDARY, this::loadCampaign));
         if (quickstartFile.isFile()) {
             menu.add(new Button(getText("StartScreen.quickstart"), Emphasis.SECONDARY, this::quickstart));
         }
-        menu.add(new Button(getText("btnLoadStoryArc.text"), Emphasis.SECONDARY, this::storyArc));
         return menu;
     }
 
@@ -210,27 +211,13 @@ public final class MHQStartScreen extends StartScreenContent {
 
     private void loadCampaign() {
         if (!loading) {
-            FileDialogs.openCampaign(anchor).ifPresent(file -> startCampaign(file, null));
+            FileDialogs.openCampaign(anchor).ifPresent(this::startCampaign);
         }
     }
 
     private void quickstart() {
         if (!loading && !new NewPlayerQuickstartDialog(anchor).wasCanceled()) {
-            startCampaign(quickstartFile, null);
-        }
-    }
-
-    private void storyArc() {
-        if (loading) {
-            return;
-        }
-        StoryArcSelectionDialog dialog = new StoryArcSelectionDialog(anchor, true);
-        if (dialog.showDialog().isCancelled()) {
-            return;
-        }
-        StoryArcStub stub = dialog.getSelectedStoryArc();
-        if (stub != null && stub.getInitCampaignFile() != null) {
-            startCampaign(stub.getInitCampaignFile(), stub);
+            startCampaign(quickstartFile);
         }
     }
 
@@ -238,7 +225,7 @@ public final class MHQStartScreen extends StartScreenContent {
      * EDT: loads the campaign in {@code file}, or starts a new one when null, over the start screen, which then gives way
      * to the campaign's window; the screen stays when loading fails.
      */
-    private void startCampaign(@Nullable File file, @Nullable StoryArcStub storyArc) {
+    private void startCampaign(@Nullable File file) {
         if (loading) {
             return;
         }
@@ -251,12 +238,6 @@ public final class MHQStartScreen extends StartScreenContent {
             GpuStartWindow.uninstall(() -> {
                 anchor.dispose();
                 app.activateCampaign(campaign);
-                if (storyArc != null) {
-                    StoryArc arc = storyArc.loadStoryArc(campaign);
-                    if (arc != null) {
-                        campaign.useStoryArc(arc, true);
-                    }
-                }
             });
         }).setVisible(true);
     }
