@@ -72,6 +72,7 @@ import megamek.client.Client;
 import megamek.client.HeadlessClient;
 import megamek.client.bot.princess.BehaviorSettings;
 import megamek.client.ui.clientGUI.GUIPreferences;
+import megamek.client.ui.clientGUI.boardview.gpu.GpuStartWindow;
 import megamek.client.ui.dialogs.LicensingDialog;
 import megamek.client.ui.dialogs.abstractDialogs.AutoResolveChanceDialog;
 import megamek.client.ui.dialogs.abstractDialogs.AutoResolveProgressDialog;
@@ -124,11 +125,11 @@ import mekhq.campaign.mission.scenarios.ScenarioTemplate.BattlefieldControlType;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.unit.Unit;
 import mekhq.gui.CampaignGUI;
+import mekhq.gui.MHQStartScreen;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogSimple;
 import mekhq.gui.dialog.ChooseMulFilesDialog;
 import mekhq.gui.dialog.MekHQAboutDialog;
 import mekhq.gui.dialog.ResolveScenarioWizardDialog;
-import mekhq.gui.panels.StartupScreenPanel;
 import mekhq.gui.preferences.StringPreference;
 import mekhq.gui.utilities.ObservableString;
 import mekhq.service.AutosaveService;
@@ -255,12 +256,11 @@ public class MekHQ implements GameListener {
         setTooltipSettings();
 
         initEventHandlers();
-        // create a start-up frame and display it
-        new StartupScreenPanel(this).getFrame().setVisible(true);
+        MHQStartScreen.show(this, true);
 
-        // Show licensing/welcome dialog after startup screen is visible
-        LicensingDialog.showIfNeeded(null,
-              "Welcome to " + MHQConstants.PROJECT_NAME + " " + MHQConstants.VERSION);
+        // Show the licensing/welcome dialog once the greeting has played
+        GpuStartWindow.whenSettled(() -> LicensingDialog.showIfNeeded(null,
+              "Welcome to " + MHQConstants.PROJECT_NAME + " " + MHQConstants.VERSION));
     }
 
     /**
@@ -286,7 +286,7 @@ public class MekHQ implements GameListener {
      */
     public void restart() {
         deactivateCampaign();
-        new StartupScreenPanel(this).getFrame().setVisible(true);
+        MHQStartScreen.show(this, false);
     }
 
     /**

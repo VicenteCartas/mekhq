@@ -2,7 +2,7 @@ name: MekHQ CI with Gradle
 
 on:
   pull_request:
-    branches: [ main, 'releases/**' ]
+    branches: [ main, 'releases/**', UI ]
 
 env:
   GRADLE_OPTS: "-Dscan.link.VCS=${{ github.event.pull_request.html_url }}"
@@ -40,6 +40,10 @@ jobs:
           then
             printf 'dataRepo=%s/mm-data\n' "$DATA_REPO_OWNER" >> "$GITHUB_OUTPUT"
             printf 'dataBranch=%s\n' "$DATA_BRANCH" >> "$GITHUB_OUTPUT"
+          elif [ "$BASE_BRANCH" == "UI" ]
+          then
+            printf 'dataRepo=exeea/mm-data\n' >> "$GITHUB_OUTPUT"
+            printf 'dataBranch=UI\n' >> "$GITHUB_OUTPUT"
           else
             printf 'dataRepo=MegaMek/mm-data\n' >> "$GITHUB_OUTPUT"
             printf 'dataBranch=%s\n' "$BASE_BRANCH" >> "$GITHUB_OUTPUT"
@@ -66,6 +70,10 @@ jobs:
           then
             echo "mmRepo=${{ github.event.pull_request.head.repo.owner.login }}/megamek" >> $GITHUB_OUTPUT
             echo "mmBranch=${{ github.event.pull_request.head.ref }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.base_ref }}" == "UI" ]
+          then
+            echo "mmRepo=exeea/megamek" >> $GITHUB_OUTPUT
+            echo "mmBranch=UI" >> $GITHUB_OUTPUT
           else
             echo "mmRepo=MegaMek/megamek" >> $GITHUB_OUTPUT
             echo "mmBranch=${{ github.base_ref }}" >> $GITHUB_OUTPUT
@@ -94,6 +102,10 @@ jobs:
           then
             echo "mmlRepo=${{ github.event.pull_request.head.repo.owner.login }}/megameklab" >> $GITHUB_OUTPUT
             echo "mmlBranch=${{ github.event.pull_request.head.ref }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.base_ref }}" == "UI" ]
+          then
+            echo "mmlRepo=MegaMek/megameklab" >> $GITHUB_OUTPUT
+            echo "mmlBranch=main" >> $GITHUB_OUTPUT
           else
             echo "mmlRepo=MegaMek/megameklab" >> $GITHUB_OUTPUT
             echo "mmlBranch=${{ github.base_ref }}" >> $GITHUB_OUTPUT

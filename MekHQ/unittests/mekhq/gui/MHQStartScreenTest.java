@@ -30,8 +30,9 @@
  * <https://www.xbox.com/en-US/developers/rules> and it is not endorsed by or
  * affiliated with Microsoft.
  */
-package mekhq.gui.panels;
+package mekhq.gui;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -42,7 +43,7 @@ import megamek.common.preference.PreferenceManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-class StartupScreenPanelTest {
+class MHQStartScreenTest {
     File dir;
 
     @BeforeEach
@@ -53,17 +54,25 @@ class StartupScreenPanelTest {
     @Test
     void testSaveFilterAllowsValidCampaignSaves() {
         String fileName = "MySave.xml";
-        assertTrue(StartupScreenPanel.saveFilter.accept(dir, fileName));
+        assertTrue(MHQStartScreen.SAVE_FILTER.accept(dir, fileName));
         fileName = "MySave.CPNX";
-        assertTrue(StartupScreenPanel.saveFilter.accept(dir, fileName));
+        assertTrue(MHQStartScreen.SAVE_FILTER.accept(dir, fileName));
         fileName = "20240306T2344 Save Campaign No 666.cpnx.gz";
-        assertTrue(StartupScreenPanel.saveFilter.accept(dir, fileName));
+        assertTrue(MHQStartScreen.SAVE_FILTER.accept(dir, fileName));
     }
 
     @Test
     void testSaveFilterNotAllowClientSettingsXML() {
         String fileName = PreferenceManager.DEFAULT_CFG_FILE_NAME;
-        boolean allowed = StartupScreenPanel.saveFilter.accept(dir, fileName);
+        boolean allowed = MHQStartScreen.SAVE_FILTER.accept(dir, fileName);
         assertFalse(allowed);
+    }
+
+    @Test
+    void continueNamesTheSaveWithoutItsExtension() {
+        assertEquals("20240306T2344 Shadow Hunters", MHQStartScreen.saveTitle("20240306T2344 Shadow Hunters.cpnx.gz"));
+        assertEquals("Shadow Hunters", MHQStartScreen.saveTitle("Shadow Hunters.CPNX"));
+        assertEquals("Old", MHQStartScreen.saveTitle("Old.xml"));
+        assertEquals("notes.txt", MHQStartScreen.saveTitle("notes.txt"));
     }
 }
