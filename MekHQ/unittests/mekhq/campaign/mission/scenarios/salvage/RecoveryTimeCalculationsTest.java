@@ -268,14 +268,17 @@ class RecoveryTimeCalculationsTest {
 
     @ParameterizedTest
     @CsvSource({
-          "DAY, 0.0",
-          "DUSK, 0.0",
-          "FULL_MOON, 0.0",
-          "MOONLESS, 0.25",
-          "SOLAR_FLARE, 0.25",
-          "PITCH_BLACK, 0.5"
+          "LIGHT_DAY, 0.0",
+          "LIGHT_DUSK, 0.0",
+          "LIGHT_FULL_MOON, 0.0",
+          "LIGHT_MOONLESS, 0.25",
+          "LIGHT_SOLAR_FLARE, 0.25",
+          "LIGHT_PITCH_BLACK, 0.5"
     })
-    void lightMultiplier(Light light, double expectedMultiplier) {
+    void lightMultiplier(String lightId, double expectedMultiplier) {
+        // External IDs stay stable while the dusk constant's name differs between MegaMek branches
+        Light light = Light.getLight(lightId);
+        assertEquals(lightId, light.getExternalId());
         Scenario scenario = benignGroundScenario();
         when(scenario.getLight()).thenReturn(light);
 
