@@ -119,6 +119,8 @@ public final class CampaignSession implements AutoCloseable {
     private final Executor gpu;
     private final List<Watched<?>> watches = new CopyOnWriteArrayList<>();
     private final AtomicBoolean flushQueued = new AtomicBoolean();
+    /** Serializes adding watches with closing, so no watch is added to a closed session. */
+    private final Object lifecycle = new Object();
     private volatile boolean closed;
 
     /** A session on MekHQ's event bus that hands snapshots to the native window's GPU thread. */
@@ -144,11 +146,13 @@ public final class CampaignSession implements AutoCloseable {
      */
     public <T> Watch watch(ViewModel<T> model, Consumer<? super T> screen) {
         Watched<T> watched = new Watched<>(Objects.requireNonNull(model), Objects.requireNonNull(screen));
-        if (closed) {
-            watched.closed = true;
-            return watched;
+        synchronized (lifecycle) {
+            if (closed) {
+                watched.closed = true;
+                return watched;
+            }
+            watches.add(watched);
         }
-        watches.add(watched);
         watched.dirty.set(true);
         queueFlush();
         return watched;
@@ -172,20 +176,27 @@ public final class CampaignSession implements AutoCloseable {
     /** Any thread: stops every watch and stops hearing the campaign's events. */
     @Override
     public void close() {
-        if (closed) {
-            return;
+        synchronized (lifecycle) {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            for (Watched<?> watched : watches) {
+                watched.closed = true;
+            }
+            watches.clear();
         }
-        closed = true;
         events.unregister(this);
-        for (Watched<?> watched : watches) {
-            watched.closed = true;
-        }
-        watches.clear();
     }
 
     /** Whether the session is closed. */
     public boolean isClosed() {
         return closed;
+    }
+
+    /** How many watches the session holds; for tests. */
+    int watchCount() {
+        return watches.size();
     }
 
     /** The event bus: marks the snapshots {@code event} may change as dirty. Public only so the bus can call it. */

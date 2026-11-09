@@ -38,9 +38,14 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import megamek.common.event.EventBus;
 import megamek.common.event.MMEvent;
 import mekhq.campaign.Campaign;
 import org.junit.jupiter.api.Test;
@@ -217,6 +222,51 @@ class CampaignSessionTest {
             harness.settle();
             assertEquals(List.of(0, 3), screen.snapshots());
             assertFalse(harness.session().isClosed());
+        }
+    }
+
+    @Test
+    void watchesRacingCloseAreNeverLeftOnTheClosedSession() throws InterruptedException {
+        int watchers = 8;
+        for (int round = 0; round < 1000; round++) {
+            Queue<Runnable> swing = new ConcurrentLinkedQueue<>();
+            Queue<Runnable> gpu = new ConcurrentLinkedQueue<>();
+            CampaignSession session = new CampaignSession(campaign, CampaignSession.EventSource.of(new EventBus()),
+                  swing::add, gpu::add);
+            Counter counter = new Counter();
+            AtomicInteger delivered = new AtomicInteger();
+            CountDownLatch start = new CountDownLatch(1);
+            List<Thread> threads = new ArrayList<>();
+            for (int i = 0; i < watchers; i++) {
+                Thread thread = new Thread(() -> {
+                    awaitQuietly(start);
+                    session.watch(counter.model, snapshot -> delivered.incrementAndGet());
+                });
+                thread.start();
+                threads.add(thread);
+            }
+            start.countDown();
+            session.close();
+            for (Thread thread : threads) {
+                thread.join();
+            }
+
+            assertEquals(0, session.watchCount(), "round " + round + ": a watch outlived the session");
+            for (Runnable task; (task = swing.poll()) != null; ) {
+                task.run();
+            }
+            for (Runnable task; (task = gpu.poll()) != null; ) {
+                task.run();
+            }
+            assertEquals(0, delivered.get(), "round " + round + ": a snapshot was handed over after close");
+        }
+    }
+
+    private static void awaitQuietly(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
         }
     }
 }

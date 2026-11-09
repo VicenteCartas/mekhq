@@ -39,12 +39,14 @@ import java.util.Objects;
 import java.util.function.Function;
 
 import jakarta.annotation.Nullable;
+import mekhq.MHQOptionsChangedEvent;
 import mekhq.MekHQ;
 import mekhq.campaign.AbstractLocation;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.JumpPath;
 import mekhq.campaign.events.LocationChangedEvent;
 import mekhq.campaign.events.NewDayEvent;
+import mekhq.campaign.events.PlanetarySystemsChangedEvent;
 import mekhq.campaign.events.TransitStatusChangedEvent;
 import mekhq.campaign.events.loans.LoanEvent;
 import mekhq.campaign.events.missions.MissionEvent;
@@ -107,7 +109,8 @@ public record TopBar(LocalDate date, String dateText, Money funds, String fundsT
         Objects.requireNonNull(dateFormat);
         return ViewModel.of("TopBar", campaign -> of(campaign, dateFormat),
               List.of(NewDayEvent.class, TransactionEvent.class, LoanEvent.class, LocationChangedEvent.class,
-                    TransitStatusChangedEvent.class, MissionEvent.class, ScenarioEvent.class));
+                    TransitStatusChangedEvent.class, MissionEvent.class, ScenarioEvent.class,
+                    PlanetarySystemsChangedEvent.class, MHQOptionsChangedEvent.class));
     }
 
     /** Swing thread: the top bar of {@code campaign}. */

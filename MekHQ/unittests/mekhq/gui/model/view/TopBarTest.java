@@ -45,11 +45,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 
+import mekhq.MHQOptionsChangedEvent;
 import mekhq.campaign.AbstractLocation;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.JumpPath;
 import mekhq.campaign.events.LocationChangedEvent;
 import mekhq.campaign.events.NewDayEvent;
+import mekhq.campaign.events.PlanetarySystemsChangedEvent;
 import mekhq.campaign.events.loans.LoanPaidEvent;
 import mekhq.campaign.events.persons.PersonChangedEvent;
 import mekhq.campaign.events.scenarios.ScenarioResolvedEvent;
@@ -147,6 +149,8 @@ class TopBarTest {
         assertTrue(model.isAffectedBy(mock(LoanPaidEvent.class)));
         assertTrue(model.isAffectedBy(mock(LocationChangedEvent.class)));
         assertTrue(model.isAffectedBy(mock(ScenarioResolvedEvent.class)));
+        assertTrue(model.isAffectedBy(new PlanetarySystemsChangedEvent(campaign)), "a system can be renamed");
+        assertTrue(model.isAffectedBy(new MHQOptionsChangedEvent()), "the date format can change");
         assertFalse(model.isAffectedBy(mock(PersonChangedEvent.class)));
     }
 
