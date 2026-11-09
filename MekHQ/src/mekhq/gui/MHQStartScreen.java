@@ -116,6 +116,11 @@ public final class MHQStartScreen extends StartScreenContent {
     }
 
     @Override
+    public String icons() {
+        return "mekhq";
+    }
+
+    @Override
     public @Nullable File art() {
         // The largest; the screen scales it down to the window
         return new File(app.getIconPackage().getStartupScreenImagesScreenImages().lastEntry().getValue());
