@@ -130,6 +130,7 @@ public final class Borders {
     private final float maxX;
     private final float maxY;
     private final InfluenceMap land;
+    private final InfluenceMap divisions;
     private final float[] hpg;
     private final Map<Integer, Holding> holdings;
 
@@ -150,6 +151,7 @@ public final class Borders {
             claimRealm[i] = (int) claim[2];
             disputed[i] = claim[3] > 0;
         }
+        int[] division = divisions(claims);
         this.realms = List.copyOf(realms);
         minX = bounds[0];
         minY = bounds[1];
@@ -160,7 +162,54 @@ public final class Borders {
             realm[i] = claimRealm[i] + 1;
         }
         land = InfluenceMap.of(count, claimX, claimY, realm, disputed, minX, minY, maxX, maxY);
+        divisions = InfluenceMap.of(count, claimX, claimY, division, new boolean[count], minX, minY, maxX, maxY);
         hpg = hpgLinks(this.stars);
+    }
+
+    /**
+     * The administrative region, numbered from 1, of each of {@code claims}: that the system's administration names
+     * when its realm holds it alone, else that of the nearest system of the same realm whose administration is named,
+     * as the classic map reads them. A realm naming none of its systems is one region.
+     */
+    private int[] divisions(List<float[]> claims) {
+        int count = claims.size();
+        int[] division = new int[count];
+        Map<Integer, List<Integer>> named = new HashMap<>();
+        for (int i = 0; i < count; i++) {
+            division[i] = (int) claims.get(i)[4];
+            if (division[i] > 0) {
+                named.computeIfAbsent(claimRealm[i], realm -> new ArrayList<>()).add(i);
+            }
+        }
+        int next = 1;
+        for (int id : division) {
+            next = Math.max(next, id + 1);
+        }
+        Map<Integer, Integer> whole = new HashMap<>();
+        for (int i = 0; i < count; i++) {
+            if (division[i] > 0) {
+                continue;
+            }
+            List<Integer> candidates = named.get(claimRealm[i]);
+            if (candidates == null) {
+                if (!whole.containsKey(claimRealm[i])) {
+                    whole.put(claimRealm[i], next++);
+                }
+                division[i] = whole.get(claimRealm[i]);
+                continue;
+            }
+            float best = Float.MAX_VALUE;
+            for (int j : candidates) {
+                float dx = claimX[j] - claimX[i];
+                float dy = claimY[j] - claimY[i];
+                float d = dx * dx + dy * dy;
+                if (d < best) {
+                    best = d;
+                    division[i] = division[j];
+                }
+            }
+        }
+        return division;
     }
 
     /**
@@ -255,6 +304,7 @@ public final class Borders {
         Map<Integer, Faction> factions = new HashMap<>();
         Map<Integer, long[]> tallies = new HashMap<>();
         Map<Integer, String> capitals = new HashMap<>();
+        Map<String, Integer> regions = new HashMap<>();
         for (PlanetarySystem system : systems) {
             if (system == null || system.getX() == null || system.getY() == null) {
                 continue;
@@ -280,9 +330,18 @@ public final class Borders {
             float contested = owners.size() > 1 ? 1 : 0;
             long people = owners.isEmpty() ? 0 : system.getPopulation(date);
             boolean capital = !owners.isEmpty() && system.getCapitalType(date) == CapitalType.NATIONAL;
+            int region = 0;
+            if (owners.size() == 1 && !INDEPENDENT.equals(owners.get(0).getShortName())) {
+                List<String> administration = system.getAdministration(date);
+                if (administration != null && !administration.isEmpty() && administration.get(0) != null
+                      && !administration.get(0).isBlank()) {
+                    region = regions.computeIfAbsent(numbering.id(owners.get(0)) + "/" + administration.get(0),
+                          key -> regions.size() + 1);
+                }
+            }
             for (Faction owner : owners) {
                 int id = numbering.id(owner);
-                claims.add(new float[] { x, y, id, contested });
+                claims.add(new float[] { x, y, id, contested, region });
                 factions.putIfAbsent(id, owner);
                 long[] tally = tallies.computeIfAbsent(id, key -> new long[2]);
                 tally[0]++;
@@ -353,6 +412,14 @@ public final class Borders {
     /** The territory the claims spread to; its realms are numbered one past their index in {@link #realms()}. */
     public InfluenceMap land() {
         return land;
+    }
+
+    /**
+     * The realms' administrative regions, spread as the realms are: each is numbered from 1, numbers that hold only on
+     * the date. Their edges inside a realm are where its regions meet.
+     */
+    public InfluenceMap divisions() {
+        return divisions;
     }
 
     /** The westernmost of all the systems, claimed or not, in light years. */

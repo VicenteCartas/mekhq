@@ -34,6 +34,7 @@ package mekhq.gui.gdx.hub;
 
 import java.nio.ShortBuffer;
 import java.util.List;
+import java.util.function.Function;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.GL20;
@@ -72,6 +73,8 @@ final class TerritoryField implements Disposable {
     /** The realm in the spotlight, from 1, or 0 for none. */
     private int spot;
     private float spotIn;
+    /** How strongly the realms' administrative regions show, 0 to 1. */
+    private float admin;
 
     void create() {
         shader = HoloTableView.compile(StarMapShaders.TERRITORY_VERTEX, StarMapShaders.TERRITORY_FRAGMENT);
@@ -89,7 +92,7 @@ final class TerritoryField implements Disposable {
      */
     void show(Borders borders) {
         palette(borders.realms());
-        Layer next = new Layer(borders, stage(borders.land()));
+        Layer next = new Layer(borders, this::stage);
         if (to == null) {
             to = next;
             progress = 1;
@@ -111,6 +114,11 @@ final class TerritoryField implements Disposable {
     void spotlight(int realm, float strength) {
         spot = realm;
         spotIn = strength;
+    }
+
+    /** Shows the realms' administrative regions at {@code strength}, 0 to 1. */
+    void admin(float strength) {
+        admin = strength;
     }
 
     /** Moves the turning {@code delta} seconds on. */
@@ -138,12 +146,15 @@ final class TerritoryField implements Disposable {
         shader.bind();
         shader.setUniformMatrix("u_projView", projView);
         palette.bind(2);
-        source.bind(0);
-        target.bind(1);
+        source.bind(0, 3);
+        target.bind(1, 4);
         Gdx.gl.glActiveTexture(GL20.GL_TEXTURE0);
         shader.setUniformi("u_landA", 0);
         shader.setUniformi("u_landB", 1);
         shader.setUniformi("u_palette", 2);
+        shader.setUniformi("u_divA", 3);
+        shader.setUniformi("u_divB", 4);
+        shader.setUniformf("u_admin", admin);
         source.uniforms(shader, "A");
         target.uniforms(shader, "B");
         shader.setUniformf("u_blend", from == null ? 1 : eased);
@@ -203,22 +214,14 @@ final class TerritoryField implements Disposable {
         private final Borders borders;
         private final InfluenceMap land;
         private final int texture;
+        private final int divisions;
         private final Mesh plane;
 
-        Layer(Borders borders, ShortBuffer samples) {
+        Layer(Borders borders, Function<InfluenceMap, ShortBuffer> stage) {
             this.borders = borders;
             land = borders.land();
-            texture = Gdx.gl.glGenTexture();
-            Gdx.gl.glBindTexture(GL20.GL_TEXTURE_2D, texture);
-            Gdx.gl.glTexParameteri(GL20.GL_TEXTURE_2D, GL20.GL_TEXTURE_MIN_FILTER, GL20.GL_NEAREST);
-            Gdx.gl.glTexParameteri(GL20.GL_TEXTURE_2D, GL20.GL_TEXTURE_MAG_FILTER, GL20.GL_NEAREST);
-            Gdx.gl.glTexParameteri(GL20.GL_TEXTURE_2D, GL20.GL_TEXTURE_WRAP_S, GL20.GL_CLAMP_TO_EDGE);
-            Gdx.gl.glTexParameteri(GL20.GL_TEXTURE_2D, GL20.GL_TEXTURE_WRAP_T, GL20.GL_CLAMP_TO_EDGE);
-            Gdx.gl.glPixelStorei(GL20.GL_UNPACK_ALIGNMENT, 2);
-            Gdx.gl.glTexImage2D(GL20.GL_TEXTURE_2D, 0, GL30.GL_RGBA16I, land.width(), land.height(), 0,
-                  GL30.GL_RGBA_INTEGER, GL20.GL_SHORT, samples);
-            Gdx.gl.glPixelStorei(GL20.GL_UNPACK_ALIGNMENT, 4);
-            Gdx.gl.glBindTexture(GL20.GL_TEXTURE_2D, 0);
+            texture = upload(land, stage.apply(land));
+            divisions = upload(borders.divisions(), stage.apply(borders.divisions()));
             float west = land.west();
             float south = land.south();
             float east = west + land.texel() * land.width();
@@ -228,9 +231,26 @@ final class TerritoryField implements Disposable {
                                             east, 0, -north, west, 0, -north });
         }
 
-        void bind(int unit) {
+        void bind(int unit, int divisionUnit) {
             Gdx.gl.glActiveTexture(GL20.GL_TEXTURE0 + unit);
             Gdx.gl.glBindTexture(GL20.GL_TEXTURE_2D, texture);
+            Gdx.gl.glActiveTexture(GL20.GL_TEXTURE0 + divisionUnit);
+            Gdx.gl.glBindTexture(GL20.GL_TEXTURE_2D, divisions);
+        }
+        /** Puts {@code map}'s samples, staged in {@code samples}, on the GPU. */
+        private static int upload(InfluenceMap map, ShortBuffer samples) {
+            int texture = Gdx.gl.glGenTexture();
+            Gdx.gl.glBindTexture(GL20.GL_TEXTURE_2D, texture);
+            Gdx.gl.glTexParameteri(GL20.GL_TEXTURE_2D, GL20.GL_TEXTURE_MIN_FILTER, GL20.GL_NEAREST);
+            Gdx.gl.glTexParameteri(GL20.GL_TEXTURE_2D, GL20.GL_TEXTURE_MAG_FILTER, GL20.GL_NEAREST);
+            Gdx.gl.glTexParameteri(GL20.GL_TEXTURE_2D, GL20.GL_TEXTURE_WRAP_S, GL20.GL_CLAMP_TO_EDGE);
+            Gdx.gl.glTexParameteri(GL20.GL_TEXTURE_2D, GL20.GL_TEXTURE_WRAP_T, GL20.GL_CLAMP_TO_EDGE);
+            Gdx.gl.glPixelStorei(GL20.GL_UNPACK_ALIGNMENT, 2);
+            Gdx.gl.glTexImage2D(GL20.GL_TEXTURE_2D, 0, GL30.GL_RGBA16I, map.width(), map.height(), 0,
+                  GL30.GL_RGBA_INTEGER, GL20.GL_SHORT, samples);
+            Gdx.gl.glPixelStorei(GL20.GL_UNPACK_ALIGNMENT, 4);
+            Gdx.gl.glBindTexture(GL20.GL_TEXTURE_2D, 0);
+            return texture;
         }
 
         void uniforms(ShaderProgram program, String which) {
@@ -242,6 +262,7 @@ final class TerritoryField implements Disposable {
         @Override
         public void dispose() {
             Gdx.gl.glDeleteTexture(texture);
+            Gdx.gl.glDeleteTexture(divisions);
             plane.dispose();
         }
     }

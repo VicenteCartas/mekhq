@@ -178,6 +178,8 @@ public final class StarMapSnapshots {
                     view.lens(wanted.lens());
                     view.network(List.of(wanted.layers().split("\\+")).contains("net"));
                     view.reach(List.of(wanted.layers().split("\\+")).contains("reach"));
+                    view.admin(List.of(wanted.layers().split("\\+")).contains("admin"));
+                    view.empty(!List.of(wanted.layers().split("\\+")).contains("noempty"));
                     call("rebuildLenses", new Class<?>[0]);
                 }
                 view.look(wanted.x(), wanted.y(), wanted.height(), wanted.tilt(), wanted.turn());

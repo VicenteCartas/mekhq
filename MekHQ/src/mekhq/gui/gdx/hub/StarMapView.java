@@ -236,6 +236,8 @@ final class StarMapView {
     /** The realm in the spotlight, fading in or out at {@link #spotIn}. */
     private int spot;
     private float spotIn;
+    private boolean adminShown;
+    private float adminIn;
     private @Nullable Borders.Holding spotHeld;
     /** The tilt the camera is easing to, in degrees; NaN when it isn't. */
     private float wantedPitch = Float.NaN;
@@ -594,6 +596,16 @@ final class StarMapView {
     /** Whether the force's reach shows. */
     boolean reach() {
         return reachShown;
+    }
+
+    /** Shows or hides where the realms' administrative regions meet, fading them in or out. */
+    void admin(boolean shown) {
+        adminShown = shown;
+    }
+
+    /** Whether the realms' administrative regions show. */
+    boolean admin() {
+        return adminShown;
     }
 
     /** How many settled systems on screen the lens rates at each level, from 1 to its levels; empty without one. */
@@ -1341,6 +1353,8 @@ final class StarMapView {
             }
         }
         territory.spotlight(spot, spotIn * spotIn * (3 - 2 * spotIn));
+        adminIn = MathUtils.clamp(adminIn + (adminShown ? delta : -delta) * SPOT_RATE / 2, 0, 1);
+        territory.admin(adminIn * adminIn * (3 - 2 * adminIn));
     }
 
     private void hover(int at) {

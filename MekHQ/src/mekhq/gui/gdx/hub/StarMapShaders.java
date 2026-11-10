@@ -401,6 +401,9 @@ final class StarMapShaders {
           uniform float u_time;
           uniform int u_spot;
           uniform float u_spotIn;
+          uniform isampler2D u_divA;
+          uniform isampler2D u_divB;
+          uniform float u_admin;
           out vec4 fragColor;
           const float SCALE = 16.0;
           const int FAR = 32000;
@@ -428,6 +431,45 @@ final class StarMapShaders {
                   sum += weights[k] * (texels[k].x == realm ? s : -s);
               }
               return sum;
+          }
+          // Light years from where two administrative regions of div meet; far when none do nearby
+          float division(isampler2D div, vec2 origin, float texel, ivec2 size) {
+              vec2 uv = (v_map - origin) / texel - 0.5;
+              ivec2 i0 = ivec2(floor(uv));
+              vec2 f = uv - vec2(i0);
+              ivec4 t[4];
+              float w[4];
+              for (int k = 0; k < 4; k++) {
+                  ivec2 o = ivec2(k & 1, k >> 1);
+                  ivec2 at = clamp(i0 + o, ivec2(0), size - 1);
+                  t[k] = texelFetch(div, at, 0);
+                  w[k] = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
+              }
+              int a = -1;
+              float sa = -1e9;
+              int b = -1;
+              float sb = -1e9;
+              for (int k = 0; k < 4; k++) {
+                  int region = t[k].x;
+                  if (region == a || region == b) {
+                      continue;
+                  }
+                  float s = 0.0;
+                  for (int j = 0; j < 4; j++) {
+                      float d = float(t[j].y) / SCALE;
+                      s += w[j] * (t[j].x == region ? d : -d);
+                  }
+                  if (s > sa) {
+                      b = a;
+                      sb = sa;
+                      a = region;
+                      sa = s;
+                  } else if (s > sb) {
+                      b = region;
+                      sb = s;
+                  }
+              }
+              return a > 0 && b > 0 ? (sa - sb) * 0.5 : 1e4;
           }
           vec3 colour(int realm) {
               int id = realm - 1;
@@ -497,6 +539,18 @@ final class StarMapShaders {
                   result = vec4(fill * (1.0 + 0.25 * lit), ((0.07 + 0.13 * lit) * drift + glow * (1.0 + lit)) * shade);
               } else {
                   result = vec4(colour(b), exp(-depth / 5.0) * 0.08);
+              }
+              if (u_admin > 0.001 && a > 0) {
+                  float da = u_blend < 1.0 ? division(u_divA, u_originA, u_texelA, u_sizeA) : 1e4;
+                  float db = u_blend > 0.0 ? division(u_divB, u_originB, u_texelB, u_sizeB) : 1e4;
+                  float apart = min(mix(da, db, u_blend), 1e4) / lightYears;
+                  // Regions meet inside a realm; at its border, the border speaks for them
+                  float inner = smoothstep(2.0, 4.0, depth / lightYears);
+                  float ink = (1.0 - smoothstep(0.35, 1.1, apart)) * inner * u_admin;
+                  float haze = exp(-apart / 6.0) * 0.12 * inner * u_admin;
+                  vec3 pale = mix(colour(a), vec3(1.0), 0.55);
+                  result = vec4(mix(result.rgb, pale, max(ink, haze * 0.5)), result.a + haze);
+                  result = mix(result, vec4(pale, 0.42), ink * 0.75);
               }
               float line = 1.0 - smoothstep(0.6, 1.5, depth / lightYears);
               result.a *= strength(a > 0 ? a : b);
