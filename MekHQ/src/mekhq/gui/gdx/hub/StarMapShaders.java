@@ -180,8 +180,9 @@ final class StarMapShaders {
           """;
 
     /**
-     * A ribbon of a stroke: a_normal is the segment's other end, a_texCoord0 is (which side, -1 or 1; its width in
-     * pixels; light years along its line; its flow), its height times u_lift. The ribbon is turned to face the screen, its edges the width
+     * A ribbon of a stroke: a_normal is the segment's other end, a_texCoord0 is (which side, -1 or 1, seen from its
+     * first end; its width in pixels, negative at its second end; light years along its line; its flow), its height
+     * times u_lift. The ribbon is turned to face the screen, its edges the width
      * apart there however far the segment lies.
      */
     static final String STROKE_VERTEX = """
@@ -207,9 +208,10 @@ final class StarMapShaders {
               vec2 dir = b - a;
               float len = length(dir);
               dir = len > 1e-4 ? dir / len : vec2(1.0, 0.0);
-              vec2 normal = vec2(-dir.y, dir.x);
+              // The second end looks back along the segment, so its normal turns round
+              vec2 normal = vec2(-dir.y, dir.x) * sign(a_texCoord0.y);
               float side = a_texCoord0.x;
-              float width = a_texCoord0.y * u_scale;
+              float width = abs(a_texCoord0.y) * u_scale;
               here.xy += normal * side * width * 0.5 / (u_viewport * 0.5) * here.w;
               gl_Position = here;
               v_colour = a_color;
@@ -486,17 +488,9 @@ final class StarMapShaders {
               float sa = -1e9;
               int b = -1;
               float sb = -1e9;
-              float dispute = 0.0;
-              int partner = 0;
-              float partnerWeight = 0.0;
               for (int k = 0; k < 8; k++) {
                   if (weights[k] <= 0.0) {
                       continue;
-                  }
-                  dispute += weights[k] * float(texels[k].w) / 32767.0;
-                  if (texels[k].z > 0 && weights[k] > partnerWeight) {
-                      partner = texels[k].z;
-                      partnerWeight = weights[k];
                   }
                   int realm = texels[k].x;
                   if (realm == a || realm == b) {
@@ -524,12 +518,34 @@ final class StarMapShaders {
               if (a > 0) {
                   vec3 hue = colour(a);
                   vec3 fill = hue;
-                  if (partner > 0 && partner != a && dispute > 0.01) {
-                      float hatch = abs(fract(dot(v_map, vec2(0.8660254, 0.5)) / 5.0) - 0.5) * 5.0;
-                      float stripe = 1.0 - smoothstep(0.6, 0.6 + lightYears, hatch);
-                      // Hatching finer than the pixels would shimmer; far out the dispute only tints
-                      stripe *= 1.0 - smoothstep(0.5, 1.5, lightYears);
-                      fill = mix(hue, colour(partner), smoothstep(0.0, 0.7, dispute) * max(0.3, 0.75 * stripe));
+                  // Every claimant but a round here, each by how strongly and how near it disputes
+                  vec3 rival = vec3(0.0);
+                  float rivalry = 0.0;
+                  for (int k = 0; k < 8; k++) {
+                      if (weights[k] <= 0.0 || texels[k].z <= 0) {
+                          continue;
+                      }
+                      int other = texels[k].z == a ? texels[k].x : texels[k].z;
+                      if (other <= 0 || other == a) {
+                          continue;
+                      }
+                      float w = weights[k] * float(texels[k].w) / 32767.0;
+                      rival += colour(other) * w;
+                      rivalry += w;
+                  }
+                  if (rivalry > 0.005) {
+                      rival /= rivalry;
+                      // Stripes about 14 pixels apart however far out: two octaves, crossfaded as the zoom runs
+                      float octave = log2(lightYears * 14.0);
+                      float period = exp2(floor(octave));
+                      float u = dot(v_map, vec2(0.8660254, 0.5));
+                      float s1 = abs(fract(u / period) - 0.5) * 2.0;
+                      float s2 = abs(fract(u / (period * 2.0)) - 0.5) * 2.0;
+                      float soft = lightYears * 2.0;
+                      float st1 = 1.0 - smoothstep(0.5 - soft / period, 0.5 + soft / period, s1);
+                      float st2 = 1.0 - smoothstep(0.5 - soft / (period * 2.0), 0.5 + soft / (period * 2.0), s2);
+                      float stripe = mix(st1, st2, fract(octave));
+                      fill = mix(hue, rival, smoothstep(0.0, 0.7, rivalry) * (0.25 + 0.45 * stripe));
                   }
                   float drift = 0.85 + 0.15 * sin(dot(v_map, vec2(0.011, 0.007)) * 6.2832 + u_time * 0.4);
                   float glow = exp(-depth / 3.0) * 0.28 + exp(-depth / 16.0) * 0.14;
@@ -538,7 +554,12 @@ final class StarMapShaders {
                   float shade = u_spot > 0 && a != u_spot ? 1.0 - 0.45 * u_spotIn : 1.0;
                   result = vec4(fill * (1.0 + 0.25 * lit), ((0.07 + 0.13 * lit) * drift + glow * (1.0 + lit)) * shade);
               } else {
-                  result = vec4(colour(b), exp(-depth / 5.0) * 0.08);
+                  // Faded by how much of b's ground is round here, so the glow ends smoothly between texels
+                  float near = 0.0;
+                  for (int k = 0; k < 8; k++) {
+                      near += texels[k].x == b ? weights[k] : 0.0;
+                  }
+                  result = vec4(colour(b), exp(-depth / 5.0) * 0.08 * smoothstep(0.0, 0.5, near));
               }
               if (u_admin > 0.001 && a > 0) {
                   float da = u_blend < 1.0 ? division(u_divA, u_originA, u_texelA, u_sizeA) : 1e4;

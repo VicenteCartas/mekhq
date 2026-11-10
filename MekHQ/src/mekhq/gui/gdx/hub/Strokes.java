@@ -87,13 +87,13 @@ final class Strokes implements Disposable {
           float alphaEnd, float width, float along, float flow) {
         float length = (float) Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1) + (z2 - z1) * (z2 - z1));
         float end = along + length;
-        // The far end sees the segment the other way round, so its sides are the near end's negated
+        // The far end's width is negated: it sees the segment the other way round, and turns its sides back
         corner(x1, y1, z1, x2, y2, z2, r, g, b, alpha, -1, width, along, flow);
         corner(x1, y1, z1, x2, y2, z2, r, g, b, alpha, 1, width, along, flow);
-        corner(x2, y2, z2, x1, y1, z1, r, g, b, alphaEnd, 1, width, end, flow);
-        corner(x2, y2, z2, x1, y1, z1, r, g, b, alphaEnd, 1, width, end, flow);
-        corner(x1, y1, z1, x2, y2, z2, r, g, b, alpha, 1, width, along, flow);
-        corner(x2, y2, z2, x1, y1, z1, r, g, b, alphaEnd, -1, width, end, flow);
+        corner(x2, y2, z2, x1, y1, z1, r, g, b, alphaEnd, 1, -width, end, flow);
+        corner(x1, y1, z1, x2, y2, z2, r, g, b, alpha, -1, width, along, flow);
+        corner(x2, y2, z2, x1, y1, z1, r, g, b, alphaEnd, 1, -width, end, flow);
+        corner(x2, y2, z2, x1, y1, z1, r, g, b, alphaEnd, -1, -width, end, flow);
     }
 
     private void corner(float x, float y, float z, float ox, float oy, float oz, float r, float g, float b,

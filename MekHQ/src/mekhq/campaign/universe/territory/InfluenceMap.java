@@ -184,19 +184,13 @@ public final class InfluenceMap {
         InfluenceMap build(int claims, float[] x, float[] y, int[] realm, boolean[] disputed) {
             influence(claims, x, y, realm);
             int[] owner = new int[size];
-            // How far each sample's influence clears its rival's: the holder's lead, or no one's below the threshold
-            float[] lead = new float[size];
             for (int i = 0; i < size; i++) {
-                float rival = Math.max(second[i], THRESHOLD);
                 // Realms tied hold the ground together: one is drawn holding it, the other disputing it
                 if (best[i] > THRESHOLD && best[i] >= second[i]) {
                     owner[i] = bestRealm[i];
-                    lead[i] = Math.max(0, best[i] - rival);
-                } else {
-                    lead[i] = Math.max(0, THRESHOLD - best[i]);
                 }
             }
-            float[] distance = edges(owner, lead);
+            float[] distance = edges(owner);
             float[] dispute = dispute(claims, x, y, disputed);
             short[] samples = new short[size * CHANNELS];
             for (int i = 0; i < size; i++) {
@@ -292,9 +286,10 @@ public final class InfluenceMap {
 
         /**
          * How far, in samples, each sample lies from the edge of its holder's ground: the edges are placed between
-         * neighbours held by others where their leads tie, then carried to every sample by nearest edge point.
+         * neighbours held by others where their holders' influences tie, then carried to every sample by nearest edge
+         * point.
          */
-        private float[] edges(int[] owner, float[] lead) {
+        private float[] edges(int[] owner) {
             float[] edgeX = new float[size];
             float[] edgeY = new float[size];
             float[] nearest = new float[size];
@@ -303,12 +298,12 @@ public final class InfluenceMap {
                 for (int column = 0; column < width; column++) {
                     int i = row * width + column;
                     if (column + 1 < width && owner[i + 1] != owner[i]) {
-                        float t = tie(lead[i], lead[i + 1]);
+                        float t = tie(i, i + 1, owner);
                         offer(i, column, row, column + t, row, edgeX, edgeY, nearest);
                         offer(i + 1, column + 1, row, column + t, row, edgeX, edgeY, nearest);
                     }
                     if (row + 1 < height && owner[i + width] != owner[i]) {
-                        float t = tie(lead[i], lead[i + width]);
+                        float t = tie(i, i + width, owner);
                         offer(i, column, row, column, row + t, edgeX, edgeY, nearest);
                         offer(i + width, column, row + 1, column, row + t, edgeX, edgeY, nearest);
                     }
@@ -342,10 +337,24 @@ public final class InfluenceMap {
             return nearest;
         }
 
-        /** Where between two samples, 0 to 1, their leads tie. */
-        private static float tie(float here, float there) {
-            float total = here + there;
-            return total <= 0 ? 0.5f : here / total;
+        /**
+         * Where between samples {@code here} and {@code there}, 0 to 1, the influences of their holders tie: no one's
+         * is the threshold. Measured between the two holders alone, so a realm tied with another for its ground still
+         * has a smooth edge against everyone else.
+         */
+        private float tie(int here, int there, int[] owner) {
+            float atHere = influence(here, owner[here]) - influence(here, owner[there]);
+            float atThere = influence(there, owner[here]) - influence(there, owner[there]);
+            float span = atHere - atThere;
+            return span <= 1e-6f ? 0.5f : Math.clamp(atHere / span, 0, 1);
+        }
+
+        /** {@code realm}'s influence at sample {@code i}; no one's is the threshold. */
+        private float influence(int i, int realm) {
+            if (realm == 0) {
+                return THRESHOLD;
+            }
+            return bestRealm[i] == realm ? best[i] : secondRealm[i] == realm ? second[i] : 0;
         }
 
         private static void offer(int i, int column, int row, float x, float y, float[] edgeX, float[] edgeY,
