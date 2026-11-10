@@ -36,7 +36,9 @@ import java.awt.Color;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -51,12 +53,17 @@ import mekhq.campaign.JumpPath;
 import mekhq.campaign.NavigationRouteAnalysis.PathAssessment;
 import mekhq.campaign.NavigationRouteAnalysis.Severity;
 import mekhq.campaign.RouteAlternativesPlanner.PlanningResult;
+import mekhq.campaign.base.PlayerBase;
 import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.events.LocationChangedEvent;
 import mekhq.campaign.events.NewDayEvent;
 import mekhq.campaign.events.PlanetarySystemsChangedEvent;
 import mekhq.campaign.events.TransitStatusChangedEvent;
+import mekhq.campaign.events.missions.MissionEvent;
+import mekhq.campaign.events.scenarios.ScenarioEvent;
 import mekhq.campaign.finances.Money;
+import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.mission.scenarios.Scenario;
 import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.PlanetarySystem;
@@ -72,9 +79,17 @@ import mekhq.campaign.universe.enums.HPGRating;
  * @param current the id of the system the force is at, or travelling from; null when nowhere
  * @param route   the ids of the systems on the force's route, the current one first; empty when it isn't travelling
  * @param voyage  how far the force is along its route; null when it isn't travelling
+ * @param marks   what the campaign has at systems by their ids: {@link #MISSION}, {@link #SCENARIO} and {@link #BASE}
+ *                together
  */
 public record StarMap(LocalDate date, List<Star> stars, @Nullable String current, List<String> route,
-      @Nullable Voyage voyage) {
+      @Nullable Voyage voyage, Map<String, Integer> marks) {
+    /** A mark: the target of one of the campaign's active contracts. */
+    public static final int MISSION = 1;
+    /** A mark: a scenario waiting to be fought. */
+    public static final int SCENARIO = 2;
+    /** A mark: one of the force's bases. */
+    public static final int BASE = 4;
     /** The colour of a system no one holds. */
     static final int UNCLAIMED = 0x8A9099;
 
@@ -200,12 +215,20 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
         Objects.requireNonNull(date);
         stars = List.copyOf(stars);
         route = List.copyOf(route);
+        marks = Map.copyOf(marks);
+    }
+
+    /** A map with nothing of the campaign's marked. */
+    public StarMap(LocalDate date, List<Star> stars, @Nullable String current, List<String> route,
+          @Nullable Voyage voyage) {
+        this(date, stars, current, route, voyage, Map.of());
     }
 
     /** The map, rebuilt as the day, the force's whereabouts or the systems change. */
     public static ViewModel<StarMap> model() {
         return ViewModel.of("StarMap", StarMap::of, List.of(NewDayEvent.class, LocationChangedEvent.class,
-              TransitStatusChangedEvent.class, PlanetarySystemsChangedEvent.class));
+              TransitStatusChangedEvent.class, PlanetarySystemsChangedEvent.class, MissionEvent.class,
+              ScenarioEvent.class));
     }
 
     static StarMap of(Campaign campaign) {
@@ -222,7 +245,32 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
             }
             voyage = voyage(campaign, location, path);
         }
-        return new StarMap(date, stars, here == null ? null : here.getId(), route, voyage);
+        return new StarMap(date, stars, here == null ? null : here.getId(), route, voyage, marks(campaign));
+    }
+
+    /** What the campaign has where: its contracts' targets, its scenarios' and its bases. */
+    private static Map<String, Integer> marks(Campaign campaign) {
+        Map<String, Integer> marks = new HashMap<>();
+        for (AbstractContract contract : campaign.getActiveContracts()) {
+            mark(marks, contract.getTargetSystem(), MISSION);
+        }
+        for (Scenario scenario : campaign.getActiveScenarios()) {
+            AbstractContract contract = campaign.getContract(scenario.getMissionId());
+            if (contract != null) {
+                mark(marks, contract.getTargetSystem(), SCENARIO);
+            }
+        }
+        for (PlayerBase base : campaign.getCampaignLocationManager().getPlayerBases()) {
+            AbstractLocation location = base.getCurrentLocation();
+            mark(marks, location == null ? null : location.getCurrentSystem(), BASE);
+        }
+        return marks;
+    }
+
+    private static void mark(Map<String, Integer> marks, @Nullable PlanetarySystem system, int mark) {
+        if (system != null && system.getId() != null) {
+            marks.merge(system.getId(), mark, (had, more) -> had | more);
+        }
     }
 
     /**

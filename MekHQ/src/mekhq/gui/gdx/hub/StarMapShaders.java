@@ -256,7 +256,7 @@ final class StarMapShaders {
           }
           """;
 
-    /** A marker ring: a_texCoord0 is (its size in pixels, how much it pulses). */
+    /** A marker ring: a_texCoord0 is (its size in pixels, how much it pulses, 10 more a diamond, 20 a square). */
     static final String RING_VERTEX = """
           #version 330 core
           in vec3 a_position;
@@ -265,20 +265,25 @@ final class StarMapShaders {
           uniform mat4 u_projView;
           uniform float u_time;
           out vec4 v_colour;
+          flat out int v_shape;
           void main() {
               v_colour = a_color;
+              v_shape = int(a_texCoord0.y / 10.0);
+              float pulse = mod(a_texCoord0.y, 10.0);
               gl_Position = u_projView * vec4(a_position, 1.0);
-              gl_PointSize = a_texCoord0.x * (1.0 + 0.12 * a_texCoord0.y * sin(u_time * 3.5));
+              gl_PointSize = a_texCoord0.x * (1.0 + 0.12 * pulse * sin(u_time * 3.5));
           }
           """;
 
     static final String RING_FRAGMENT = """
           #version 330 core
           in vec4 v_colour;
+          flat in int v_shape;
           uniform float u_fade;
           out vec4 fragColor;
           void main() {
-              float r = length(gl_PointCoord - 0.5) * 2.0;
+              vec2 p = abs(gl_PointCoord - 0.5) * 2.0;
+              float r = v_shape == 1 ? (p.x + p.y) * 0.9 : v_shape == 2 ? max(p.x, p.y) * 1.05 : length(p);
               float ring = smoothstep(0.12, 0.0, abs(r - 0.78));
               float glow = exp(-pow((r - 0.78) * 6.0, 2.0)) * 0.35;
               float light = (ring + glow) * v_colour.a * u_fade;

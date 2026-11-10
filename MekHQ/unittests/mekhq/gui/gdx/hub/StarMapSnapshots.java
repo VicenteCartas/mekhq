@@ -38,7 +38,9 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
@@ -121,7 +123,17 @@ public final class StarMapSnapshots {
         Borders today = Borders.of(systems, realms, TODAY);
         String home = today.stars().stream().filter(star -> star.name().equals(HOME)).map(StarMap.Star::id)
               .findFirst().orElse(null);
-        StarMap campaign = new StarMap(TODAY, today.stars(), home, List.of(), null);
+        Map<String, Integer> marks = new HashMap<>();
+        for (StarMap.Star star : today.stars()) {
+            switch (star.name()) {
+                case "Tharkad" -> marks.put(star.id(), StarMap.MISSION);
+                case "Luthien" -> marks.put(star.id(), StarMap.MISSION | StarMap.SCENARIO);
+                case HOME -> marks.put(star.id(), StarMap.BASE);
+                default -> {
+                }
+            }
+        }
+        StarMap campaign = new StarMap(TODAY, today.stars(), home, List.of(), null, marks);
 
         Lwjgl3ApplicationConfiguration configuration = new Lwjgl3ApplicationConfiguration();
         configuration.setTitle("Star map snapshots");

@@ -130,9 +130,17 @@ final class StarMapView {
     private static final int REALM_SYSTEMS = 12;
     /** The tilt, in degrees, the camera eases to when a lens comes on looking straight down. */
     private static final float LENS_PITCH = 52;
+    /** The tilt, in degrees, above which pillars and beacons fade, being seen end on. */
+    private static final float UPRIGHT_PITCH = 86;
     /** How much of its strength the territory keeps under a lens. */
     private static final float LENS_TERRITORY = 0.3f;
     private static final Vector3 HPG_COLOUR = new Vector3(0.42f, 0.78f, 1.0f);
+    /** A marker's shapes, added to its pulse: a diamond for the campaign's operations, a square for its bases. */
+    private static final int DIAMOND = 10;
+    private static final int SQUARE = 20;
+    private static final Vector3 MISSION_COLOUR = new Vector3(1.0f, 0.55f, 0.12f);
+    private static final Vector3 BATTLE_COLOUR = new Vector3(1.0f, 0.16f, 0.12f);
+    private static final Vector3 BASE_COLOUR = new Vector3(0.3f, 1.0f, 0.55f);
     /** The most jumps the force's reach is followed out to. */
     private static final int REACH_JUMPS = 4;
     /** How fast the reach spreads out when shown, in light years a second along its jumps. */
@@ -531,7 +539,7 @@ final class StarMapView {
         reach.create();
         pillars.create();
         grid = grid();
-        rings = new Mesh(false, 64, 0, pointAttributes());
+        rings = new Mesh(false, 512, 0, pointAttributes());
         camera = new PerspectiveCamera(FIELD_OF_VIEW, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         camera.near = 1;
         camera.far = MAX_DISTANCE * 5;
@@ -628,9 +636,11 @@ final class StarMapView {
         if (reachShown) {
             reach.render(camera, fade, time, 1, (time - reachStart) * REACH_SPEED);
         }
-        beacons.render(camera, fade * (1 - lensIn), time, beaconHeight());
+        // Seen from straight above, upright strokes are only streaks; they show as the map tilts
+        float upright = MathUtils.clamp((UPRIGHT_PITCH - pitch) / 20, 0, 1);
+        beacons.render(camera, fade * (1 - lensIn) * upright, time, beaconHeight());
         if (lensIn > 0) {
-            pillars.render(camera, fade, time, lensIn * lensIn * (3 - 2 * lensIn) * pillarHeight());
+            pillars.render(camera, fade * upright, time, lensIn * lensIn * (3 - 2 * lensIn) * pillarHeight());
         }
         Gdx.gl.glEnable(GL_PROGRAM_POINT_SIZE);
         if (stars != null) {
@@ -673,7 +683,7 @@ final class StarMapView {
                 marked[at] = true;
             }
         }
-        for (List<String> ids : List.of(today.route(), previewed)) {
+        for (List<String> ids : List.of(today.route(), previewed, List.copyOf(today.marks().keySet()))) {
             for (String id : ids) {
                 Integer at = index.get(id);
                 if (at != null) {
@@ -1209,6 +1219,18 @@ final class StarMapView {
                 Integer at = index.get(id);
                 if (at != null && at != current) {
                     ring(vertices, star(at), AMBER, 0.55f, 12, 0);
+                }
+            }
+            for (Map.Entry<String, Integer> mark : today.marks().entrySet()) {
+                StarMap.Star star = star(index.getOrDefault(mark.getKey(), -1));
+                int what = mark.getValue();
+                if ((what & StarMap.BASE) != 0) {
+                    ring(vertices, star, BASE_COLOUR, 1.1f, 18, SQUARE);
+                }
+                if ((what & StarMap.SCENARIO) != 0) {
+                    ring(vertices, star, BATTLE_COLOUR, 1.5f, 26, DIAMOND + 1);
+                } else if ((what & StarMap.MISSION) != 0) {
+                    ring(vertices, star, MISSION_COLOUR, 1.2f, 24, DIAMOND);
                 }
             }
         }
