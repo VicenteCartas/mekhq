@@ -52,6 +52,7 @@ import java.util.Set;
 import megamek.common.universe.FactionTag;
 import mekhq.campaign.AbstractLocation;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.CampaignLocationManager;
 import mekhq.campaign.CurrentLocation;
 import mekhq.campaign.JumpPath;
 import mekhq.campaign.NavigationRouteAnalysis.PathAssessment;
@@ -98,6 +99,7 @@ class StarMapTest {
         when(detachment.getCurrentLocation()).thenReturn(location);
         when(campaign.getSystems()).thenReturn(systems);
         when(campaign.getCampaignOptions()).thenReturn(campaignOptions);
+        when(campaign.getCampaignLocationManager()).thenReturn(mock(CampaignLocationManager.class));
         when(campaign.assessNavigationPath(any(), any(), any()))
               .thenReturn(new PathAssessment(List.of(), Severity.CLEAR));
         tharkad = system("tharkad", "Tharkad", -100.0, 300.0, Set.of(lyrans));
@@ -114,7 +116,7 @@ class StarMapTest {
         assertEquals(2, map.stars().size(), "a system without a position has no place on the map");
         StarMap.Star first = map.stars().get(0);
         assertEquals(new StarMap.Star("tharkad", "Tharkad", -100, 300, 0x2060C0, "Lyran Commonwealth",
-              "Lyran Commonwealth", true), first);
+              "Lyran Commonwealth", true, 0, 0, 0, "LA"), first);
         StarMap.Star shared = map.stars().get(1);
         assertEquals("Draconis Combine / Lyran Commonwealth", shared.owner(), "owners in name order");
         assertEquals(0xC02020, shared.rgb(), "the first owner's colour");
