@@ -34,7 +34,8 @@ package mekhq.gui.gdx.hub;
 
 /**
  * The star map's GLSL, drawn additively over the dark: the systems as glowing points, rings marking the force's
- * system and the one under the cursor or chosen, and lines for the route, the jump range and the grid.
+ * system and the one under the cursor or chosen, lines for the jump range and the grid, and the force's route and the
+ * course previewed, travelled solid and dashed ahead.
  */
 final class StarMapShaders {
     private StarMapShaders() {
@@ -121,6 +122,44 @@ final class StarMapShaders {
           void main() {
               float reach = 1.0 - smoothstep(u_reach * 0.5, u_reach, length(v_world.xz - u_focus.xz));
               fragColor = vec4(v_colour.rgb * v_colour.a * reach * u_fade, 1.0);
+          }
+          """;
+
+    /**
+     * A route: a_texCoord0.x is how many light years along it the vertex lies. The first u_done light years, those
+     * travelled, are solid; the rest are dashes u_dash light years long flowing towards the destination.
+     */
+    static final String ROUTE_VERTEX = """
+          #version 330 core
+          in vec3 a_position;
+          in vec4 a_color;
+          in vec2 a_texCoord0;
+          uniform mat4 u_projView;
+          out vec4 v_colour;
+          out float v_along;
+          void main() {
+              v_colour = a_color;
+              v_along = a_texCoord0.x;
+              gl_Position = u_projView * vec4(a_position, 1.0);
+          }
+          """;
+
+    static final String ROUTE_FRAGMENT = """
+          #version 330 core
+          in vec4 v_colour;
+          in float v_along;
+          uniform float u_time;
+          uniform float u_done;
+          uniform float u_dash;
+          uniform float u_fade;
+          out vec4 fragColor;
+          void main() {
+              float light = 1.0;
+              if (v_along > u_done) {
+                  float phase = fract((v_along - u_time * u_dash * 0.6) / (u_dash * 2.0));
+                  light = 0.25 + 0.75 * smoothstep(0.42, 0.5, phase) * (1.0 - smoothstep(0.92, 1.0, phase));
+              }
+              fragColor = vec4(v_colour.rgb * v_colour.a * light * u_fade, 1.0);
           }
           """;
 }

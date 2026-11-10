@@ -65,7 +65,8 @@ import mekhq.gui.model.view.StarMap;
  * The campaign's star map, full screen: the systems laid out on the galactic plane (coreward away from the camera),
  * glowing in their owners' colours. It opens looking straight down with coreward up, as the holotable's dive ends,
  * and can be tilted from there. The force's system wears a pulsing ring with its jump
- * range around it, its route is drawn star to star, and the system under the cursor or chosen is ringed too.
+ * range around it, its route is drawn star to star, solid as far as it has come with a marker where it is and dashed
+ * ahead, a course previewed to the chosen system is dashed too, and the system under the cursor or chosen is ringed.
  *
  * <p>Dragging pans, the wheel zooms towards the cursor, the right button turns and tilts the view, Home flies back to
  * the force, and a click chooses the system under the cursor ({@link #input}). GPU thread.</p>
@@ -106,6 +107,7 @@ final class StarMapView {
     static final Vector3 BACKGROUND = new Vector3(0.0028f, 0.0036f, 0.0062f);
     private static final Vector3 CYAN = new Vector3(0.25f, 0.75f, 1.0f);
     private static final Vector3 AMBER = new Vector3(1.0f, 0.62f, 0.18f);
+    private static final Vector3 WHITE = new Vector3(1, 1, 1);
     private static final int GL_PROGRAM_POINT_SIZE = 0x8642;
     /** Floats per vertex: position, colour, and two parameters. */
     private static final int POINT_FLOATS = 9;
@@ -121,8 +123,22 @@ final class StarMapView {
     private ShaderProgram starShader;
     private ShaderProgram ringShader;
     private ShaderProgram lineShader;
+    private ShaderProgram routeShader;
     private @Nullable Mesh stars;
     private @Nullable Mesh lines;
+    /** The force's route, star to star. */
+    private @Nullable Mesh route;
+    /** How many light years along {@link #route} the force has come. */
+    private float travelled;
+    /** Where the force is between the first two systems of its route; null when it isn't between them. */
+    private final Vector3 ship = new Vector3();
+    private boolean shipShown;
+    /** The course previewed to the chosen system, star to star. */
+    private @Nullable Mesh preview;
+    /** The ids of the systems on the course previewed; empty for none. */
+    private List<String> previewed = List.of();
+    /** Whether {@link #preview} needs building again from {@link #previewed}. */
+    private boolean previewStale;
     private Mesh grid;
     private Mesh rings;
     private float time;
@@ -227,6 +243,15 @@ final class StarMapView {
         pending = changed;
     }
 
+    /** Previews the course through the systems {@code ids}, the force's first; null or empty clears it. */
+    void preview(@Nullable List<String> ids) {
+        List<String> wanted = ids == null ? List.of() : List.copyOf(ids);
+        if (!wanted.equals(previewed)) {
+            previewed = wanted;
+            previewStale = true;
+        }
+    }
+
     /** Whether the view has a map to show yet. */
     boolean loaded() {
         return map != null || pending != null;
@@ -309,6 +334,7 @@ final class StarMapView {
         starShader = HoloTableView.compile(StarMapShaders.STAR_VERTEX, HoloShaders.STAR_FRAGMENT);
         ringShader = HoloTableView.compile(StarMapShaders.RING_VERTEX, StarMapShaders.RING_FRAGMENT);
         lineShader = HoloTableView.compile(StarMapShaders.LINE_VERTEX, StarMapShaders.LINE_FRAGMENT);
+        routeShader = HoloTableView.compile(StarMapShaders.ROUTE_VERTEX, StarMapShaders.ROUTE_FRAGMENT);
         grid = grid();
         rings = new Mesh(false, 64, 0, pointAttributes());
         camera = new PerspectiveCamera(FIELD_OF_VIEW, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
@@ -340,6 +366,13 @@ final class StarMapView {
             load(pending);
             pending = null;
         }
+        if (previewStale && map != null) {
+            if (preview != null) {
+                preview.dispose();
+            }
+            preview = routeMesh(previewed, CYAN, 0.8f);
+            previewStale = false;
+        }
         if (flying) {
             fly(delta);
         }
@@ -365,6 +398,21 @@ final class StarMapView {
         if (lines != null) {
             lineShader.setUniformf("u_reach", 1e6f);
             lines.render(lineShader, GL20.GL_LINES);
+        }
+        if (route != null || preview != null) {
+            routeShader.bind();
+            routeShader.setUniformMatrix("u_projView", camera.combined);
+            routeShader.setUniformf("u_time", time);
+            routeShader.setUniformf("u_fade", fade);
+            routeShader.setUniformf("u_dash", Math.max(distance * 0.012f, 0.4f));
+            if (preview != null) {
+                routeShader.setUniformf("u_done", -1f);
+                preview.render(routeShader, GL20.GL_LINES);
+            }
+            if (route != null) {
+                routeShader.setUniformf("u_done", travelled);
+                route.render(routeShader, GL20.GL_LINES);
+            }
         }
 
         Gdx.gl.glEnable(GL_PROGRAM_POINT_SIZE);
@@ -404,11 +452,13 @@ final class StarMapView {
                 labels.label(all.get(marked), screen[marked * 2], screen[marked * 2 + 1], true);
             }
         }
-        for (String id : shown.route()) {
-            Integer at = index.get(id);
-            if (at != null && !done[at] && !Float.isNaN(screen[at * 2])) {
-                done[at] = true;
-                labels.label(all.get(at), screen[at * 2], screen[at * 2 + 1], true);
+        for (List<String> ids : List.of(shown.route(), previewed)) {
+            for (String id : ids) {
+                Integer at = index.get(id);
+                if (at != null && !done[at] && !Float.isNaN(screen[at * 2])) {
+                    done[at] = true;
+                    labels.label(all.get(at), screen[at * 2], screen[at * 2 + 1], true);
+                }
             }
         }
         if (distance > LABEL_DISTANCE) {
@@ -436,8 +486,8 @@ final class StarMapView {
     }
 
     void dispose() {
-        for (Disposable resource : new Disposable[] { starShader, ringShader, lineShader, stars, lines, grid,
-              rings }) {
+        for (Disposable resource : new Disposable[] { starShader, ringShader, lineShader, routeShader, stars, lines,
+              route, preview, grid, rings }) {
             if (resource != null) {
                 resource.dispose();
             }
@@ -536,7 +586,13 @@ final class StarMapView {
         if (lines != null) {
             lines.dispose();
         }
-        lines = lineMesh(changed);
+        lines = lineMesh();
+        if (route != null) {
+            route.dispose();
+        }
+        route = routeMesh(changed.route(), AMBER, 0.9f);
+        voyage(changed);
+        previewStale = true;
         if (first) {
             StarMap.Star here = star(current);
             if (!startSet && here != null) {
@@ -675,9 +731,13 @@ final class StarMapView {
             }
         }
         ring(vertices, star(current), CYAN, 1.2f, 30, 1);
+        if (shipShown) {
+            float scale = Gdx.graphics.getBackBufferHeight() / (float) Math.max(1, Gdx.graphics.getHeight());
+            vertices.addAll(ship.x, 0, ship.z, WHITE.x * 1.3f, WHITE.y * 1.3f, WHITE.z * 1.3f, 1, 14 * scale, 1);
+        }
         ring(vertices, star(chosen), AMBER, 1.4f, 34, 0);
         if (hovered != chosen) {
-            ring(vertices, star(hovered), new Vector3(1, 1, 1), 0.7f, 24, 0);
+            ring(vertices, star(hovered), WHITE, 0.7f, 24, 0);
         }
         int count = Math.min(vertices.size / POINT_FLOATS, rings.getMaxVertices());
         if (count > 0) {
@@ -720,8 +780,8 @@ final class StarMapView {
         return mesh;
     }
 
-    /** The force's jump range around its system and its route, star to star. */
-    private @Nullable Mesh lineMesh(StarMap shown) {
+    /** The force's jump range around its system. */
+    private @Nullable Mesh lineMesh() {
         FloatArray vertices = new FloatArray();
         StarMap.Star here = star(current);
         if (here != null) {
@@ -736,27 +796,65 @@ final class StarMapView {
                 }
             }
         }
-        StarMap.Star previous = null;
-        for (String id : shown.route()) {
-            Integer at = index.get(id);
-            StarMap.Star next = at == null ? null : star(at);
-            if (next == null) {
-                continue;
-            }
-            if (previous != null) {
-                for (StarMap.Star end : new StarMap.Star[] { previous, next }) {
-                    vertices.addAll((float) end.x(), 0, (float) -end.y(), AMBER.x * 0.9f, AMBER.y * 0.9f,
-                          AMBER.z * 0.9f, 1);
-                }
-            }
-            previous = next;
-        }
         if (vertices.size == 0) {
             return null;
         }
         Mesh mesh = new Mesh(true, vertices.size / LINE_FLOATS, 0, lineAttributes());
         mesh.setVertices(vertices.toArray());
         return mesh;
+    }
+
+    /**
+     * A route through the systems {@code ids}, star to star in {@code colour} at {@code bright}, each vertex carrying
+     * how many light years along it it lies; null when it has no leg.
+     */
+    private @Nullable Mesh routeMesh(List<String> ids, Vector3 colour, float bright) {
+        FloatArray vertices = new FloatArray();
+        StarMap.Star previous = null;
+        float along = 0;
+        for (String id : ids) {
+            Integer at = index.get(id);
+            StarMap.Star next = at == null ? null : star(at);
+            if (next == null) {
+                continue;
+            }
+            if (previous != null) {
+                float leg = (float) Math.hypot(next.x() - previous.x(), next.y() - previous.y());
+                vertices.addAll((float) previous.x(), 0, (float) -previous.y(), colour.x * bright,
+                      colour.y * bright, colour.z * bright, 1, along, 0);
+                along += leg;
+                vertices.addAll((float) next.x(), 0, (float) -next.y(), colour.x * bright, colour.y * bright,
+                      colour.z * bright, 1, along, 0);
+            }
+            previous = next;
+        }
+        if (vertices.size == 0) {
+            return null;
+        }
+        Mesh mesh = new Mesh(true, vertices.size / POINT_FLOATS, 0, pointAttributes());
+        mesh.setVertices(vertices.toArray());
+        return mesh;
+    }
+
+    /** Places the force between the first two systems of its route as far as its voyage has come. */
+    private void voyage(StarMap shown) {
+        travelled = 0;
+        shipShown = false;
+        StarMap.Voyage voyage = shown.voyage();
+        List<String> ids = shown.route();
+        if (voyage == null || voyage.stage() == StarMap.Stage.INBOUND || ids.size() < 2) {
+            return;
+        }
+        StarMap.Star from = star(index.getOrDefault(ids.get(0), -1));
+        StarMap.Star to = star(index.getOrDefault(ids.get(1), -1));
+        if (from == null || to == null) {
+            return;
+        }
+        float leg = (float) voyage.leg();
+        travelled = leg * (float) Math.hypot(to.x() - from.x(), to.y() - from.y());
+        ship.set(MathUtils.lerp((float) from.x(), (float) to.x(), leg), 0,
+              -MathUtils.lerp((float) from.y(), (float) to.y(), leg));
+        shipShown = true;
     }
 
     /** A faint square grid every {@link #GRID_STEP} light years, brighter every tenth line. */

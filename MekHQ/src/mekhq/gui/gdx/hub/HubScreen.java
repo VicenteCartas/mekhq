@@ -122,6 +122,12 @@ final class HubScreen extends ApplicationAdapter {
         /** Reads the detail of the system {@code id}, which comes back through {@link #detail(StarMap.Detail)}. */
         void system(String id);
 
+        /**
+         * Sets the force out on the course to the system {@code id} once the player confirms it, then reads its
+         * detail again.
+         */
+        void travel(String id);
+
         /** The screen's listener is being disposed. */
         void disposed();
     }
@@ -146,6 +152,7 @@ final class HubScreen extends ApplicationAdapter {
     private Table compassLayer;
     private Label mapWhere;
     private Label mapDate;
+    private Label mapVoyage;
     private UiKit.SearchField search;
     private Table searchPanel;
     private UiMenuList searchResults;
@@ -213,14 +220,32 @@ final class HubScreen extends ApplicationAdapter {
     /** The campaign's star map changed. */
     void map(StarMap changed) {
         map.show(changed);
+        if (mapVoyage != null) {
+            StarMap.Voyage voyage = changed.voyage();
+            mapVoyage.setText(voyage == null ? "" : voyage(voyage));
+            mapVoyage.setVisible(voyage != null);
+        }
+        // The course to the chosen system changes as the days pass and the force sets out
+        if (mapOpen && detailId != null) {
+            hub.system(detailId);
+        }
     }
 
     /** The detail of a system the player chose. */
     void detail(StarMap.Detail read) {
         StarMap.Star chosen = map.chosen();
         if (mapOpen && chosen != null && chosen.id().equals(read.id()) && read.id().equals(detailId)) {
+            StarMap.Course course = read.course();
+            map.preview(course == null || course.state() == StarMap.Departure.UNDERWAY ? null : course.route());
             fillDetail(chosen, read);
         }
+    }
+
+    private static String voyage(StarMap.Voyage voyage) {
+        return getFormattedText("HqHub.map.voyage", voyage.destination(),
+              getFormattedText("HqHub.map.jumpsLeft", voyage.jumps()),
+              getFormattedText("HqHub.map.daysLeft", voyage.days()),
+              getText("HqHub.map.stage." + voyage.stage().name()));
     }
 
     /** The campaign's top bar changed. */
@@ -489,7 +514,10 @@ final class HubScreen extends ApplicationAdapter {
         mapWhere = ui.roleTypeLabel("headline", "", "text.primary");
         title.add(mapWhere).row();
         mapDate = ui.label("", "hud-body", 14, UiTheme.tokenColor("text.secondary"));
-        title.add(mapDate);
+        title.add(mapDate).row();
+        mapVoyage = ui.label("", "hud-body", 14, UiTheme.tokenColor("text.primary"));
+        mapVoyage.setVisible(false);
+        title.add(mapVoyage);
         panel.add(title).expandX().left();
         search = ui.search(getText("HqHub.map.search"), true);
         UiKit.onChange(search.field, this::refind);
@@ -774,6 +802,7 @@ final class HubScreen extends ApplicationAdapter {
 
     /** Opens the chosen system's detail and asks the hub for the rest of it; none closes the panel. */
     private void chooseSystem(@Nullable StarMap.Star star) {
+        map.preview(null);
         if (star == null) {
             detailId = null;
             detailLayer.setVisible(false);
@@ -814,13 +843,42 @@ final class HubScreen extends ApplicationAdapter {
                 fact(facts, "HqHub.map.jumps", read.jumps() < 0 ? getText("HqHub.map.noRoute")
                       : getFormattedText("HqHub.map.jumpCount", read.jumps()));
             }
+            StarMap.Course course = read.course();
+            if (course != null) {
+                fact(facts, "HqHub.map.transit", getFormattedText("HqHub.map.days", course.days()));
+                if (course.recharge() > 0) {
+                    fact(facts, "HqHub.map.charging", getFormattedText("HqHub.map.hours",
+                          Math.round(course.recharge())));
+                }
+                if (!course.cost().isBlank()) {
+                    fact(facts, "HqHub.map.cost", course.cost());
+                }
+            }
         }
         detail.add(facts).padTop(space("sm")).row();
+        Table actions = new Table();
+        actions.left();
+        StarMap.Course course = read == null ? null : read.course();
+        if (course != null) {
+            UiButton go = ui.button("button-primary", null, getText("HqHub.map.setCourse"), null);
+            go.setDisabled(course.state() != StarMap.Departure.READY);
+            UiKit.onChange(go, () -> {
+                if (!go.isDisabled()) {
+                    go.setDisabled(true);
+                    hub.travel(read.id());
+                }
+            });
+            actions.add(go).padRight(space("sm"));
+        }
         UiButton plot = ui.button("button-secondary", null, getText("HqHub.map.navigation"), null);
         UiKit.onChange(plot, () -> hub.go(new PaletteEntry.Screen(MHQTabType.NAVIGATION)));
-        Table actions = new Table();
-        actions.left().add(plot);
+        actions.add(plot);
         detail.add(actions).padTop(space("md")).row();
+        if (course != null && course.state() != StarMap.Departure.READY) {
+            Label why = ui.caption(getText("HqHub.map.departure." + course.state().name()), true);
+            why.setWrap(true);
+            detail.add(why).padTop(space("xs")).row();
+        }
         detail.add(ui.caption(getText("HqHub.map.close"), true)).padTop(space("sm"));
     }
 

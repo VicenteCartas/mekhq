@@ -353,6 +353,11 @@ public class CampaignGUI extends JPanel {
     public void setCloseAction(@Nullable Runnable action) {
         closeAction = action;
     }
+
+    /** Whether another window hosts this one, so it may stay hidden while the campaign is open. */
+    public boolean isHosted() {
+        return closeAction != null;
+    }
     // endregion Getters/Setters
 
     // region Initialization
