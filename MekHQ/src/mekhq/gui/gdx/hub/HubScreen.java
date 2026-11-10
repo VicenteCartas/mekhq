@@ -38,6 +38,7 @@ import static mekhq.utilities.MHQInternationalization.getText;
 import java.nio.file.Path;
 import java.text.NumberFormat;
 import java.time.LocalDate;
+import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.List;
@@ -54,6 +55,7 @@ import com.badlogic.gdx.InputProcessor;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.Cursor;
 import com.badlogic.gdx.math.Vector2;
+import com.badlogic.gdx.scenes.scene2d.Actor;
 import com.badlogic.gdx.scenes.scene2d.InputEvent;
 import com.badlogic.gdx.scenes.scene2d.InputListener;
 import com.badlogic.gdx.scenes.scene2d.Stage;
@@ -64,6 +66,8 @@ import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
 import com.badlogic.gdx.scenes.scene2d.ui.TextField;
+import com.badlogic.gdx.scenes.scene2d.utils.ClickListener;
+import com.badlogic.gdx.scenes.scene2d.utils.Drawable;
 import com.badlogic.gdx.utils.Align;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
 import jakarta.annotation.Nullable;
@@ -78,6 +82,7 @@ import megamek.client.ui.gdx.UiTheme;
 import megamek.common.Configuration;
 import mekhq.campaign.universe.eras.Eras;
 import mekhq.gui.enums.MHQTabType;
+import mekhq.gui.model.view.MapLens;
 import mekhq.gui.model.view.StarMap;
 import mekhq.gui.model.view.TopBar;
 
@@ -106,6 +111,8 @@ final class HubScreen extends ApplicationAdapter {
     private static final int LEGEND = 6;
     /** How often the legend recounts the factions on screen, in seconds. */
     private static final float LEGEND_EVERY = 0.3f;
+    /** The colours of the borders lens's strip: a few of the great houses'. */
+    private static final int[] BORDERS_STRIP = { 0xD5B53A, 0x3E8BD8, 0x2DA05A, 0xC23B3B, 0x8C55C8 };
     /** How long the map takes to open, in seconds; the dive ends, and the fade into the map starts, part way. */
     private static final float OPEN_SECONDS = 1.4f;
     private static final float DIVE_END = 0.65f;
@@ -187,6 +194,11 @@ final class HubScreen extends ApplicationAdapter {
     private Table searchPanel;
     private UiMenuList searchResults;
     private Table legend;
+    /** The lenses to look at the systems through, and the overlays, above the legend. */
+    private Table lensPanel;
+    private boolean lensesOpen;
+    private @Nullable MapLens legendLens;
+    private int[] legendLevels = new int[0];
     private List<StarMapView.Legend> legendShown = List.of();
     private float legendClock;
     private Container<UiKit.Icon> compass;
@@ -496,6 +508,15 @@ final class HubScreen extends ApplicationAdapter {
         if (mapOpen && !moving() && timeKey(keycode)) {
             return true;
         }
+        if (mapOpen && keycode == Input.Keys.L) {
+            cycleLens(Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT) || Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT));
+            return true;
+        }
+        if (mapOpen && keycode == Input.Keys.H) {
+            map.network(!map.network());
+            rebuildLenses();
+            return true;
+        }
         for (HubArea area : HubArea.values()) {
             if (keycode == Input.Keys.NUM_0 + area.hotkey() || keycode == Input.Keys.NUMPAD_0 + area.hotkey()) {
                 choose(area);
@@ -656,18 +677,145 @@ final class HubScreen extends ApplicationAdapter {
         legendLayer = new Table();
         legendLayer.setFillParent(true);
         legendLayer.bottom().left().pad(space("xxl"));
+        lensPanel = ui.panel(true);
+        lensPanel.setTouchable(Touchable.enabled);
+        // The panel takes its own clicks, so they don't choose the systems behind it
+        lensPanel.addListener(new InputListener() {
+            @Override
+            public boolean touchDown(InputEvent event, float x, float y, int pointer, int button) {
+                return true;
+            }
+        });
+        rebuildLenses();
         legend = ui.panel(true);
         legend.setTouchable(Touchable.disabled);
-        legendLayer.add(legend).minWidth(220);
+        legendLayer.add(lensPanel).minWidth(220).fillX().row();
+        legendLayer.add(legend).minWidth(220).fillX().padTop(space("md"));
         return legendLayer;
+    }
+
+    /**
+     * Lays out the lens panel: the lens the map looks through, or all of them to choose from when it is open; and the
+     * overlays to show over any lens.
+     */
+    private void rebuildLenses() {
+        lensPanel.clearChildren();
+        lensPanel.defaults().left().growX();
+        Table head = new Table();
+        head.add(ui.caption(getText("HqHub.map.lenses"), true)).expandX().left();
+        head.add(ui.label(getText("HqHub.map.lensKey"), "hud-body", 12, UiTheme.tokenColor("text.secondary")));
+        lensPanel.add(head).padBottom(space("xs")).row();
+        MapLens active = map.lens();
+        if (lensesOpen || active == null) {
+            lensPanel.add(lensRow(null, active == null)).row();
+        }
+        for (MapLens lens : MapLens.offered()) {
+            if (lensesOpen || lens == active) {
+                lensPanel.add(lensRow(lens, lens == active)).row();
+            }
+        }
+        lensPanel.add(ui.solid(UiTheme.tokenColor("text.secondary"))).height(1).padTop(space("xs"))
+              .padBottom(space("xs")).getActor().getColor().a = 0.2f;
+        lensPanel.row();
+        lensPanel.add(choiceRow(null, getText("HqHub.map.layer.hpg"), getText("HqHub.map.layer.hpgKey"),
+              map.network(), () -> {
+                  map.network(!map.network());
+                  rebuildLenses();
+              })).row();
+    }
+
+    /** A lens's row, its palette strip before its name; choosing it when the panel is shut opens the panel. */
+    private Table lensRow(@Nullable MapLens lens, boolean active) {
+        Table strip = new Table();
+        float wide = space("xl") + space("sm");
+        float high = space("xs");
+        if (lens == null) {
+            for (int rgb : BORDERS_STRIP) {
+                strip.add(ui.solid(colour(rgb))).size(wide / BORDERS_STRIP.length, high);
+            }
+        } else {
+            for (int level = 1; level <= lens.levels(); level++) {
+                strip.add(ui.solid(colour(lens.rgb(level)))).size(wide / lens.levels(), high);
+            }
+        }
+        String name = getText(lens == null ? "HqHub.map.lens.borders" : "HqHub.map.lens." + lens.key());
+        return choiceRow(strip, name, lensesOpen || !active ? "" : "\u25BE", active, () -> {
+            if (lensesOpen) {
+                map.lens(lens);
+                lensesOpen = false;
+            } else {
+                lensesOpen = true;
+            }
+            rebuildLenses();
+        });
+    }
+
+    /** A row of the lens panel: lit when it is {@code on}, brighter under the pointer, running {@code action}. */
+    private Table choiceRow(@Nullable Table strip, String name, String key, boolean on, Runnable action) {
+        Color accent = UiTheme.tokenColor("accent.primary");
+        Drawable rest = ui.skin.newDrawable("white", on ? new Color(accent.r, accent.g, accent.b, 0.16f)
+              : new Color(1, 1, 1, 0));
+        Drawable over = ui.skin.newDrawable("white", on ? new Color(accent.r, accent.g, accent.b, 0.26f)
+              : new Color(1, 1, 1, 0.07f));
+        Table row = new Table();
+        row.setBackground(rest);
+        row.setTouchable(Touchable.enabled);
+        row.pad(space("xxs"), space("sm"), space("xxs"), space("sm"));
+        row.add(ui.solid(on ? accent : new Color(0, 0, 0, 0))).size(2, space("md")).padRight(space("sm"));
+        if (strip != null) {
+            row.add(strip).padRight(space("sm"));
+        } else {
+            row.add(ui.solid(on ? accent : UiTheme.tokenColor("text.secondary"))).size(space("xs"))
+                  .padRight(space("sm"));
+        }
+        row.add(ui.label(name, "hud-body", 13, UiTheme.tokenColor(on ? "text.primary" : "text.secondary")))
+              .expandX().left();
+        row.add(ui.label(key, "hud-body", 12, UiTheme.tokenColor("text.secondary"))).padLeft(space("md"));
+        row.addListener(new ClickListener() {
+            @Override
+            public void clicked(InputEvent event, float x, float y) {
+                action.run();
+            }
+
+            @Override
+            public void enter(InputEvent event, float x, float y, int pointer,
+                  Actor fromActor) {
+                super.enter(event, x, y, pointer, fromActor);
+                row.setBackground(over);
+            }
+
+            @Override
+            public void exit(InputEvent event, float x, float y, int pointer,
+                  Actor toActor) {
+                super.exit(event, x, y, pointer, toActor);
+                row.setBackground(rest);
+            }
+        });
+        return row;
+    }
+
+    /** Looks through the next lens, or the one before; past the last, back at the owners. */
+    private void cycleLens(boolean back) {
+        List<MapLens> offered = MapLens.offered();
+        MapLens active = map.lens();
+        int at = active == null ? -1 : offered.indexOf(active);
+        int next = Math.floorMod(at + 1 + (back ? -1 : 1), offered.size() + 1) - 1;
+        map.lens(next < 0 ? null : offered.get(next));
+        rebuildLenses();
     }
 
     /** Recounts the legend's factions; rebuilds it only when they changed. */
     private void refreshLegend() {
-        List<StarMapView.Legend> counted = map.legend(LEGEND);
-        if (counted.equals(legendShown)) {
+        MapLens lens = map.lens();
+        if (lens != null) {
+            refreshLensLegend(lens);
             return;
         }
+        List<StarMapView.Legend> counted = map.legend(LEGEND);
+        if (counted.equals(legendShown) && legendLens == null) {
+            return;
+        }
+        legendLens = null;
         legendShown = counted;
         legend.clearChildren();
         legend.defaults().left();
@@ -680,6 +828,31 @@ final class HubScreen extends ApplicationAdapter {
                   UiTheme.tokenColor("text.secondary"))).right().padLeft(space("md")).padTop(space("xxs")).row();
         }
         legend.setVisible(!counted.isEmpty());
+    }
+
+    /** The legend under {@code lens}: its levels, highest first, and how many systems in view stand at each. */
+    private void refreshLensLegend(MapLens lens) {
+        int[] counts = map.lensCounts();
+        if (lens == legendLens && Arrays.equals(counts, legendLevels)) {
+            return;
+        }
+        legendLens = lens;
+        legendLevels = counts;
+        legendShown = List.of();
+        String[] names = getText("HqHub.map.lens." + lens.key() + ".levels").split(",");
+        legend.clearChildren();
+        legend.defaults().left();
+        legend.add(ui.caption(getText("HqHub.map.lens." + lens.key()), true)).colspan(3).padBottom(space("xs")).row();
+        for (int level = lens.levels(); level >= 1; level--) {
+            int rgb = lens.rgb(level);
+            String name = level - 1 < names.length ? names[level - 1].trim() : String.valueOf(level);
+            int count = level < counts.length ? counts[level] : 0;
+            legend.add(ui.solid(colour(rgb))).size(space("sm")).padRight(space("sm"));
+            legend.add(ui.label(name, "hud-body", 13, lifted(rgb))).expandX().padTop(space("xxs"));
+            legend.add(ui.label(String.valueOf(count), "hud-body", 13, UiTheme.tokenColor("text.secondary")))
+                  .right().padLeft(space("md")).padTop(space("xxs")).row();
+        }
+        legend.setVisible(true);
     }
 
     /**
@@ -957,6 +1130,7 @@ final class HubScreen extends ApplicationAdapter {
         timeLayer.setVisible(shown);
         header.setTouchable(chromeShown >= 1 ? Touchable.childrenOnly : Touchable.disabled);
         timeLayer.setTouchable(chromeShown >= 1 ? Touchable.childrenOnly : Touchable.disabled);
+        legendLayer.setTouchable(chromeShown >= 1 ? Touchable.childrenOnly : Touchable.disabled);
         // The timeline keeps clear of the legend and the compass either side of it
         float beside = Math.max(legend.getWidth(), compassLayer.getChildren().first().getWidth()) + space("xxl") * 2;
         float timeWidth = Math.max(TIMELINE_MIN_WIDTH, Math.min(TIMELINE_WIDTH,

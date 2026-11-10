@@ -53,12 +53,14 @@ import mekhq.campaign.universe.Factions;
 import mekhq.campaign.universe.PlanetarySystem;
 import mekhq.campaign.universe.Systems;
 import mekhq.gui.model.view.Borders;
+import mekhq.gui.model.view.MapLens;
 import mekhq.gui.model.view.StarMap;
 
 /**
  * A developer's look at the command post's star map without a campaign: renders the hub with the map open over the
  * shipped systems in a hidden window and writes each shot asked for to a PNG. Run through the starMapSnapshots task;
- * each argument is a shot, {@code name:year:x:y:height[:tilt[:turn]]}, year 0 for the campaign's own.
+ * each argument is a shot, {@code name:year:x:y:height[:tilt[:turn[:layers]]]}, year 0 for the campaign's own;
+ * the layers a lens's key and net for the HPG network, joined by +.
  */
 public final class StarMapSnapshots {
     private static final LocalDate TODAY = LocalDate.of(3025, 6, 1);
@@ -69,12 +71,30 @@ public final class StarMapSnapshots {
     private static final int SETTLE = 70;
     private static final int TIMEOUT = 1800;
 
-    private record Shot(String name, int year, double x, double y, float height, float tilt, float turn) {
+    private record Shot(String name, int year, double x, double y, float height, float tilt, float turn,
+          String layers) {
+        Shot(String name, int year, double x, double y, float height, float tilt, float turn) {
+            this(name, year, x, y, height, tilt, turn, "");
+        }
+
         static Shot parse(String spec) {
             String[] part = spec.split(":");
             return new Shot(part[0], Integer.parseInt(part[1]), Double.parseDouble(part[2]),
                   Double.parseDouble(part[3]), Float.parseFloat(part[4]),
-                  part.length > 5 ? Float.parseFloat(part[5]) : 90, part.length > 6 ? Float.parseFloat(part[6]) : 0);
+                  part.length > 5 ? Float.parseFloat(part[5]) : 90, part.length > 6 ? Float.parseFloat(part[6]) : 0,
+                  part.length > 7 ? part[7] : "");
+        }
+
+        /** The lens named among the layers, by its key, or null. */
+        MapLens lens() {
+            for (String layer : layers.split("\\+")) {
+                for (MapLens lens : MapLens.values()) {
+                    if (lens.key().equals(layer)) {
+                        return lens;
+                    }
+                }
+            }
+            return null;
         }
     }
 
@@ -143,6 +163,9 @@ public final class StarMapSnapshots {
                     TimeScrubber scrubber = (TimeScrubber) field("scrubber");
                     scrubber.set(wanted.year() == 0 ? TODAY.getYear() : wanted.year(), false);
                     call("era", new Class<?>[0]);
+                    view.lens(wanted.lens());
+                    view.network(List.of(wanted.layers().split("\\+")).contains("net"));
+                    call("rebuildLenses", new Class<?>[0]);
                 }
                 view.look(wanted.x(), wanted.y(), wanted.height(), wanted.tilt(), wanted.turn());
                 screen.render();

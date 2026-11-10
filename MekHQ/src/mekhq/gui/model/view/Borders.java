@@ -35,6 +35,7 @@ package mekhq.gui.model.view;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +55,12 @@ import mekhq.campaign.universe.territory.InfluenceMap;
  */
 public final class Borders {
     private static final String INDEPENDENT = "IND";
+    /** The {@link MapLens#HPG} level of an A station; a B station's is one less. */
+    private static final int HPG_A = 4;
+    /** How many of its nearest relays each HPG relay links to. */
+    private static final int HPG_FANOUT = 3;
+    private static final double HPG_A_REACH = 50;
+    private static final double HPG_B_REACH = 30;
 
     /**
      * A realm the map colours space for.
@@ -105,6 +112,7 @@ public final class Borders {
     private final float maxX;
     private final float maxY;
     private final InfluenceMap land;
+    private final float[] hpg;
 
     private Borders(LocalDate date, List<StarMap.Star> stars, List<float[]> claims, List<Realm> realms,
           float[] bounds) {
@@ -132,6 +140,77 @@ public final class Borders {
             realm[i] = claimRealm[i] + 1;
         }
         land = InfluenceMap.of(count, claimX, claimY, realm, disputed, minX, minY, maxX, maxY);
+        hpg = hpgLinks(this.stars);
+    }
+
+    /**
+     * The HPG network's backbone among {@code stars}: each A station, which reaches {@value #HPG_A_REACH} light years,
+     * and each B station, {@value #HPG_B_REACH}, links to its {@value #HPG_FANOUT} nearest A or B stations within
+     * reach, so the relays read as a web rather than a mat. Each link is five numbers: one end's x and y, the other's,
+     * and the lower of its ends' {@link MapLens#HPG} levels.
+     */
+    static float[] hpgLinks(List<StarMap.Star> stars) {
+        Map<Long, List<StarMap.Star>> cells = new HashMap<>();
+        List<StarMap.Star> relays = new ArrayList<>();
+        for (StarMap.Star star : stars) {
+            if (MapLens.HPG.level(star.lenses()) >= HPG_A - 1) {
+                relays.add(star);
+                cells.computeIfAbsent(cell(star.x(), star.y()), key -> new ArrayList<>()).add(star);
+            }
+        }
+        Map<String, float[]> links = new HashMap<>();
+        List<StarMap.Star> near = new ArrayList<>();
+        for (StarMap.Star station : relays) {
+            int level = MapLens.HPG.level(station.lenses());
+            double reach = level == HPG_A ? HPG_A_REACH : HPG_B_REACH;
+            long cx = Math.round(Math.floor(station.x() / HPG_A_REACH));
+            long cy = Math.round(Math.floor(station.y() / HPG_A_REACH));
+            near.clear();
+            for (long i = cx - 1; i <= cx + 1; i++) {
+                for (long j = cy - 1; j <= cy + 1; j++) {
+                    for (StarMap.Star other : cells.getOrDefault((i << 32) ^ (j & 0xFFFFFFFFL), List.of())) {
+                        if (other != station && squared(station, other) <= reach * reach) {
+                            near.add(other);
+                        }
+                    }
+                }
+            }
+            near.sort(Comparator.comparingDouble(other -> squared(station, other)));
+            for (StarMap.Star other : near.subList(0, Math.min(HPG_FANOUT, near.size()))) {
+                String key = station.id().compareTo(other.id()) < 0 ? station.id() + '|' + other.id()
+                      : other.id() + '|' + station.id();
+                int lower = Math.min(level, MapLens.HPG.level(other.lenses()));
+                links.putIfAbsent(key, new float[] { (float) station.x(), (float) station.y(), (float) other.x(),
+                                                     (float) other.y(), lower });
+            }
+        }
+        float[] flat = new float[links.size() * 5];
+        int at = 0;
+        for (float[] link : links.values()) {
+            System.arraycopy(link, 0, flat, at, 5);
+            at += 5;
+        }
+        return flat;
+    }
+
+    private static double squared(StarMap.Star one, StarMap.Star other) {
+        double dx = other.x() - one.x();
+        double dy = other.y() - one.y();
+        return dx * dx + dy * dy;
+    }
+
+    private static long cell(double x, double y) {
+        long i = Math.round(Math.floor(x / HPG_A_REACH));
+        long j = Math.round(Math.floor(y / HPG_A_REACH));
+        return (i << 32) ^ (j & 0xFFFFFFFFL);
+    }
+
+    /**
+     * The HPG network on the date: five numbers a link, the reaching station's x and y, the reached one's, and the
+     * reaching station's {@link MapLens#HPG} level. Not to be changed.
+     */
+    public float[] hpgLinks() {
+        return hpg;
     }
 
     /**

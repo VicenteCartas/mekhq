@@ -179,6 +179,77 @@ final class StarMapShaders {
           }
           """;
 
+    /**
+     * A ribbon of a stroke: a_normal is the segment's other end, a_texCoord0 is (which side, -1 or 1; its width in
+     * pixels; light years along its line; its flow), its height times u_lift. The ribbon is turned to face the screen, its edges the width
+     * apart there however far the segment lies.
+     */
+    static final String STROKE_VERTEX = """
+          #version 330 core
+          in vec3 a_position;
+          in vec3 a_normal;
+          in vec4 a_color;
+          in vec4 a_texCoord0;
+          uniform mat4 u_projView;
+          uniform vec2 u_viewport;
+          uniform float u_scale;
+          uniform float u_lift;
+          out vec4 v_colour;
+          out float v_side;
+          out float v_along;
+          out float v_flow;
+          void main() {
+              vec3 lift = vec3(1.0, u_lift, 1.0);
+              vec4 here = u_projView * vec4(a_position * lift, 1.0);
+              vec4 there = u_projView * vec4(a_normal * lift, 1.0);
+              vec2 a = here.xy / max(here.w, 1e-4) * u_viewport * 0.5;
+              vec2 b = there.xy / max(there.w, 1e-4) * u_viewport * 0.5;
+              vec2 dir = b - a;
+              float len = length(dir);
+              dir = len > 1e-4 ? dir / len : vec2(1.0, 0.0);
+              vec2 normal = vec2(-dir.y, dir.x);
+              float side = a_texCoord0.x;
+              float width = a_texCoord0.y * u_scale;
+              here.xy += normal * side * width * 0.5 / (u_viewport * 0.5) * here.w;
+              gl_Position = here;
+              v_colour = a_color;
+              v_side = side;
+              v_along = a_texCoord0.z;
+              v_flow = a_texCoord0.w;
+          }
+          """;
+
+    /** A stroke's light: a bright core in a soft glow, pulsed or dashed along it as its flow says. */
+    static final String STROKE_FRAGMENT = """
+          #version 330 core
+          in vec4 v_colour;
+          in float v_side;
+          in float v_along;
+          in float v_flow;
+          uniform float u_fade;
+          uniform float u_time;
+          out vec4 fragColor;
+          void main() {
+              float d = abs(v_side);
+              float core = 1.0 - smoothstep(0.18, 0.42, d);
+              float glow = exp(-d * d * 5.0) * 0.45;
+              float light = core * 0.75 + glow;
+              if (v_flow > 0.0) {
+                  float p = fract((v_along - u_time * 14.0) / v_flow);
+                  float pulse = exp(-pow((p - 0.5) * 9.0, 2.0));
+                  light *= 0.35 + 1.8 * pulse;
+              } else if (v_flow < 0.0) {
+                  float p = fract((v_along - u_time * -v_flow * 0.4) / -v_flow);
+                  light *= 0.15 + 0.85 * smoothstep(0.0, 0.08, p) * (1.0 - smoothstep(0.5, 0.58, p));
+              }
+              light *= v_colour.a * u_fade;
+              if (light < 0.003) {
+                  discard;
+              }
+              fragColor = vec4(v_colour.rgb * light, 1.0);
+          }
+          """;
+
     /** A marker ring: a_texCoord0 is (its size in pixels, how much it pulses). */
     static final String RING_VERTEX = """
           #version 330 core

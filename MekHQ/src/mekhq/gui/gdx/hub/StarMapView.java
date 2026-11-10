@@ -63,6 +63,7 @@ import com.badlogic.gdx.utils.FloatArray;
 import jakarta.annotation.Nullable;
 import mekhq.MHQConstants;
 import mekhq.gui.model.view.Borders;
+import mekhq.gui.model.view.MapLens;
 import mekhq.gui.model.view.StarMap;
 
 /**
@@ -127,6 +128,11 @@ final class StarMapView {
     private static final float REALM_FAR = 800;
     /** The fewest settled systems a realm needs for its name to be written over its territory. */
     private static final int REALM_SYSTEMS = 12;
+    /** The tilt, in degrees, the camera eases to when a lens comes on looking straight down. */
+    private static final float LENS_PITCH = 52;
+    /** How much of its strength the territory keeps under a lens. */
+    private static final float LENS_TERRITORY = 0.3f;
+    private static final Vector3 HPG_COLOUR = new Vector3(0.42f, 0.78f, 1.0f);
     /** How widely, in light years, a realm's systems may scatter and still be named as one territory. */
     private static final double REALM_SCATTERED = 260;
     /** How far from a system, in pixels, the cursor may be to pick it. */
@@ -165,6 +171,17 @@ final class StarMapView {
     /** The realms' territory on the date shown, once its borders are read. */
     private final TerritoryField territory = new TerritoryField();
     private final Backdrop backdrop = new Backdrop();
+    /** The HPG network on the date shown, when it is. */
+    private final Strokes network = new Strokes();
+    /** The lens's pillars, rising from the systems it rates, their heights at 1 light year to the level. */
+    private final Strokes pillars = new Strokes();
+    /** The lens the systems are seen through; null for their owners. */
+    private @Nullable MapLens lens;
+    private boolean networkShown;
+    /** How far the lens has come in, 0 to 1, as the territory dims and the pillars rise. */
+    private float lensIn;
+    /** The tilt the camera is easing to, in degrees; NaN when it isn't. */
+    private float wantedPitch = Float.NaN;
     /** The systems as {@link #territory}'s date had them, in the map's order; the map's own until it is read. */
     private List<StarMap.Star> shown = List.of();
     private @Nullable Mesh stars;
@@ -232,6 +249,7 @@ final class StarMapView {
             flying = false;
             posing = false;
             if (pressButton == Input.Buttons.RIGHT) {
+                wantedPitch = Float.NaN;
                 yaw -= Gdx.input.getDeltaX() * 0.25f;
                 pitch = MathUtils.clamp(pitch + Gdx.input.getDeltaY() * 0.2f, MIN_PITCH, 90);
                 aim();
@@ -364,6 +382,7 @@ final class StarMapView {
 
     /** Puts the camera on the view the map opens with at once. */
     void snapToStart() {
+        wantedPitch = Float.NaN;
         target.set(start);
         distance = START_DISTANCE;
         yaw = 0;
@@ -397,6 +416,58 @@ final class StarMapView {
         return yaw;
     }
 
+    /**
+     * Looks at the systems through {@code wanted}, or at their owners when null; looking down on the map, the camera
+     * tilts for the lens's pillars to show.
+     */
+    void lens(@Nullable MapLens wanted) {
+        if (wanted == lens) {
+            return;
+        }
+        lens = wanted;
+        if (wanted != null && pitch > LENS_PITCH + 5) {
+            wantedPitch = LENS_PITCH;
+        }
+        restyle();
+    }
+
+    /** The lens the systems are seen through; null for their owners. */
+    @Nullable MapLens lens() {
+        return lens;
+    }
+
+    /** Shows or hides the HPG network. */
+    void network(boolean shown) {
+        if (shown != networkShown) {
+            networkShown = shown;
+            restyle();
+        }
+    }
+
+    /** Whether the HPG network shows. */
+    boolean network() {
+        return networkShown;
+    }
+
+    /** How many settled systems on screen the lens rates at each level, from 1 to its levels; empty without one. */
+    int[] lensCounts() {
+        MapLens looking = lens;
+        if (looking == null || camera == null) {
+            return new int[0];
+        }
+        int[] counts = new int[looking.levels() + 1];
+        List<StarMap.Star> all = shown;
+        for (int i = 0; i < all.size() && i * 2 + 1 < screen.length; i++) {
+            float x = screen[i * 2];
+            float y = screen[i * 2 + 1];
+            if (Float.isNaN(x) || x < 0 || y < 0 || x > camera.viewportWidth || y > camera.viewportHeight) {
+                continue;
+            }
+            counts[looking.level(all.get(i).lenses())]++;
+        }
+        return counts;
+    }
+
     /** How many input pixels a light year spans across the middle of the screen; 0 before the view is made. */
     float pixelsPerLightYear() {
         if (camera == null) {
@@ -428,6 +499,8 @@ final class StarMapView {
         routeShader = HoloTableView.compile(StarMapShaders.ROUTE_VERTEX, StarMapShaders.ROUTE_FRAGMENT);
         territory.create();
         backdrop.create();
+        network.create();
+        pillars.create();
         grid = grid();
         rings = new Mesh(false, 64, 0, pointAttributes());
         camera = new PerspectiveCamera(FIELD_OF_VIEW, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
@@ -470,6 +543,14 @@ final class StarMapView {
         if (flying) {
             fly(delta);
         }
+        if (!Float.isNaN(wantedPitch)) {
+            pitch = MathUtils.lerp(pitch, wantedPitch, 1 - (float) Math.exp(-delta * 4));
+            if (Math.abs(pitch - wantedPitch) < 0.05f) {
+                pitch = wantedPitch;
+                wantedPitch = Float.NaN;
+            }
+            aim();
+        }
         project();
 
         Gdx.gl.glViewport(0, 0, Gdx.graphics.getBackBufferWidth(), Gdx.graphics.getBackBufferHeight());
@@ -484,7 +565,8 @@ final class StarMapView {
         backdrop.render(camera, fade, time, Gdx.graphics.getBackBufferHeight() / (float) Math.max(1,
               Gdx.graphics.getHeight()));
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
-        territory.render(camera.combined, fade, time);
+        lensIn = MathUtils.clamp(lensIn + (lens == null ? -delta : delta) * 3, 0, 1);
+        territory.render(camera.combined, fade * MathUtils.lerp(1, LENS_TERRITORY, lensIn), time);
         Gdx.gl.glBlendFunc(GL20.GL_ONE, GL20.GL_ONE);
 
         lineShader.bind();
@@ -513,6 +595,10 @@ final class StarMapView {
             }
         }
 
+        network.render(camera, fade, time, 1);
+        if (lensIn > 0) {
+            pillars.render(camera, fade, time, lensIn * lensIn * (3 - 2 * lensIn) * pillarHeight());
+        }
         Gdx.gl.glEnable(GL_PROGRAM_POINT_SIZE);
         if (stars != null) {
             starShader.bind();
@@ -678,7 +764,7 @@ final class StarMapView {
 
     void dispose() {
         for (Disposable resource : new Disposable[] { starShader, ringShader, lineShader, routeShader,
-              stars, lines, route, preview, grid, rings, territory, backdrop }) {
+              stars, lines, route, preview, grid, rings, territory, backdrop, network, pillars }) {
             if (resource != null) {
                 resource.dispose();
             }
@@ -843,11 +929,33 @@ final class StarMapView {
             }
             shown = aligned;
         }
+        realmNames = realmNames(shown);
+        restyle();
+    }
+
+    /** Draws the systems shown again as the lens and overlays now have them. */
+    private void restyle() {
         if (stars != null) {
             stars.dispose();
         }
-        stars = starMesh(shown);
-        realmNames = realmNames(shown);
+        stars = starMesh(shown, lens);
+        pillars.clear();
+        if (lens != null) {
+            pillars(pillars, shown, lens);
+        }
+        pillars.upload();
+        network.clear();
+        Borders showing = territory.shown();
+        if ((networkShown || lens == MapLens.HPG) && showing != null) {
+            float[] links = showing.hpgLinks();
+            for (int i = 0; i + 4 < links.length; i += 5) {
+                boolean a = links[i + 4] >= MapLens.HPG.levels();
+                float bright = a ? 0.5f : 0.22f;
+                network.add(links[i], 0, -links[i + 1], links[i + 2], 0, -links[i + 3], HPG_COLOUR.x * bright,
+                      HPG_COLOUR.y * bright, HPG_COLOUR.z * bright, 1, a ? 2.0f : 1.3f, 0, a ? 30 : 0);
+            }
+        }
+        network.upload();
     }
 
     private void hover(int at) {
@@ -998,7 +1106,8 @@ final class StarMapView {
               colour.z * bright, 1, pixels * scale, pulse);
     }
 
-    private static @Nullable Mesh starMesh(List<StarMap.Star> all) {
+    /** The light of the systems {@code all}: in their owners' colours, or their levels' through {@code lens}. */
+    private static @Nullable Mesh starMesh(List<StarMap.Star> all, @Nullable MapLens lens) {
         if (all.isEmpty()) {
             return null;
         }
@@ -1007,6 +1116,13 @@ final class StarMapView {
         for (StarMap.Star star : all) {
             float bright = star.settled() ? 1.6f : 0.3f;
             int rgb = star.settled() ? star.rgb() : 0x8A9099;
+            float size = star.settled() ? 1.0f : 0.65f;
+            if (lens != null) {
+                int level = lens.level(star.lenses());
+                rgb = level > 0 ? lens.rgb(level) : 0x5A6070;
+                bright = level > 0 ? 1.9f : 0.18f;
+                size = level > 0 ? 0.9f + 0.5f * level / lens.levels() : 0.6f;
+            }
             vertices[at++] = (float) star.x();
             vertices[at++] = 0;
             vertices[at++] = (float) -star.y();
@@ -1014,12 +1130,39 @@ final class StarMapView {
             vertices[at++] = linear((rgb >> 8) & 0xFF) * bright;
             vertices[at++] = linear(rgb & 0xFF) * bright;
             vertices[at++] = 1;
-            vertices[at++] = star.settled() ? 1.0f : 0.65f;
+            vertices[at++] = size;
             vertices[at++] = HoloTableView.hash(star.x(), star.y());
         }
         Mesh mesh = new Mesh(true, all.size(), 0, pointAttributes());
         mesh.setVertices(vertices);
         return mesh;
+    }
+
+    /**
+     * Raises a pillar from each system of {@code all} that {@code lens} rates, one light year a level tall, so the
+     * strokes' lift sets their height; dim at its foot, bright at its head.
+     */
+    private static void pillars(Strokes into, List<StarMap.Star> all, MapLens lens) {
+        for (StarMap.Star star : all) {
+            int level = lens.level(star.lenses());
+            if (level <= 0) {
+                continue;
+            }
+            int rgb = lens.rgb(level);
+            float r = linear((rgb >> 16) & 0xFF);
+            float g = linear((rgb >> 8) & 0xFF);
+            float b = linear(rgb & 0xFF);
+            float x = (float) star.x();
+            float z = (float) -star.y();
+            float top = (float) level / lens.levels();
+            into.add(x, 0, z, x, top * 0.6f, z, r * 0.25f, g * 0.25f, b * 0.25f, 1, 2.2f, 0, 0);
+            into.add(x, top * 0.6f, z, x, top, z, r * 0.9f, g * 0.9f, b * 0.9f, 1, 2.6f, 0, 0);
+        }
+    }
+
+    /** How tall, in light years, the lens's highest pillars stand: taller the further out the camera is. */
+    private float pillarHeight() {
+        return MathUtils.clamp(distance * 0.05f, 6, 90);
     }
 
     /** The force's jump range around its system. */
