@@ -149,7 +149,28 @@ Each phase ships something playable and keeps everything else reachable through 
        dialogs on it (`CampaignGUI.isHosted`), so they show over the hub.
      - `StarMapView` draws routes with `StarMapShaders.ROUTE_*` and the force's marker;
        `HubScreen` adds Set course and the voyage line; `CampaignHub.travel` runs the departure.
-  3. **Borders by date.** Faction territory and a time scrubber.
+  3. **Borders by date (done).** The map shows the realms' territory as soft glowing regions
+     with crisp, two-tone borders; disputed ground is striped in the claimants' colours. A
+     timeline along the bottom ("Inner Sphere history") scrubs the map's date from 2150 to
+     3152: the territory, the systems' owners and colours, and the legend follow it. Era bands
+     sit on the track, and a notch marks the campaign's date. Drag, click or scroll the timeline;
+     `[` and `]` step a year (Shift: a decade). Today (key T) returns to the campaign's date.
+     Scrubbing never changes the campaign's date; the map opens on it.
+     - Territory is not a port of the Swing map's hex grid. It is a GPU influence field: each
+       held system spreads its realm's influence about 45 ly. Space belongs to the strongest
+       realm once that influence passes a threshold, so a lone world holds about 33 ly.
+     - `Borders` is a per-date snapshot of the owners' claims, built off the GPU thread.
+       `Borders.Realms` numbers realms the same on every date.
+     - `BorderHistory` reads dates on a worker thread with an LRU cache and prefetch; the newest
+       date asked for wins, so a frame never waits. It is invalidated when the systems change.
+     - `TerritoryField` splats the claims into float framebuffers, four realms per pass, and keeps
+       the two strongest realms per 4 ly texel. The territory shader interpolates fields realm by
+       realm and morphs one date's into the next over 0.6 s, so borders sweep, not fade.
+     - `TimeScrubber` is the timeline; `HubScreen` hosts it.
+     - The Swing map's territory logic moved to `mekhq.campaign.universe.territory`
+       (`TerritoryGrid` and friends). `InterstellarMapPanel` uses it unchanged in behaviour.
+     - Polish to come: depth and parallax for the regions, capital glows, and realm names
+       across their territory.
   4. **Pins.** Contracts and markets on their systems.
 
 **Phase 2: the game loop**

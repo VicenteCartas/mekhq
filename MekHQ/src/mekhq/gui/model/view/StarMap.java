@@ -195,18 +195,7 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
 
     static StarMap of(Campaign campaign) {
         LocalDate date = campaign.getLocalDate();
-        int year = date.getYear();
-        List<Star> stars = new ArrayList<>();
-        for (PlanetarySystem system : campaign.getSystems()) {
-            if (system == null || system.getId() == null || system.getX() == null || system.getY() == null) {
-                continue;
-            }
-            List<Faction> owners = owners(system, date);
-            boolean settled = owners.stream().anyMatch(faction -> !faction.is(FactionTag.ABANDONED));
-            String faction = owners.isEmpty() ? null : owners.get(0).getFullName(year);
-            stars.add(new Star(system.getId(), name(system, date), system.getX(), system.getY(), colour(owners),
-                  ownerNames(owners, year), faction == null ? "" : faction, settled));
-        }
+        List<Star> stars = stars(campaign.getSystems(), date);
         AbstractLocation location = campaign.getPlayerForce().getForceDetachment().getCurrentLocation();
         PlanetarySystem here = location == null ? null : location.getCurrentSystem();
         JumpPath path = location == null ? null : location.getJumpPath();
@@ -219,6 +208,29 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
             voyage = voyage(campaign, location, path);
         }
         return new StarMap(date, stars, here == null ? null : here.getId(), route, voyage);
+    }
+
+    /**
+     * Every system of {@code systems} with a position as it stood on {@code date}. It reads only the systems, so it can
+     * be called on any thread.
+     */
+    static List<Star> stars(Iterable<PlanetarySystem> systems, LocalDate date) {
+        int year = date.getYear();
+        List<Star> stars = new ArrayList<>();
+        for (PlanetarySystem system : systems) {
+            if (system == null || system.getId() == null || system.getX() == null || system.getY() == null) {
+                continue;
+            }
+            List<Faction> owners = owners(system, date);
+            boolean settled = false;
+            for (Faction owner : owners) {
+                settled |= !owner.is(FactionTag.ABANDONED);
+            }
+            String faction = owners.isEmpty() ? null : owners.get(0).getFullName(year);
+            stars.add(new Star(system.getId(), name(system, date), system.getX(), system.getY(), colour(owners),
+                  ownerNames(owners, year), faction == null ? "" : faction, settled));
+        }
+        return stars;
     }
 
     /** Swing thread: the detail of the system {@code id}, or null when the campaign has no such system. */
@@ -360,11 +372,16 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
     }
 
     private static int colour(List<Faction> owners) {
-        Color colour = owners.isEmpty() ? null : owners.get(0).getColor();
+        return owners.isEmpty() ? UNCLAIMED : rgb(owners.get(0));
+    }
+
+    /** {@code faction}'s colour, 0xRRGGBB. */
+    static int rgb(Faction faction) {
+        Color colour = faction.getColor();
         return colour == null ? UNCLAIMED : colour.getRGB() & 0xFFFFFF;
     }
 
-    private static String ownerNames(List<Faction> owners, int year) {
+    static String ownerNames(List<Faction> owners, int year) {
         return owners.stream().map(faction -> faction.getFullName(year)).filter(Objects::nonNull)
               .collect(Collectors.joining(" / "));
     }

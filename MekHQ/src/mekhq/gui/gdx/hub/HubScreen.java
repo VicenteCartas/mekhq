@@ -37,6 +37,7 @@ import static mekhq.utilities.MHQInternationalization.getText;
 
 import java.nio.file.Path;
 import java.text.NumberFormat;
+import java.time.LocalDate;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.List;
@@ -57,6 +58,7 @@ import com.badlogic.gdx.scenes.scene2d.InputEvent;
 import com.badlogic.gdx.scenes.scene2d.InputListener;
 import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.scenes.scene2d.Touchable;
+import com.badlogic.gdx.scenes.scene2d.ui.Cell;
 import com.badlogic.gdx.scenes.scene2d.ui.Container;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
@@ -73,6 +75,7 @@ import megamek.client.ui.gdx.UiModal;
 import megamek.client.ui.gdx.UiPopover;
 import megamek.client.ui.gdx.UiTheme;
 import megamek.common.Configuration;
+import mekhq.campaign.universe.eras.Eras;
 import mekhq.gui.enums.MHQTabType;
 import mekhq.gui.model.view.StarMap;
 import mekhq.gui.model.view.TopBar;
@@ -86,7 +89,10 @@ import mekhq.gui.model.view.TopBar;
  * slide away (their keys still work), and the map's header (the way back,
  * where the force is, today and a search for a system), the factions in view, a compass and the chosen system's detail
  * sliding in around it; leaving flies the map back and climbs out again, and a click or Esc skips either way. Hovering
- * a system names its owners and clicking it opens its detail. GPU thread, unless a method says otherwise.
+ * a system names its owners and clicking it opens its detail. Under the map a {@link TimeScrubber timeline} takes it
+ * through the inner sphere's history, its borders and owners as they were in any year ([ and ], Shift for a decade),
+ * and back to the campaign's own (T); it only ever changes what the map shows. GPU thread, unless a method says
+ * otherwise.
  */
 final class HubScreen extends ApplicationAdapter {
     /** The most results the palette lists. */
@@ -107,6 +113,11 @@ final class HubScreen extends ApplicationAdapter {
     private static final float CHROME_SLIDE = 40;
     /** How far right of and below the cursor the hover card sits, in stage units. */
     private static final float HOVER_OFFSET = 18;
+    /** The years the timeline spans, unless the campaign is past the last. */
+    static final int FIRST_YEAR = 2150;
+    static final int LAST_YEAR = 3152;
+    private static final float TIMELINE_WIDTH = 640;
+    private static final float TIMELINE_MIN_WIDTH = 300;
 
     /** What the screen asks of the hub; any thread. */
     interface Hub {
@@ -134,6 +145,21 @@ final class HubScreen extends ApplicationAdapter {
 
     private final HoloTableView holo;
     private final StarMapView map;
+    private final BorderHistory history;
+    private Table timeLayer;
+    private Table timePanel;
+    private TimeScrubber scrubber;
+    private Label timeYear;
+    private Label timeEra;
+    private UiButton todayButton;
+    /** The year the timeline's readout and era show, so they are only set as it changes. */
+    private int readoutYear = Integer.MIN_VALUE;
+    /** The date read ahead of the timeline last, so it is asked for once. */
+    private @Nullable LocalDate readAhead;
+    /** The campaign's date, once its map came; the timeline's years are on its day. */
+    private @Nullable LocalDate today;
+    /** The campaign's date as the top bar writes it. */
+    private String todayText = "";
     private StarLabels labels;
     /** Whether the map is open or opening, rather than closed or closing. */
     private boolean mapOpen;
@@ -194,9 +220,10 @@ final class HubScreen extends ApplicationAdapter {
 
     /**
      * The hub of the campaign {@code campaignName}: the table from {@code glb} with {@code chart} over it, at the GUI
-     * scale {@code scale}.
+     * scale {@code scale}, its map's borders read from {@code history}.
      */
-    HubScreen(Path glb, @Nullable StarChart chart, String campaignName, float scale, Hub hub) {
+    HubScreen(Path glb, @Nullable StarChart chart, String campaignName, float scale, Hub hub,
+          BorderHistory history) {
         holo = new HoloTableView(glb, chart, () -> showMap(true));
         map = new StarMapView(new StarMapView.Listener() {
             @Override
@@ -212,6 +239,8 @@ final class HubScreen extends ApplicationAdapter {
         if (chart != null) {
             map.startAt(chart.focusX(), chart.focusY());
         }
+        this.history = history;
+        map.history(history);
         this.campaignName = campaignName;
         this.scale = scale;
         this.hub = hub;
@@ -220,6 +249,18 @@ final class HubScreen extends ApplicationAdapter {
     /** The campaign's star map changed. */
     void map(StarMap changed) {
         map.show(changed);
+        LocalDate before = today;
+        today = changed.date();
+        if (scrubber != null) {
+            int year = today.getYear();
+            boolean onToday = before == null || scrubber.year() == before.getYear();
+            scrubber.range(FIRST_YEAR, Math.max(LAST_YEAR, year), year,
+                  TimeScrubber.bands(Eras.getInstance().getEras(), FIRST_YEAR, Math.max(LAST_YEAR, year)));
+            if (onToday) {
+                scrubber.set(year, before != null);
+            }
+            era();
+        }
         if (mapVoyage != null) {
             StarMap.Voyage voyage = changed.voyage();
             mapVoyage.setText(voyage == null ? "" : voyage(voyage));
@@ -284,6 +325,7 @@ final class HubScreen extends ApplicationAdapter {
         stage = new Stage(new ScreenViewport());
         stage.addActor(layout());
         stage.addActor(legendLayer());
+        stage.addActor(timeLayer());
         stage.addActor(compassLayer());
         stage.addActor(detailLayer());
         stage.addActor(header());
@@ -440,6 +482,9 @@ final class HubScreen extends ApplicationAdapter {
         if (keycode == Input.Keys.K && (Gdx.input.isKeyPressed(Input.Keys.CONTROL_LEFT)
               || Gdx.input.isKeyPressed(Input.Keys.CONTROL_RIGHT))) {
             openPalette();
+            return true;
+        }
+        if (mapOpen && !moving() && timeKey(keycode)) {
             return true;
         }
         for (HubArea area : HubArea.values()) {
@@ -624,6 +669,116 @@ final class HubScreen extends ApplicationAdapter {
         legend.setVisible(!counted.isEmpty());
     }
 
+    /**
+     * The timeline across the bottom: the year the map shows, large, and its era; the way back to the campaign's own
+     * year; and the timeline itself.
+     */
+    private Table timeLayer() {
+        timeLayer = new Table();
+        timeLayer.setFillParent(true);
+        timeLayer.bottom().pad(space("xxl"));
+        timeLayer.setTouchable(Touchable.childrenOnly);
+        timePanel = ui.panel(true);
+        timePanel.setTouchable(Touchable.enabled);
+        // The panel takes its own clicks, so they don't choose the systems behind it
+        timePanel.addListener(new InputListener() {
+            @Override
+            public boolean touchDown(InputEvent event, float x, float y, int pointer, int button) {
+                return true;
+            }
+        });
+        Table readout = new Table();
+        readout.defaults().left();
+        readout.add(ui.caption(getText("HqHub.map.timeline"), true)).row();
+        timeYear = ui.roleTypeLabel("headline", "", "accent.primary");
+        readout.add(timeYear);
+        timeEra = ui.label("", "hud-body", 14, UiTheme.tokenColor("text.secondary"));
+        timeEra.setEllipsis(true);
+        todayButton = ui.button("hud-utility", null, getText("HqHub.map.today"), getText("HqHub.map.todayKey"));
+        UiKit.onChange(todayButton, this::backToToday);
+        Table top = new Table();
+        top.add(readout).left().bottom();
+        top.add(timeEra).growX().left().bottom().padLeft(space("lg")).padBottom(space("xxs")).minWidth(0);
+        top.add(todayButton).right().bottom().padLeft(space("lg"));
+        scrubber = new TimeScrubber(ui, year -> era());
+        timePanel.add(top).growX().row();
+        timePanel.add(scrubber).growX().padTop(space("sm"));
+        timeLayer.add(timePanel).width(TIMELINE_WIDTH);
+        return timeLayer;
+    }
+
+    /** The timeline's keys: [ and ] a year back and on, with Shift a decade, and T back to the campaign's year. */
+    private boolean timeKey(int keycode) {
+        if (scrubber == null || today == null) {
+            return false;
+        }
+        boolean shift = Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT)
+              || Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT);
+        int step = shift ? 10 : 1;
+        switch (keycode) {
+            case Input.Keys.LEFT_BRACKET -> scrubber.move(scrubber.year() - step);
+            case Input.Keys.RIGHT_BRACKET -> scrubber.move(scrubber.year() + step);
+            case Input.Keys.T -> backToToday();
+            default -> {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Takes the timeline, and with it the map, back to the campaign's year. */
+    private void backToToday() {
+        if (today != null && scrubber.year() != today.getYear()) {
+            scrubber.move(today.getYear());
+        }
+    }
+
+    /** Shows the map on the timeline's year, on the campaign's day of it; the campaign's own date in its own year. */
+    private void era() {
+        if (today == null) {
+            return;
+        }
+        boolean history = scrubber.year() != today.getYear();
+        map.era(history ? today.withYear(scrubber.year()) : null);
+        todayButton.setDisabled(!history);
+        writeMapDate();
+    }
+
+    /** The map's date in its header: the campaign's, or the year in history the map shows and the campaign's. */
+    private void writeMapDate() {
+        if (mapDate == null) {
+            return;
+        }
+        boolean history = today != null && scrubber != null && scrubber.year() != today.getYear();
+        mapDate.setText(history ? getFormattedText("HqHub.map.history", scrubber.year(), todayText) : todayText);
+        mapDate.setColor(UiTheme.tokenColor(history ? "accent.primary" : "text.secondary"));
+    }
+
+    /**
+     * Keeps the timeline's readout on the year its handle glides through, pulses the handle while the map charts the
+     * year's borders, and once it has them reads the years either side ahead.
+     */
+    private void followTimeline() {
+        int year = Math.round(scrubber.shown());
+        if (year != readoutYear) {
+            readoutYear = year;
+            timeYear.setText(String.valueOf(year));
+            timeEra.setText(scrubber.era());
+        }
+        LocalDate shown = map.shownDate();
+        boolean charted = shown != null && shown.getYear() == scrubber.year();
+        scrubber.charting(!charted);
+        if (charted && today != null && !shown.equals(readAhead)) {
+            readAhead = shown;
+            for (int step : new int[] { 1, -1 }) {
+                int near = shown.getYear() + step;
+                if (near >= FIRST_YEAR && near != today.getYear()) {
+                    history.prefetch(today.withYear(near));
+                }
+            }
+        }
+    }
+
     /** The compass, its needle at coreward, and the map's controls, at the bottom right. */
     private Table compassLayer() {
         compassLayer = new Table();
@@ -693,6 +848,10 @@ final class HubScreen extends ApplicationAdapter {
             if (progress == 0) {
                 map.snapToStart();
             }
+            if (today != null) {
+                scrubber.set(today.getYear(), false);
+                era();
+            }
             returning = false;
         } else {
             map.clearChoice();
@@ -750,14 +909,26 @@ final class HubScreen extends ApplicationAdapter {
         legendLayer.setPosition(-slide, 0);
         compassLayer.setPosition(slide, 0);
         detailLayer.setPosition(slide, 0);
-        for (Table layer : new Table[] { header, legendLayer, compassLayer, detailLayer }) {
+        timeLayer.setPosition(0, -slide);
+        for (Table layer : new Table[] { header, legendLayer, compassLayer, detailLayer, timeLayer }) {
             layer.getColor().a = in;
         }
         boolean shown = chromeShown > 0;
         header.setVisible(shown);
         legendLayer.setVisible(shown);
         compassLayer.setVisible(shown);
+        timeLayer.setVisible(shown);
         header.setTouchable(chromeShown >= 1 ? Touchable.childrenOnly : Touchable.disabled);
+        timeLayer.setTouchable(chromeShown >= 1 ? Touchable.childrenOnly : Touchable.disabled);
+        // The timeline keeps clear of the legend and the compass either side of it
+        float beside = Math.max(legend.getWidth(), compassLayer.getChildren().first().getWidth()) + space("xxl") * 2;
+        float timeWidth = Math.max(TIMELINE_MIN_WIDTH, Math.min(TIMELINE_WIDTH,
+              stage.getWidth() - beside * 2 - space("lg") * 2));
+        Cell<?> timeCell = timeLayer.getCell(timePanel);
+        if (timeCell.getPrefWidth() != timeWidth) {
+            timeCell.width(timeWidth);
+            timeLayer.invalidate();
+        }
         searchPanel.setVisible(shown && searchPanel.isVisible() && !search.field.getText().isBlank());
         if (searchPanel.isVisible()) {
             Vector2 corner = search.localToStageCoordinates(new Vector2(0, -space("xs")));
@@ -1065,7 +1236,8 @@ final class HubScreen extends ApplicationAdapter {
         date.setText(ui.cased("title", bar.dateText()));
         where.setText(whereabouts(bar));
         mapWhere.setText(ui.cased("headline", whereabouts(bar)));
-        mapDate.setText(bar.dateText());
+        todayText = bar.dateText();
+        writeMapDate();
         funds.setText(ui.cased("name", bar.fundsText()));
         alerts.clearChildren();
         for (TopBar.Alert alert : bar.alerts()) {
@@ -1119,6 +1291,7 @@ final class HubScreen extends ApplicationAdapter {
         if (progress >= 1) {
             labels.draw(map, stage);
             placeHoverCard();
+            followTimeline();
             legendClock -= delta;
             if (legendClock <= 0) {
                 legendClock = LEGEND_EVERY;

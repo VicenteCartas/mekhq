@@ -32,6 +32,8 @@
  */
 package mekhq.gui.gdx.hub;
 
+import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -59,12 +61,14 @@ import com.badlogic.gdx.utils.Disposable;
 import com.badlogic.gdx.utils.FloatArray;
 import jakarta.annotation.Nullable;
 import mekhq.MHQConstants;
+import mekhq.gui.model.view.Borders;
 import mekhq.gui.model.view.StarMap;
 
 /**
  * The campaign's star map, full screen: the systems laid out on the galactic plane (coreward away from the camera),
- * glowing in their owners' colours. It opens looking straight down with coreward up, as the holotable's dive ends,
- * and can be tilted from there. The force's system wears a pulsing ring with its jump
+ * glowing in their owners' colours over the realms' territory. It shows them on the campaign's date or, scrubbed
+ * through history, on any other ({@link #era}), fading from one date's borders to the next. It opens looking straight
+ * down with coreward up, as the holotable's dive ends, and can be tilted from there. The force's system wears a pulsing ring with its jump
  * range around it, its route is drawn star to star, solid as far as it has come with a marker where it is and dashed
  * ahead, a course previewed to the chosen system is dashed too, and the system under the cursor or chosen is ringed.
  *
@@ -124,6 +128,14 @@ final class StarMapView {
     private ShaderProgram ringShader;
     private ShaderProgram lineShader;
     private ShaderProgram routeShader;
+    /** Where the borders on each date are read; none until the screen hands it over. */
+    private @Nullable BorderHistory history;
+    /** The date the map shows history on; null for the campaign's own. */
+    private @Nullable LocalDate era;
+    /** The realms' territory on the date shown, once its borders are read. */
+    private final TerritoryField territory = new TerritoryField();
+    /** The systems as {@link #territory}'s date had them, in the map's order; the map's own until it is read. */
+    private List<StarMap.Star> shown = List.of();
     private @Nullable Mesh stars;
     private @Nullable Mesh lines;
     /** The force's route, star to star. */
@@ -252,6 +264,25 @@ final class StarMapView {
         }
     }
 
+    /** Reads the borders on the dates the map shows through {@code borders}. */
+    void history(BorderHistory borders) {
+        history = borders;
+    }
+
+    /**
+     * Shows the systems and territory on {@code date}, or on the campaign's date when null, once that date's borders
+     * are read; until then the map keeps showing the date it did.
+     */
+    void era(@Nullable LocalDate date) {
+        era = date;
+    }
+
+    /** The date whose owners and borders the map shows; null until the first are read. */
+    @Nullable LocalDate shownDate() {
+        Borders showing = territory.shown();
+        return showing == null ? null : showing.date();
+    }
+
     /** Whether the view has a map to show yet. */
     boolean loaded() {
         return map != null || pending != null;
@@ -318,10 +349,9 @@ final class StarMapView {
         return yaw;
     }
 
-    /** The systems shown, in the map's order; empty before it loads. */
+    /** The systems shown, in the map's order, as the date shown had them; empty before it loads. */
     List<StarMap.Star> stars() {
-        StarMap shown = map;
-        return shown == null ? List.of() : shown.stars();
+        return shown;
     }
 
     /** The factions with the most systems on screen, at most {@code limit} of them. */
@@ -335,6 +365,7 @@ final class StarMapView {
         ringShader = HoloTableView.compile(StarMapShaders.RING_VERTEX, StarMapShaders.RING_FRAGMENT);
         lineShader = HoloTableView.compile(StarMapShaders.LINE_VERTEX, StarMapShaders.LINE_FRAGMENT);
         routeShader = HoloTableView.compile(StarMapShaders.ROUTE_VERTEX, StarMapShaders.ROUTE_FRAGMENT);
+        territory.create();
         grid = grid();
         rings = new Mesh(false, 64, 0, pointAttributes());
         camera = new PerspectiveCamera(FIELD_OF_VIEW, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
@@ -366,6 +397,7 @@ final class StarMapView {
             load(pending);
             pending = null;
         }
+        history(delta);
         if (previewStale && map != null) {
             if (preview != null) {
                 preview.dispose();
@@ -387,6 +419,7 @@ final class StarMapView {
         Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
         Gdx.gl.glDisable(GL20.GL_CULL_FACE);
         Gdx.gl.glEnable(GL20.GL_BLEND);
+        territory.render(camera.combined, fade, time);
         Gdx.gl.glBlendFunc(GL20.GL_ONE, GL20.GL_ONE);
 
         lineShader.bind();
@@ -440,11 +473,11 @@ final class StarMapView {
 
     /** Hands {@code labels} the names to write this frame, the marked systems first, then the nearest the centre. */
     void labels(Labels labels) {
-        StarMap shown = map;
-        if (shown == null) {
+        StarMap today = map;
+        if (today == null) {
             return;
         }
-        List<StarMap.Star> all = shown.stars();
+        List<StarMap.Star> all = shown;
         boolean[] done = new boolean[all.size()];
         for (int marked : new int[] { chosen, hovered, current }) {
             if (marked >= 0 && !done[marked] && !Float.isNaN(screen[marked * 2])) {
@@ -452,7 +485,7 @@ final class StarMapView {
                 labels.label(all.get(marked), screen[marked * 2], screen[marked * 2 + 1], true);
             }
         }
-        for (List<String> ids : List.of(shown.route(), previewed)) {
+        for (List<String> ids : List.of(today.route(), previewed)) {
             for (String id : ids) {
                 Integer at = index.get(id);
                 if (at != null && !done[at] && !Float.isNaN(screen[at * 2])) {
@@ -486,8 +519,8 @@ final class StarMapView {
     }
 
     void dispose() {
-        for (Disposable resource : new Disposable[] { starShader, ringShader, lineShader, routeShader, stars, lines,
-              route, preview, grid, rings }) {
+        for (Disposable resource : new Disposable[] { starShader, ringShader, lineShader, routeShader,
+              stars, lines, route, preview, grid, rings, territory }) {
             if (resource != null) {
                 resource.dispose();
             }
@@ -579,10 +612,7 @@ final class StarMapView {
         current = changed.current() == null ? -1 : index.getOrDefault(changed.current(), -1);
         chosen = wasChosen == null ? -1 : index.getOrDefault(wasChosen.id(), -1);
         hovered = -1;
-        if (stars != null) {
-            stars.dispose();
-        }
-        stars = starMesh(all);
+        align();
         if (lines != null) {
             lines.dispose();
         }
@@ -603,8 +633,61 @@ final class StarMapView {
     }
 
     private @Nullable StarMap.Star star(int at) {
-        StarMap shown = map;
-        return shown == null || at < 0 || at >= shown.stars().size() ? null : shown.stars().get(at);
+        List<StarMap.Star> all = shown;
+        return at < 0 || at >= all.size() ? null : all.get(at);
+    }
+
+    /**
+     * Turns the territory towards the date wanted, {@link #era} or the campaign's, once its borders are read, and the
+     * turning {@code delta} seconds on.
+     */
+    private void history(float delta) {
+        territory.update(delta);
+        StarMap today = map;
+        BorderHistory borders = history;
+        if (today == null || borders == null) {
+            return;
+        }
+        LocalDate wanted = era == null ? today.date() : era;
+        Borders showing = territory.shown();
+        if (showing != null && showing.date().equals(wanted)) {
+            return;
+        }
+        Borders read = borders.get(wanted);
+        if (read == null) {
+            return;
+        }
+        territory.show(read);
+        align();
+        if (hovered >= 0) {
+            listener.hovered(star(hovered));
+        }
+    }
+
+    /** Takes the systems shown from {@link #territory}'s date, in the map's order, and draws them so. */
+    private void align() {
+        StarMap today = map;
+        if (today == null) {
+            return;
+        }
+        Borders showing = territory.shown();
+        if (showing == null || showing.date().equals(today.date())) {
+            shown = today.stars();
+        } else {
+            Map<String, StarMap.Star> then = new HashMap<>();
+            for (StarMap.Star star : showing.stars()) {
+                then.put(star.id(), star);
+            }
+            List<StarMap.Star> aligned = new ArrayList<>(today.stars().size());
+            for (StarMap.Star star : today.stars()) {
+                aligned.add(then.getOrDefault(star.id(), star));
+            }
+            shown = aligned;
+        }
+        if (stars != null) {
+            stars.dispose();
+        }
+        stars = starMesh(shown);
     }
 
     private void hover(int at) {
@@ -693,14 +776,13 @@ final class StarMapView {
 
     /** Projects every system onto the screen for picking and labels. */
     private void project() {
-        StarMap shown = map;
-        if (shown == null) {
+        List<StarMap.Star> all = shown;
+        if (all.size() * 2 != screen.length) {
             return;
         }
         float[] m = camera.combined.val;
         float width = camera.viewportWidth;
         float height = camera.viewportHeight;
-        List<StarMap.Star> all = shown.stars();
         for (int i = 0; i < all.size(); i++) {
             StarMap.Star star = all.get(i);
             float x = (float) star.x();
@@ -721,9 +803,9 @@ final class StarMapView {
     /** Fills {@link #rings} with this frame's markers; returns how many. */
     private int rings() {
         FloatArray vertices = new FloatArray(POINT_FLOATS * 8);
-        StarMap shown = map;
-        if (shown != null) {
-            for (String id : shown.route()) {
+        StarMap today = map;
+        if (today != null) {
+            for (String id : today.route()) {
                 Integer at = index.get(id);
                 if (at != null && at != current) {
                     ring(vertices, star(at), AMBER, 0.55f, 12, 0);

@@ -67,6 +67,7 @@ import javax.swing.JViewport;
 
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.PlanetarySystem;
+import mekhq.campaign.universe.territory.TerritorySemantic;
 import org.junit.jupiter.api.Test;
 
 class InterstellarMapPanelRenderLayerCacheTest {
@@ -1263,7 +1264,7 @@ class InterstellarMapPanelRenderLayerCacheTest {
           when(faction.getColor()).thenReturn(Color.RED);
           Rectangle2D contourShape = new Rectangle2D.Double(-5.0, -5.0, 10.0, 10.0);
           InterstellarMapPanel.TerritoryContour contour = new InterstellarMapPanel.TerritoryContour(
-              List.of(faction), InterstellarMapPanel.TerritorySemantic.SOVEREIGN,
+              List.of(faction), TerritorySemantic.SOVEREIGN,
               contourShape, Color.RED, 1, -5.0, 5.0, -5.0, 5.0);
           InterstellarMapPanel.TerritoryAtlas atlas = new InterstellarMapPanel.TerritoryAtlas(
               date, 0, 0, 0, 0, java.util.Map.of(), List.of(contour), List.of());
