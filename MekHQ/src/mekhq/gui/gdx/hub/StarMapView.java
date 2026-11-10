@@ -1555,8 +1555,9 @@ final class StarMapView {
     }
 
     /**
-     * Raises a pillar from each system of {@code all} that {@code lens} rates, one light year a level tall, so the
-     * strokes' lift sets their height; dim at its foot, bright at its head.
+     * Raises a column from each system of {@code all} that {@code lens} rates, at most a light year tall so the
+     * strokes' lift sets their height: the higher the level, the taller, steeply so the best stand out. Each column
+     * brightens from its foot to a glowing cap.
      */
     private static void pillars(Strokes into, List<StarMap.Star> all, MapLens lens) {
         for (StarMap.Star star : all) {
@@ -1570,9 +1571,12 @@ final class StarMapView {
             float b = linear(rgb & 0xFF);
             float x = (float) star.x();
             float z = (float) -star.y();
-            float top = (float) level / lens.levels();
-            into.add(x, 0, z, x, top * 0.6f, z, r * 0.25f, g * 0.25f, b * 0.25f, 1, 2.2f, 0, 0);
-            into.add(x, top * 0.6f, z, x, top, z, r * 0.9f, g * 0.9f, b * 0.9f, 1, 2.6f, 0, 0);
+            float share = (float) level / lens.levels();
+            float top = 0.08f + 0.92f * share * share;
+            into.add(x, 0, z, x, top * 0.5f, z, r * 0.3f, g * 0.3f, b * 0.3f, 1, 5, 0, 0);
+            into.add(x, top * 0.5f, z, x, top, z, r * 0.75f, g * 0.75f, b * 0.75f, 1, 6, 0, 0);
+            float cap = 0.012f;
+            into.add(x, top - cap, z, x, top + cap, z, 0.4f + r, 0.4f + g, 0.4f + b, 1, 13, 0, 0);
         }
     }
 

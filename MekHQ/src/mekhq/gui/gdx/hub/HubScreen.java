@@ -916,6 +916,9 @@ final class HubScreen extends ApplicationAdapter {
             legend.add(ui.label(String.valueOf(count), "hud-body", 13, UiTheme.tokenColor("text.secondary")))
                   .right().padLeft(space("md")).padTop(space("xxs")).row();
         }
+        Label columns = ui.label(getText("HqHub.map.lens.columns"), "hud-body", 12, UiTheme.tokenColor("text.muted"));
+        columns.setWrap(true);
+        legend.add(columns).colspan(3).growX().width(200).padTop(space("sm")).row();
         legend.setVisible(true);
     }
 
