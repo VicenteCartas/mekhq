@@ -181,6 +181,9 @@ public final class StarMapSnapshots {
                     call("rebuildLenses", new Class<?>[0]);
                 }
                 view.look(wanted.x(), wanted.y(), wanted.height(), wanted.tilt(), wanted.turn());
+                if (List.of(wanted.layers().split("\\+")).contains("spot")) {
+                    view.point(Gdx.graphics.getWidth() * 2 / 5, Gdx.graphics.getHeight() / 2);
+                }
                 screen.render();
                 frames++;
                 LocalDate shown = view.shownDate();

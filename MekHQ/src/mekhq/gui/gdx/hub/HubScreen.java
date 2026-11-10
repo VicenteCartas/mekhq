@@ -82,6 +82,7 @@ import megamek.client.ui.gdx.UiTheme;
 import megamek.common.Configuration;
 import mekhq.campaign.universe.eras.Eras;
 import mekhq.gui.enums.MHQTabType;
+import mekhq.gui.model.view.Borders;
 import mekhq.gui.model.view.MapLens;
 import mekhq.gui.model.view.StarMap;
 import mekhq.gui.model.view.TopBar;
@@ -210,6 +211,9 @@ final class HubScreen extends ApplicationAdapter {
     private Table detailLayer;
     private Table detail;
     private Table hoverCard;
+    private Label hoverStats;
+    /** Whether the hover card shows a realm rather than a system. */
+    private boolean realmShown;
     private Label hoverName;
     private Label hoverOwner;
     /** The system whose detail the panel waits for or shows. */
@@ -255,6 +259,11 @@ final class HubScreen extends ApplicationAdapter {
             @Override
             public void chosen(@Nullable StarMap.Star star) {
                 chooseSystem(star);
+            }
+
+            @Override
+            public void realm(@Nullable Borders.Holding held) {
+                hoverRealm(held);
             }
         });
         if (chart != null) {
@@ -430,6 +439,12 @@ final class HubScreen extends ApplicationAdapter {
 
             @Override
             public boolean mouseMoved(int screenX, int screenY) {
+                Vector2 at = stage.screenToStageCoordinates(new Vector2(screenX, screenY));
+                if (mapOpen && !moving() && stage.hit(at.x, at.y, true) != null) {
+                    // Over the chrome the map points at nothing
+                    map.point(-1, -1);
+                    return false;
+                }
                 return shown().mouseMoved(screenX, screenY);
             }
 
@@ -1047,7 +1062,10 @@ final class HubScreen extends ApplicationAdapter {
         hoverOwner = ui.label("", "hud-body", 13, UiTheme.tokenColor("text.secondary"));
         hoverCard.defaults().left();
         hoverCard.add(hoverName).row();
-        hoverCard.add(hoverOwner).padTop(space("xxs"));
+        hoverCard.add(hoverOwner).padTop(space("xxs")).row();
+        hoverStats = ui.label("", "hud-body", 13, UiTheme.tokenColor("text.primary"));
+        hoverStats.setVisible(false);
+        hoverCard.add(hoverStats).padTop(space("xxs")).height(0);
         hoverCard.setVisible(false);
         return hoverCard;
     }
@@ -1187,8 +1205,44 @@ final class HubScreen extends ApplicationAdapter {
             return;
         }
         hoverName.setText(ui.cased("name", star.name()));
+        hoverName.setColor(UiTheme.tokenColor("text.primary"));
+        realmShown = false;
+        hoverStats.setVisible(false);
+        hoverCard.getCell(hoverStats).height(0);
         hoverOwner.setText(owner(star.owner()));
         hoverOwner.setColor(lifted(star.rgb()));
+        hoverCard.pack();
+        hoverCard.setVisible(true);
+    }
+
+    /** Shows what the realm under the cursor holds, in the hover card; none hides it. */
+    private void hoverRealm(@Nullable Borders.Holding held) {
+        if (held == null || !mapOpen) {
+            if (realmShown) {
+                realmShown = false;
+                hoverStats.setVisible(false);
+                hoverCard.setVisible(false);
+            }
+            return;
+        }
+        realmShown = true;
+        hoverName.setText(ui.cased("name", held.name()));
+        hoverName.setColor(lifted(held.rgb()));
+        hoverOwner.setText(getFormattedText("HqHub.map.realm.systems", held.systems()));
+        hoverOwner.setColor(UiTheme.tokenColor("text.secondary"));
+        StringBuilder more = new StringBuilder();
+        if (held.people() > 0) {
+            more.append(getFormattedText("HqHub.map.realm.people", population(held.people())));
+        }
+        if (!held.capital().isBlank()) {
+            if (!more.isEmpty()) {
+                more.append('\n');
+            }
+            more.append(getFormattedText("HqHub.map.realm.capital", held.capital()));
+        }
+        hoverStats.setText(more);
+        hoverStats.setVisible(!more.isEmpty());
+        hoverCard.getCell(hoverStats).height(more.isEmpty() ? 0 : hoverStats.getPrefHeight());
         hoverCard.pack();
         hoverCard.setVisible(true);
     }

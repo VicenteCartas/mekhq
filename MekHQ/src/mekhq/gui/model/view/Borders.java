@@ -42,10 +42,12 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+import jakarta.annotation.Nullable;
 import megamek.common.universe.FactionTag;
 import mekhq.campaign.events.PlanetarySystemsChangedEvent;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.PlanetarySystem;
+import mekhq.campaign.universe.enums.CapitalType;
 import mekhq.campaign.universe.territory.InfluenceMap;
 
 /**
@@ -71,6 +73,22 @@ public final class Borders {
     public record Realm(String shortName, int rgb) {
         public Realm {
             Objects.requireNonNull(shortName);
+        }
+    }
+
+    /**
+     * What a realm held on the date.
+     *
+     * @param name    its name on the date
+     * @param rgb     its colour, 0xRRGGBB
+     * @param systems how many systems it held, shared ones included
+     * @param people  how many lived in them
+     * @param capital its capital's name, or blank when it held none
+     */
+    public record Holding(String name, int rgb, int systems, long people, String capital) {
+        public Holding {
+            Objects.requireNonNull(name);
+            Objects.requireNonNull(capital);
         }
     }
 
@@ -113,10 +131,12 @@ public final class Borders {
     private final float maxY;
     private final InfluenceMap land;
     private final float[] hpg;
+    private final Map<Integer, Holding> holdings;
 
     private Borders(LocalDate date, List<StarMap.Star> stars, List<float[]> claims, List<Realm> realms,
-          float[] bounds) {
+          float[] bounds, Map<Integer, Holding> holdings) {
         this.date = date;
+        this.holdings = Map.copyOf(holdings);
         this.stars = List.copyOf(stars);
         int count = claims.size();
         claimX = new float[count];
@@ -232,6 +252,9 @@ public final class Borders {
         List<float[]> claims = new ArrayList<>();
         float[] bounds = { Float.MAX_VALUE, Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE };
         List<Faction> owners = new ArrayList<>();
+        Map<Integer, Faction> factions = new HashMap<>();
+        Map<Integer, long[]> tallies = new HashMap<>();
+        Map<Integer, String> capitals = new HashMap<>();
         for (PlanetarySystem system : systems) {
             if (system == null || system.getX() == null || system.getY() == null) {
                 continue;
@@ -255,14 +278,36 @@ public final class Borders {
                 owners.removeIf(faction -> INDEPENDENT.equals(faction.getShortName()));
             }
             float contested = owners.size() > 1 ? 1 : 0;
+            long people = owners.isEmpty() ? 0 : system.getPopulation(date);
+            boolean capital = !owners.isEmpty() && system.getCapitalType(date) == CapitalType.NATIONAL;
             for (Faction owner : owners) {
-                claims.add(new float[] { x, y, numbering.id(owner), contested });
+                int id = numbering.id(owner);
+                claims.add(new float[] { x, y, id, contested });
+                factions.putIfAbsent(id, owner);
+                long[] tally = tallies.computeIfAbsent(id, key -> new long[2]);
+                tally[0]++;
+                tally[1] += people;
+                if (capital && (owners.size() == 1 || !capitals.containsKey(id))) {
+                    capitals.put(id, StarMap.name(system, date));
+                }
             }
         }
         if (bounds[0] > bounds[2]) {
             bounds = new float[4];
         }
-        return new Borders(date, stars, claims, numbering.all(), bounds);
+        Map<Integer, Holding> holdings = new HashMap<>();
+        for (Map.Entry<Integer, Faction> entry : factions.entrySet()) {
+            long[] tally = tallies.get(entry.getKey());
+            Faction faction = entry.getValue();
+            holdings.put(entry.getKey(), new Holding(faction.getFullName(date.getYear()), StarMap.rgb(faction),
+                  (int) tally[0], tally[1], capitals.getOrDefault(entry.getKey(), "")));
+        }
+        return new Borders(date, stars, claims, numbering.all(), bounds, holdings);
+    }
+
+    /** What the realm numbered {@code realm} held on the date, or null when it held nothing. */
+    public @Nullable Holding holding(int realm) {
+        return holdings.get(realm);
     }
 
     /** The date it shows. */

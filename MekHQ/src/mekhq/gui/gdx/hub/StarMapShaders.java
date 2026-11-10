@@ -399,6 +399,8 @@ final class StarMapShaders {
           uniform sampler2D u_palette;
           uniform float u_alpha;
           uniform float u_time;
+          uniform int u_spot;
+          uniform float u_spotIn;
           out vec4 fragColor;
           const float SCALE = 16.0;
           const int FAR = 32000;
@@ -489,13 +491,20 @@ final class StarMapShaders {
                   }
                   float drift = 0.85 + 0.15 * sin(dot(v_map, vec2(0.011, 0.007)) * 6.2832 + u_time * 0.4);
                   float glow = exp(-depth / 3.0) * 0.28 + exp(-depth / 16.0) * 0.14;
-                  result = vec4(fill, 0.07 * drift + glow);
+                  float lit = a == u_spot ? u_spotIn : 0.0;
+                  // The realm in the spotlight fills with light; the rest of space draws back from it
+                  float shade = u_spot > 0 && a != u_spot ? 1.0 - 0.45 * u_spotIn : 1.0;
+                  result = vec4(fill * (1.0 + 0.25 * lit), ((0.07 + 0.13 * lit) * drift + glow * (1.0 + lit)) * shade);
               } else {
                   result = vec4(colour(b), exp(-depth / 5.0) * 0.08);
               }
               float line = 1.0 - smoothstep(0.6, 1.5, depth / lightYears);
               result.a *= strength(a > 0 ? a : b);
-              result = mix(result, vec4(colour(edge) * 1.4 + 0.05, 0.9 * strength(edge)), line);
+              float edgeLit = edge == u_spot ? u_spotIn : 0.0;
+              float edgeShade = u_spot > 0 && edge != u_spot ? 1.0 - 0.4 * u_spotIn : 1.0;
+              line = 1.0 - smoothstep(0.6 + 0.9 * edgeLit, 1.5 + 1.2 * edgeLit, depth / lightYears);
+              result = mix(result, vec4(colour(edge) * (1.4 + 0.8 * edgeLit) + 0.05,
+                    0.9 * max(strength(edge), edgeLit) * edgeShade), line);
               result.a *= u_alpha;
               if (result.a < 0.002) {
                   discard;

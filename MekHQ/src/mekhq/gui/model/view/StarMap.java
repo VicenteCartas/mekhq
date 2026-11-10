@@ -462,7 +462,7 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
               .collect(Collectors.joining(" / "));
     }
 
-    private static String name(PlanetarySystem system, LocalDate date) {
+    static String name(PlanetarySystem system, LocalDate date) {
         String name = system.getPrintableName(date);
         return name == null || name.isBlank() ? system.getId() : name;
     }

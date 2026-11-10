@@ -69,6 +69,9 @@ final class TerritoryField implements Disposable {
     private @Nullable Layer from;
     /** How far {@link #from} has turned into {@link #to}, 0 to 1. */
     private float progress = 1;
+    /** The realm in the spotlight, from 1, or 0 for none. */
+    private int spot;
+    private float spotIn;
 
     void create() {
         shader = HoloTableView.compile(StarMapShaders.TERRITORY_VERTEX, StarMapShaders.TERRITORY_FRAGMENT);
@@ -102,6 +105,12 @@ final class TerritoryField implements Disposable {
             progress = 0;
         }
         to = next;
+    }
+
+    /** Lights the realm {@code realm}, from 1 (0 for none), at {@code strength}, 0 to 1. */
+    void spotlight(int realm, float strength) {
+        spot = realm;
+        spotIn = strength;
     }
 
     /** Moves the turning {@code delta} seconds on. */
@@ -140,6 +149,8 @@ final class TerritoryField implements Disposable {
         shader.setUniformf("u_blend", from == null ? 1 : eased);
         shader.setUniformf("u_alpha", alpha);
         shader.setUniformf("u_time", time);
+        shader.setUniformi("u_spot", spot);
+        shader.setUniformf("u_spotIn", spotIn);
         // Both dates cover the same systems, so either bounds the territory
         target.plane.render(shader, GL20.GL_TRIANGLES);
     }

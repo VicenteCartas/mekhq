@@ -40,6 +40,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
@@ -62,6 +63,7 @@ import com.badlogic.gdx.utils.Disposable;
 import com.badlogic.gdx.utils.FloatArray;
 import jakarta.annotation.Nullable;
 import mekhq.MHQConstants;
+import mekhq.campaign.universe.territory.InfluenceMap;
 import mekhq.gui.model.view.Borders;
 import mekhq.gui.model.view.MapLens;
 import mekhq.gui.model.view.StarMap;
@@ -85,6 +87,10 @@ final class StarMapView {
 
         /** The player chose {@code star}; null when the click was on empty space. */
         void chosen(@Nullable StarMap.Star star);
+
+        /** The cursor came over {@code held}'s territory, away from any system; null when it left. */
+        default void realm(@Nullable Borders.Holding held) {
+        }
     }
 
     /** Takes the names to write over the map, the most important first; x and y are input coordinates. */
@@ -130,6 +136,8 @@ final class StarMapView {
     private static final int REALM_SYSTEMS = 12;
     /** The tilt, in degrees, the camera eases to when a lens comes on looking straight down. */
     private static final float LENS_PITCH = 52;
+    /** How quickly, a share a second, the spotlight comes onto a realm or leaves it. */
+    private static final float SPOT_RATE = 6;
     /** The tilt, in degrees, above which pillars and beacons fade, being seen end on. */
     private static final float UPRIGHT_PITCH = 86;
     /** How much of its strength the territory keeps under a lens. */
@@ -201,6 +209,15 @@ final class StarMapView {
     private float reachStart;
     /** How far the lens has come in, 0 to 1, as the territory dims and the pillars rise. */
     private float lensIn;
+    /** Where the cursor points, in input coordinates; negative when it is off the map. */
+    private int pointX = -1;
+    private int pointY = -1;
+    /** The realm the cursor is over, from 1; 0 for none. */
+    private int spotWanted;
+    /** The realm in the spotlight, fading in or out at {@link #spotIn}. */
+    private int spot;
+    private float spotIn;
+    private @Nullable Borders.Holding spotHeld;
     /** The tilt the camera is easing to, in degrees; NaN when it isn't. */
     private float wantedPitch = Float.NaN;
     /** The systems as {@link #territory}'s date had them, in the map's order; the map's own until it is read. */
@@ -294,7 +311,7 @@ final class StarMapView {
 
         @Override
         public boolean mouseMoved(int screenX, int screenY) {
-            hover(nearest(screen, screenX, screenY, PICK_RADIUS));
+            point(screenX, screenY);
             return false;
         }
 
@@ -603,6 +620,7 @@ final class StarMapView {
               Gdx.graphics.getHeight()));
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         lensIn = MathUtils.clamp(lensIn + (lens == null ? -delta : delta) * 3, 0, 1);
+        spotlight(delta);
         territory.render(camera.combined, fade * MathUtils.lerp(1, LENS_TERRITORY, lensIn), time);
         Gdx.gl.glBlendFunc(GL20.GL_ONE, GL20.GL_ONE);
 
@@ -1021,17 +1039,15 @@ final class StarMapView {
         float b = linear(rgb & 0xFF);
         boolean realm = star.capital() >= 3;
         float top = realm ? 1 : 0.5f;
-        float width = realm ? 5.0f : 3.2f;
+        float bright = realm ? 1 : 0.6f;
         float x = (float) star.x();
         float z = (float) -star.y();
-        float[] glow = { 2.4f, 1.2f, 0.5f, 0.16f };
-        for (int i = 0; i < glow.length; i++) {
-            float lo = top * i / glow.length;
-            float hi = top * (i + 1) / glow.length;
-            float bright = glow[i] * (realm ? 1 : 0.6f);
-            into.add(x, lo, z, x, hi, z, (r * 0.6f + 0.4f) * bright, (g * 0.6f + 0.4f) * bright,
-                  (b * 0.6f + 0.4f) * bright, 1, width, 0, 0);
-        }
+        float hr = r * 0.6f + 0.4f;
+        float hg = g * 0.6f + 0.4f;
+        float hb = b * 0.6f + 0.4f;
+        // A wide soft haze round a narrow hot core, both fading smoothly as they rise
+        into.add(x, 0, z, x, top, z, r, g, b, 0.9f * bright, 0, realm ? 22 : 13, 0, 0);
+        into.add(x, 0, z, x, top * 0.75f, z, hr, hg, hb, 2.2f * bright, 0, realm ? 4.5f : 3, 0, 0);
     }
 
     /** How tall, in light years, a realm's capital's beacon stands: taller the further out the camera is. */
@@ -1098,6 +1114,50 @@ final class StarMapView {
 
     private static long reachCell(double i, double j) {
         return ((long) i << 32) ^ ((long) j & 0xFFFFFFFFL);
+    }
+
+    /** The cursor is at {@code screenX}, {@code screenY}, in input coordinates; negative when it left the map. */
+    void point(int screenX, int screenY) {
+        pointX = screenX;
+        pointY = screenY;
+        hover(screenX < 0 ? -1 : nearest(screen, screenX, screenY, PICK_RADIUS));
+    }
+
+    /**
+     * Finds the realm whose territory lies under the cursor, away from any system, and eases the spotlight onto it
+     * over {@code delta} seconds.
+     */
+    private void spotlight(float delta) {
+        Borders showing = territory.shown();
+        int wanted = 0;
+        Borders.Holding held = null;
+        if (showing != null && hovered < 0 && pointX >= 0 && pressButton < 0 && !flying && lens == null
+              && ground(pointX, pointY, scratch)) {
+            InfluenceMap land = showing.land();
+            int column = land.column(scratch.x);
+            int row = land.row(-scratch.z);
+            if (column >= 0 && row >= 0 && column < land.width() && row < land.height()) {
+                wanted = land.owner(column, row);
+                held = wanted > 0 ? showing.holding(wanted - 1) : null;
+                if (held == null) {
+                    wanted = 0;
+                }
+            }
+        }
+        if (!Objects.equals(held, spotHeld)) {
+            spotHeld = held;
+            listener.realm(held);
+        }
+        spotWanted = wanted;
+        if (spot == spotWanted) {
+            spotIn = Math.min(1, spotIn + delta * SPOT_RATE);
+        } else {
+            spotIn = Math.max(0, spotIn - delta * SPOT_RATE);
+            if (spotIn <= 0) {
+                spot = spotWanted;
+            }
+        }
+        territory.spotlight(spot, spotIn * spotIn * (3 - 2 * spotIn));
     }
 
     private void hover(int at) {
