@@ -172,8 +172,9 @@ Each phase ships something playable and keeps everything else reachable through 
      - The Swing map's territory logic moved to `mekhq.campaign.universe.territory`
        (`TerritoryGrid` and friends). `InterstellarMapPanel` uses it unchanged in behaviour.
      - Game-map layer, reimagining the Swing map's overlays for 3D:
-       - Lenses (key L) recolour the systems by a property and raise data pillars when the
-         camera tilts, which it does on its own when a lens comes on; a legend counts each level.
+       - Lenses (key L) recolour the systems by a property and raise a column from each system
+         when the camera tilts, which it does on its own when a lens comes on: the higher the
+         level, the taller and brighter the column. A legend counts each level and says so.
        - Realm names in wide capitals across their territory, with the faction's emblem under
          them; system names give way by rank and fade rather than pop.
        - Capital beacons (realm and region), an animated HPG backbone (H), and the force's jump
@@ -185,6 +186,13 @@ Each phase ships something playable and keeps everything else reachable through 
        - Right-click opens a context menu (details, measure from the force, centre, zoom, today).
        - Deep-sky backdrop with nebulae and a starfield, a scale bar, and operation and base
          markers that stay visible zoomed out.
+       - The header carries the route, not the controls: the voyage underway (leg progress,
+         Show route, Cancel trip with a confirming second press) or the course plotted to the
+         chosen system (Set course, Show route, Clear). A help button lists the controls.
+       - The system card's Details opens the system record beside it (`SystemDossier`, read on
+         the Swing thread): the system, then a tab per world with its profile, environment,
+         society, socio-industrial ratings and description, as the Swing planet view has them.
+       - Hover cards stay off the chrome (header, legend, panels).
      - Still to come: bloom.
   4. **Pins.** Contracts and markets on their systems.
 
