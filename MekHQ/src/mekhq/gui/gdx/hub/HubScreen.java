@@ -454,8 +454,7 @@ final class HubScreen extends ApplicationAdapter {
 
             @Override
             public boolean mouseMoved(int screenX, int screenY) {
-                Vector2 at = stage.screenToStageCoordinates(new Vector2(screenX, screenY));
-                if (mapOpen && !moving() && stage.hit(at.x, at.y, true) != null) {
+                if (mapOpen && !moving() && overChrome(screenX, screenY)) {
                     // Over the chrome the map points at nothing
                     map.point(-1, -1);
                     return false;
@@ -1241,8 +1240,28 @@ final class HubScreen extends ApplicationAdapter {
         return clamped * clamped * (3 - 2 * clamped);
     }
 
+    /**
+     * Whether the window's ({@code screenX}, {@code screenY}) lies over the map's chrome: anything the stage would
+     * take, and the panels that only show things.
+     */
+    private boolean overChrome(int screenX, int screenY) {
+        Vector2 at = stage.screenToStageCoordinates(new Vector2(screenX, screenY));
+        if (stage.hit(at.x, at.y, true) != null) {
+            return true;
+        }
+        for (Actor panel : new Actor[] { legend, compassLayer.getChildren().first() }) {
+            if (panel.isVisible() && panel.getStage() != null && panel.getParent().isVisible()) {
+                Vector2 local = panel.stageToLocalCoordinates(new Vector2(at));
+                if (local.x >= 0 && local.y >= 0 && local.x < panel.getWidth() && local.y < panel.getHeight()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private void hover(@Nullable StarMap.Star star) {
-        if (star == null || !mapOpen) {
+        if (star == null || !mapOpen || overChrome(Gdx.input.getX(), Gdx.input.getY())) {
             hoverCard.setVisible(false);
             return;
         }
@@ -1259,7 +1278,7 @@ final class HubScreen extends ApplicationAdapter {
 
     /** Shows what the realm under the cursor holds, in the hover card; none hides it. */
     private void hoverRealm(@Nullable Borders.Holding held) {
-        if (held == null || !mapOpen) {
+        if (held == null || !mapOpen || overChrome(Gdx.input.getX(), Gdx.input.getY())) {
             if (realmShown) {
                 realmShown = false;
                 hoverStats.setVisible(false);
