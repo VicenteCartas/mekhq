@@ -861,6 +861,7 @@ final class StarMapView {
         }
         float ease = Math.min(1, Math.min(Gdx.graphics.getDeltaTime(), 0.1f) * LABEL_EASE);
         boolean[] marked = new boolean[all.size()];
+        boolean[] quiet = new boolean[all.size()];
         for (int at : new int[] { chosen, hovered, current }) {
             if (at >= 0) {
                 marked[at] = true;
@@ -888,7 +889,9 @@ final class StarMapView {
             }
             StarMap.Star star = all.get(i);
             int tier = marked[i] ? 0 : labelTier(star);
-            boolean wanted = marked[i] || distance <= LABEL_REACH[tier];
+            // Through a lens only the best rated systems keep their names, so the columns read clearly
+            quiet[i] = !marked[i] && lens != null && lens.level(star.lenses()) * 4 < lens.levels() * 3;
+            boolean wanted = marked[i] || (!quiet[i] && distance <= LABEL_REACH[tier]);
             if (!wanted && labelAlpha[i] <= 0) {
                 continue;
             }
@@ -903,7 +906,7 @@ final class StarMapView {
         for (int n = 0; n < count; n++) {
             int i = (int) (order[n] & 0xFFFFF);
             int tier = (int) (order[n] >>> 56);
-            boolean wanted = tier == 0 || distance <= LABEL_REACH[tier];
+            boolean wanted = tier == 0 || (!quiet[i] && distance <= LABEL_REACH[tier]);
             float alpha = tier == 0 ? 1 : labelAlpha[i];
             boolean placed = labels.label(all.get(i), screen[i * 2], screen[i * 2 + 1], tier, alpha, wanted);
             labelAlpha[i] = tier == 0 ? 1 : alpha + ((placed ? 1 : 0) - alpha) * ease;
@@ -1588,8 +1591,9 @@ final class StarMapView {
             if (lens != null) {
                 int level = lens.level(star.lenses());
                 rgb = level > 0 ? lens.rgb(level) : 0x5A6070;
-                bright = level > 0 ? 1.9f : 0.18f;
-                size = level > 0 ? 0.9f + 0.5f * level / lens.levels() : 0.6f;
+                bright = level > 0 ? 2.2f : 0.14f;
+                // Rated systems glow wide at the columns' feet, the best the widest
+                size = level > 0 ? 1.3f + 1.6f * level / lens.levels() : 0.5f;
             }
             if (!empty && !star.settled()) {
                 size = 0;
@@ -1629,10 +1633,11 @@ final class StarMapView {
             float z = (float) -star.y();
             float share = (float) level / lens.levels();
             float top = 0.08f + 0.92f * share * share;
-            into.add(x, 0, z, x, top * 0.5f, z, r * 0.3f, g * 0.3f, b * 0.3f, 1, 5, 0, 0);
-            into.add(x, top * 0.5f, z, x, top, z, r * 0.75f, g * 0.75f, b * 0.75f, 1, 6, 0, 0);
-            float cap = 0.012f;
-            into.add(x, top - cap, z, x, top + cap, z, 0.4f + r, 0.4f + g, 0.4f + b, 1, 13, 0, 0);
+            float width = 7 + 5 * share;
+            into.add(x, 0, z, x, top * 0.5f, z, r * 0.45f, g * 0.45f, b * 0.45f, 1, width, 0, 0);
+            into.add(x, top * 0.5f, z, x, top, z, r * 0.9f, g * 0.9f, b * 0.9f, 1, width + 1, 0, 0);
+            float cap = 0.014f;
+            into.add(x, top - cap, z, x, top + cap, z, 0.5f + r, 0.5f + g, 0.5f + b, 1, width * 2, 0, 0);
         }
     }
 
