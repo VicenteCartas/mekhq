@@ -218,6 +218,7 @@ final class StarMapView {
     private float reachStart;
     /** How far the lens has come in, 0 to 1, as the territory dims and the pillars rise. */
     private float lensIn;
+    private boolean emptyShown = true;
     /** The distance the camera glides to, or NaN when it stays. */
     private float wantedDistance = Float.NaN;
     /** The ruler: whether one is laid, being drawn out, its ends on the plane and its strokes. */
@@ -461,6 +462,19 @@ final class StarMapView {
     @Nullable StarMap.Star system(String id) {
         Integer at = index.get(id);
         return at == null ? null : star(at);
+    }
+
+    /** Shows the systems no one has settled, or hides them; the force's and the chosen stay. */
+    void empty(boolean shown) {
+        if (shown != emptyShown) {
+            emptyShown = shown;
+            restyle();
+        }
+    }
+
+    /** Whether the systems no one has settled show. */
+    boolean empty() {
+        return emptyShown;
     }
 
     /** Whether a ruler is laid. */
@@ -1096,7 +1110,7 @@ final class StarMapView {
         if (stars != null) {
             stars.dispose();
         }
-        stars = starMesh(shown, lens);
+        stars = starMesh(shown, lens, emptyShown);
         pillars.clear();
         if (lens != null) {
             pillars(pillars, shown, lens);
@@ -1426,7 +1440,7 @@ final class StarMapView {
             float x = (float) star.x();
             float z = (float) -star.y();
             float w = m[Matrix4.M30] * x + m[Matrix4.M32] * z + m[Matrix4.M33];
-            if (w <= camera.near) {
+            if (w <= camera.near || !emptyShown && !star.settled() && i != current && i != chosen) {
                 screen[i * 2] = Float.NaN;
                 screen[i * 2 + 1] = Float.NaN;
                 continue;
@@ -1489,7 +1503,7 @@ final class StarMapView {
     }
 
     /** The light of the systems {@code all}: in their owners' colours, or their levels' through {@code lens}. */
-    private static @Nullable Mesh starMesh(List<StarMap.Star> all, @Nullable MapLens lens) {
+    private static @Nullable Mesh starMesh(List<StarMap.Star> all, @Nullable MapLens lens, boolean empty) {
         if (all.isEmpty()) {
             return null;
         }
@@ -1504,6 +1518,10 @@ final class StarMapView {
                 rgb = level > 0 ? lens.rgb(level) : 0x5A6070;
                 bright = level > 0 ? 1.9f : 0.18f;
                 size = level > 0 ? 0.9f + 0.5f * level / lens.levels() : 0.6f;
+            }
+            if (!empty && !star.settled()) {
+                size = 0;
+                bright = 0;
             }
             vertices[at++] = (float) star.x();
             vertices[at++] = 0;
