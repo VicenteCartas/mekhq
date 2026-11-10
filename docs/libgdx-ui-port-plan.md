@@ -174,24 +174,32 @@ Each phase ships something playable and keeps everything else reachable through 
      - Game-map layer, reimagining the Swing map's overlays for 3D:
        - Lenses (key L) recolour the systems by a property and raise a column from each system
          when the camera tilts, which it does on its own when a lens comes on: the higher the
-         level, the taller and brighter the column. A legend counts each level and says so.
+         level, the taller and brighter the column, glowing at its foot. A legend counts each
+         level and says so. Through a lens only the best rated systems keep their names.
        - Realm names in wide capitals across their territory, with the faction's emblem under
          them; system names give way by rank and fade rather than pop.
        - Capital beacons (realm and region), an animated HPG backbone (H), and the force's jump
          reach as a wave spreading jump by jump (J).
        - Administrative regions (R) drawn where a realm's regions meet, read as the Swing map
          reads them; empty systems can be hidden (E).
-       - Hovering a realm spotlights it and shows its holdings card (systems, people, capital).
+       - Hovering a realm, or one of its systems, spotlights it; over open ground the card shows
+         its holdings (systems, people, capital).
+       - Contested ground is striped boldly in both claimants' colours, sliding slowly, inside a
+         dashed rim; hovering it names both sides and what each holds.
        - Shift-drag measures distance in light years and jumps; Esc clears it.
        - Right-click opens a context menu (details, measure from the force, centre, zoom, today).
        - Deep-sky backdrop with nebulae and a starfield, a scale bar, and operation and base
          markers that stay visible zoomed out.
        - The header carries the route, not the controls: the voyage underway (leg progress,
-         Show route, Cancel trip with a confirming second press) or the course plotted to the
-         chosen system (Set course, Show route, Clear). A help button lists the controls.
+         an eye to show or hide the route, frame it, cancel the trip with a confirming second
+         press) or the course plotted to the chosen system (Set course, frame, clear). A help
+         button lists the controls.
        - The system card's Details opens the system record beside it (`SystemDossier`, read on
          the Swing thread): the system, then a tab per world with its profile, environment,
          society, socio-industrial ratings and description, as the Swing planet view has them.
+         Beside it, an icon opens the Navigation tab's route planner.
+       - The system card and hover card show what matters to the force: hiring hall, academies,
+         capital, A/B industry, recharge stations and any health advisory.
        - Hover cards stay off the chrome (header, legend, panels).
      - Still to come: bloom.
   4. **Pins.** Contracts and markets on their systems.
