@@ -42,6 +42,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.swing.JFrame;
 import javax.swing.JMenuItem;
@@ -72,6 +73,7 @@ import mekhq.gui.model.view.CampaignSession;
 import mekhq.gui.model.view.StarMap;
 import mekhq.gui.model.view.SystemDossier;
 import mekhq.gui.model.view.TopBar;
+import mekhq.gui.model.view.Transmission;
 
 /**
  * The campaign's command post in the native window (docs/libgdx-ui-port-plan.md), which the start screen's HQ
@@ -118,6 +120,10 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
     });
     /** Swing thread: the campaign window, hidden while the player stays in the hub; null until the hub opens. */
     private @Nullable CampaignGUI gui;
+    /** The channels of the transmissions the hub shows or queues, so they can fall back to windows as it ends. */
+    private final Set<Transmission.Channel> channels = ConcurrentHashMap.newKeySet();
+    /** Swing thread: shows the campaign's immersive dialogs over the hub while it is in front. */
+    private final Transmission.Presenter presenter = this::present;
     /** The screens the campaign has, as the rail last heard them. */
     private volatile Set<MHQTabType> screens = EnumSet.allOf(MHQTabType.class);
     /** The star map's watch while the map is open. */
@@ -153,6 +159,7 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
                 app.activateCampaign(campaign, false);
                 hub.gui = app.getCampaigngui();
                 hub.gui.setCloseAction(hub::hideWindow);
+                Transmission.register(hub.presenter);
                 anchor.dispose();
                 hub.session.watch(TopBar.model(), hub.screen::show);
                 hub.session.watch(Borders.universe(), changed -> hub.history.invalidate());
@@ -293,6 +300,54 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
         dialogs.released();
     }
 
+    /**
+     * Swing thread: shows {@code transmission} over the hub, unless the hub is going, the campaign window is in front
+     * of it or a Swing dialog holds it, where the dialog's window shows as it would over the campaign window.
+     */
+    private @Nullable Transmission.Handle present(Transmission transmission, Transmission.Channel channel) {
+        CampaignGUI window = gui;
+        if (leaving.get() || window == null || window.getFrame().isVisible() || dialogs.blocked()) {
+            return null;
+        }
+        Transmission.Channel tracked = new Transmission.Channel() {
+            @Override
+            public void control(int index, int value) {
+                channel.control(index, value);
+            }
+
+            @Override
+            public void link(String href) {
+                channel.link(href);
+            }
+
+            @Override
+            public void answer(int choice, boolean responded) {
+                channels.remove(this);
+                channel.answer(choice, responded);
+            }
+
+            @Override
+            public void fallBack() {
+                channels.remove(this);
+                channel.fallBack();
+            }
+        };
+        channels.add(tracked);
+        Transmission.Handle handle = screen.transmit(transmission, tracked);
+        return new Transmission.Handle() {
+            @Override
+            public void update(List<Transmission.Control> controls) {
+                handle.update(controls);
+            }
+
+            @Override
+            public void withdraw() {
+                channels.remove(tracked);
+                handle.withdraw();
+            }
+        };
+    }
+
     /** Swing thread: brings the campaign window up over the hub. */
     private static void showWindow(CampaignGUI window) {
         JFrame frame = window.getFrame();
@@ -355,6 +410,11 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
 
     @Override
     public void ended(@Nullable Throwable failure) {
+        Transmission.unregister(presenter);
+        // A transmission the hub never answered shows as its dialog's window, so its caller stops waiting
+        for (Transmission.Channel channel : List.copyOf(channels)) {
+            channel.fallBack();
+        }
         // Closes the top bar's watch too
         session.close();
         history.close();

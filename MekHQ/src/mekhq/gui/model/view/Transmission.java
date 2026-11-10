@@ -55,7 +55,7 @@ import jakarta.annotation.Nullable;
  * @param image     a picture above the message, or null
  * @param responses the responses, in the order of their choice numbers
  * @param vertical  whether responses stack as rows showing their details, rather than sit side by side
- * @param width     the message column's width as the dialog's window sets it, in its scaled pixels
+ * @param width     the message column's width as the dialog's window sets it, in unscaled pixels
  * @param note      the out-of-character note, or null
  * @param controls  the dialog's extra controls and their labels, in order
  * @param modal     whether the dialog's caller waits for the answer

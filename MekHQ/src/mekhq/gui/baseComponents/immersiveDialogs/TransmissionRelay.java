@@ -32,6 +32,7 @@
  */
 package mekhq.gui.baseComponents.immersiveDialogs;
 
+import static megamek.client.ui.util.UIUtil.scaleForGUI;
 import static mekhq.utilities.MHQInternationalization.getText;
 
 import java.awt.Component;
@@ -274,8 +275,8 @@ final class TransmissionRelay implements Transmission.Channel {
             responses.add(new Transmission.Response(button.btnLabel(), button.btnTooltip()));
         }
         return new Transmission(dialog.getTitle() == null ? "" : dialog.getTitle(), texts, signal, left, right,
-              content.message(), picture(content.image()), responses, content.vertical(), content.width(),
-              content.note(), read(controls), dialog.isModal());
+              content.message(), picture(content.image()), responses, content.vertical(),
+              Math.round(content.width() * 100f / scaleForGUI(100)), content.note(), read(controls), dialog.isModal());
     }
 
     /** {@code icon}'s pixels, or null when there is no icon or it has no size. */
