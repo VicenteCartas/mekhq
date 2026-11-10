@@ -514,45 +514,60 @@ final class StarMapShaders {
               // Light years inside a's ground from its border with b
               float depth = b < 0 ? sa : (sa - sb) * 0.5;
               float lightYears = max(length(fwidth(v_map)) * 0.7071, 1e-4);
+              // Every claimant but a round here, each by how strongly and how near it disputes
+              vec3 rival = vec3(0.0);
+              float rivalry = 0.0;
+              for (int k = 0; k < 8; k++) {
+                  if (a <= 0 || weights[k] <= 0.0 || texels[k].z <= 0) {
+                      continue;
+                  }
+                  int other = texels[k].z == a ? texels[k].x : texels[k].z;
+                  if (other <= 0 || other == a) {
+                      continue;
+                  }
+                  float w = weights[k] * float(texels[k].w) / 32767.0;
+                  rival += colour(other) * w;
+                  rivalry += w;
+              }
+              // Pixels from where the ground turns contested, for the dashed edge round it
+              float rim = abs(rivalry - 0.3) / max(fwidth(rivalry), 1e-4);
+              float contested = smoothstep(0.24, 0.36, rivalry);
               vec4 result;
               if (a > 0) {
                   vec3 hue = colour(a);
                   vec3 fill = hue;
-                  // Every claimant but a round here, each by how strongly and how near it disputes
-                  vec3 rival = vec3(0.0);
-                  float rivalry = 0.0;
-                  for (int k = 0; k < 8; k++) {
-                      if (weights[k] <= 0.0 || texels[k].z <= 0) {
-                          continue;
-                      }
-                      int other = texels[k].z == a ? texels[k].x : texels[k].z;
-                      if (other <= 0 || other == a) {
-                          continue;
-                      }
-                      float w = weights[k] * float(texels[k].w) / 32767.0;
-                      rival += colour(other) * w;
-                      rivalry += w;
-                  }
+                  float alphaUp = 0.0;
                   if (rivalry > 0.005) {
                       rival /= rivalry;
-                      // Stripes about 14 pixels apart however far out: two octaves, crossfaded as the zoom runs
-                      float octave = log2(lightYears * 14.0);
-                      float period = exp2(floor(octave));
-                      float u = dot(v_map, vec2(0.8660254, 0.5));
-                      float s1 = abs(fract(u / period) - 0.5) * 2.0;
-                      float s2 = abs(fract(u / (period * 2.0)) - 0.5) * 2.0;
-                      float soft = lightYears * 2.0;
-                      float st1 = 1.0 - smoothstep(0.5 - soft / period, 0.5 + soft / period, s1);
-                      float st2 = 1.0 - smoothstep(0.5 - soft / (period * 2.0), 0.5 + soft / (period * 2.0), s2);
-                      float stripe = mix(st1, st2, fract(octave));
-                      fill = mix(hue, rival, smoothstep(0.0, 0.7, rivalry) * (0.25 + 0.45 * stripe));
+                      // Bold stripes in each claimant's colour, sliding slowly, about 22 pixels apart however far
+                      // out: as the zoom runs out, every other stripe narrows away and the rest widen to fill in
+                      float octave = log2(lightYears * 22.0);
+                      float period = exp2(floor(octave)) * 2.0;
+                      float t = fract(octave);
+                      float u = dot(v_map, vec2(0.8660254, 0.5)) - u_time * 0.35;
+                      float x = fract(u / period);
+                      float aa = lightYears * 0.8 / period;
+                      float first = smoothstep(-aa, aa, x) - smoothstep(0.25 + 0.25 * t - aa, 0.25 + 0.25 * t + aa, x);
+                      float second = smoothstep(0.5 - aa, 0.5 + aa, x)
+                            - smoothstep(0.75 - 0.25 * t - aa, 0.75 - 0.25 * t + aa, x);
+                      float stripe = clamp(first + second, 0.0, 1.0);
+                      fill = mix(hue, mix(hue, rival, stripe), contested);
+                      alphaUp = contested * (0.16 + 0.08 * stripe);
                   }
                   float drift = 0.85 + 0.15 * sin(dot(v_map, vec2(0.011, 0.007)) * 6.2832 + u_time * 0.4);
                   float glow = exp(-depth / 3.0) * 0.28 + exp(-depth / 16.0) * 0.14;
                   float lit = a == u_spot ? u_spotIn : 0.0;
                   // The realm in the spotlight fills with light; the rest of space draws back from it
                   float shade = u_spot > 0 && a != u_spot ? 1.0 - 0.45 * u_spotIn : 1.0;
-                  result = vec4(fill * (1.0 + 0.25 * lit), ((0.07 + 0.13 * lit) * drift + glow * (1.0 + lit)) * shade);
+                  result = vec4(fill * (1.0 + 0.25 * lit),
+                        ((0.07 + 0.13 * lit) * drift + glow * (1.0 + lit) + alphaUp) * shade);
+                  if (rivalry > 0.1 && rim < 1.4) {
+                      // Dashes about 10 pixels long, by a checker so they break along any heading
+                      vec2 cell = floor(v_map / (lightYears * 10.0));
+                      float dash = mod(cell.x + cell.y, 2.0);
+                      float ink = (1.0 - smoothstep(0.6, 1.4, rim)) * dash;
+                      result = mix(result, vec4(mix(rival, vec3(1.0), 0.35), 0.85 * shade), ink);
+                  }
               } else {
                   // Faded by how much of b's ground is round here, so the glow ends smoothly between texels
                   float near = 0.0;

@@ -298,8 +298,8 @@ final class HubScreen extends ApplicationAdapter {
             }
 
             @Override
-            public void realm(@Nullable Borders.Holding held) {
-                hoverRealm(held);
+            public void realm(@Nullable Borders.Holding held, @Nullable Borders.Holding rival) {
+                hoverRealm(held, rival);
             }
 
             @Override
@@ -1340,7 +1340,7 @@ final class HubScreen extends ApplicationAdapter {
     }
 
     /** Shows what the realm under the cursor holds, in the hover card; none hides it. */
-    private void hoverRealm(@Nullable Borders.Holding held) {
+    private void hoverRealm(@Nullable Borders.Holding held, @Nullable Borders.Holding rival) {
         if (held == null || !mapOpen || overChrome(Gdx.input.getX(), Gdx.input.getY())) {
             if (realmShown) {
                 realmShown = false;
@@ -1356,6 +1356,20 @@ final class HubScreen extends ApplicationAdapter {
         hoverOwner.setText(getFormattedText("HqHub.map.realm.systems", held.systems()));
         hoverOwner.setColor(UiTheme.tokenColor("text.secondary"));
         StringBuilder more = new StringBuilder();
+        if (rival != null) {
+            hoverName.setText(ui.cased("name", getText("HqHub.map.contested")));
+            hoverName.setColor(UiTheme.tokenColor("status.warning"));
+            hoverOwner.setText(getFormattedText("HqHub.map.contested.between", held.name(), rival.name()));
+            hoverOwner.setColor(UiTheme.tokenColor("text.primary"));
+            more.append(getFormattedText("HqHub.map.contested.count", held.name(), held.systems())).append('\n')
+                  .append(getFormattedText("HqHub.map.contested.count", rival.name(), rival.systems()));
+            hoverStats.setText(more);
+            hoverStats.setVisible(true);
+            hoverCard.getCell(hoverStats).height(hoverStats.getPrefHeight());
+            hoverCard.pack();
+            hoverCard.setVisible(true);
+            return;
+        }
         if (held.people() > 0) {
             more.append(getFormattedText("HqHub.map.realm.people", population(held.people())));
         }

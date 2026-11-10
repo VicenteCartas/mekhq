@@ -88,8 +88,11 @@ final class StarMapView {
         /** The player chose {@code star}; null when the click was on empty space. */
         void chosen(@Nullable StarMap.Star star);
 
-        /** The cursor came over {@code held}'s territory, away from any system; null when it left. */
-        default void realm(@Nullable Borders.Holding held) {
+        /**
+         * The cursor came over {@code held}'s territory, away from any system, which {@code rival} disputes when not
+         * null; null when it left.
+         */
+        default void realm(@Nullable Borders.Holding held, @Nullable Borders.Holding rival) {
         }
 
         /**
@@ -239,6 +242,9 @@ final class StarMapView {
     private boolean adminShown;
     private float adminIn;
     private @Nullable Borders.Holding spotHeld;
+    private @Nullable Borders.Holding spotRival;
+    /** How strongly ground must be disputed for the hover card to call it contested; the stripes start here too. */
+    private static final float DISPUTED_ABOVE = 0.3f;
     /** The tilt the camera is easing to, in degrees; NaN when it isn't. */
     private float wantedPitch = Float.NaN;
     /** The systems as {@link #territory}'s date had them, in the map's order; the map's own until it is read. */
@@ -1363,6 +1369,7 @@ final class StarMapView {
         Borders showing = territory.shown();
         int wanted = 0;
         Borders.Holding held = null;
+        Borders.Holding rival = null;
         StarMap.Star over = star(hovered);
         // Over a system the realm it lies in lights up too, but the card stays the system's
         boolean atStar = over != null;
@@ -1377,14 +1384,20 @@ final class StarMapView {
                 if (held == null) {
                     wanted = 0;
                 }
+                int partner = land.partner(column, row);
+                if (held != null && partner > 0 && partner != wanted && land.dispute(column, row) >= DISPUTED_ABOVE) {
+                    rival = showing.holding(partner - 1);
+                }
             }
         }
         if (atStar) {
             held = null;
+            rival = null;
         }
-        if (!Objects.equals(held, spotHeld)) {
+        if (!Objects.equals(held, spotHeld) || !Objects.equals(rival, spotRival)) {
             spotHeld = held;
-            listener.realm(held);
+            spotRival = rival;
+            listener.realm(held, rival);
         }
         spotWanted = wanted;
         if (spot == spotWanted) {
