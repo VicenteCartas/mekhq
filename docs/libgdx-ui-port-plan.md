@@ -163,14 +163,29 @@ Each phase ships something playable and keeps everything else reachable through 
        `Borders.Realms` numbers realms the same on every date.
      - `BorderHistory` reads dates on a worker thread with an LRU cache and prefetch; the newest
        date asked for wins, so a frame never waits. It is invalidated when the systems change.
-     - `TerritoryField` splats the claims into float framebuffers, four realms per pass, and keeps
-       the two strongest realms per 4 ly texel. The territory shader interpolates fields realm by
-       realm and morphs one date's into the next over 0.6 s, so borders sweep, not fade.
+     - `InfluenceMap` (in `mekhq.campaign.universe.territory`) spreads the claims into a 4 ly grid
+       off the GPU thread: per texel, its holder, the distance to their edge, and any dispute.
+       `TerritoryField` uploads it as an integer texture. The territory shader interpolates
+       reaches realm by realm and morphs one date's land into the next over 0.6 s, so borders
+       sweep, not fade.
      - `TimeScrubber` is the timeline; `HubScreen` hosts it.
      - The Swing map's territory logic moved to `mekhq.campaign.universe.territory`
        (`TerritoryGrid` and friends). `InterstellarMapPanel` uses it unchanged in behaviour.
-     - Polish to come: depth and parallax for the regions, capital glows, and realm names
-       across their territory.
+     - Game-map layer, reimagining the Swing map's overlays for 3D:
+       - Lenses (key L) recolour the systems by a property and raise data pillars when the
+         camera tilts, which it does on its own when a lens comes on; a legend counts each level.
+       - Realm names in wide capitals across their territory, with the faction's emblem under
+         them; system names give way by rank and fade rather than pop.
+       - Capital beacons (realm and region), an animated HPG backbone (H), and the force's jump
+         reach as a wave spreading jump by jump (J).
+       - Administrative regions (R) drawn where a realm's regions meet, read as the Swing map
+         reads them; empty systems can be hidden (E).
+       - Hovering a realm spotlights it and shows its holdings card (systems, people, capital).
+       - Shift-drag measures distance in light years and jumps; Esc clears it.
+       - Right-click opens a context menu (details, measure from the force, centre, zoom, today).
+       - Deep-sky backdrop with nebulae and a starfield, a scale bar, and operation and base
+         markers that stay visible zoomed out.
+     - Still to come: bloom.
   4. **Pins.** Contracts and markets on their systems.
 
 **Phase 2: the game loop**
