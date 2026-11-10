@@ -181,6 +181,7 @@ final class HoloShaders {
           uniform vec3 u_camera;
           uniform float u_pixels;
           uniform float u_time;
+          uniform float u_intensity;
           out vec4 v_colour;
           void main() {
               vec4 world = u_model * vec4(a_position, 1.0);
@@ -189,7 +190,7 @@ final class HoloShaders {
               float twinkle = 0.82 + 0.18 * sin(u_time * (1.3 + fract(phase * 7.1)) + phase * 40.0);
               // A scan band climbs the hologram, brightening what it passes
               float band = exp(-pow((fract(u_time * 0.2) * 0.12 - 0.06 - (world.y - u_model[3].y)) * 70.0, 2.0));
-              v_colour = vec4(a_color.rgb * (twinkle + band * 1.5), a_color.a);
+              v_colour = vec4(a_color.rgb * (twinkle + band * 1.5) * u_intensity, a_color.a);
               gl_Position = u_projView * world;
               gl_PointSize = clamp(size * u_pixels / max(length(u_camera - world.xyz), 0.1), 1.5, 40.0);
           }
@@ -270,6 +271,24 @@ final class HoloShaders {
                   light = ((1.0 - h) * (1.0 - h) * 0.2 * scan + exp(-h * 30.0) * 0.15) * mix(1.0, 0.3, above);
               }
               fragColor = vec4(u_colour * light * u_intensity, 1.0);
+          }
+          """;
+
+    /** A full-screen fill in display space: the room fading into the star map's dark as the camera dives. */
+    static final String VEIL_VERTEX = """
+          #version 330 core
+          in vec2 a_position;
+          void main() {
+              gl_Position = vec4(a_position, 0.0, 1.0);
+          }
+          """;
+
+    static final String VEIL_FRAGMENT = """
+          #version 330 core
+          uniform vec4 u_colour;
+          out vec4 fragColor;
+          void main() {
+              fragColor = u_colour;
           }
           """;
 }
