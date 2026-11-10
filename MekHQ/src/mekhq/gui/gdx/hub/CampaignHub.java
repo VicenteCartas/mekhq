@@ -122,6 +122,8 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
     private @Nullable CampaignGUI gui;
     /** The channels of the transmissions the hub shows or queues, so they can fall back to windows as it ends. */
     private final Set<Transmission.Channel> channels = ConcurrentHashMap.newKeySet();
+    /** Of those, the ones whose callers wait for the answer, which hold the hub as a modal Swing dialog would. */
+    private final Set<Transmission.Channel> waiting = ConcurrentHashMap.newKeySet();
     /** Swing thread: shows the campaign's immersive dialogs over the hub while it is in front. */
     private final Transmission.Presenter presenter = this::present;
     /** The screens the campaign has, as the rail last heard them. */
@@ -322,17 +324,20 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
 
             @Override
             public void answer(int choice, boolean responded) {
-                channels.remove(this);
+                forget(this);
                 channel.answer(choice, responded);
             }
 
             @Override
             public void fallBack() {
-                channels.remove(this);
+                forget(this);
                 channel.fallBack();
             }
         };
         channels.add(tracked);
+        if (transmission.modal()) {
+            waiting.add(tracked);
+        }
         Transmission.Handle handle = screen.transmit(transmission, tracked);
         return new Transmission.Handle() {
             @Override
@@ -342,10 +347,15 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
 
             @Override
             public void withdraw() {
-                channels.remove(tracked);
+                forget(tracked);
                 handle.withdraw();
             }
         };
+    }
+
+    private void forget(Transmission.Channel channel) {
+        channels.remove(channel);
+        waiting.remove(channel);
     }
 
     /** Swing thread: brings the campaign window up over the hub. */
@@ -402,6 +412,9 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
         SwingUtilities.invokeLater(() -> {
             if (dialogs.blocked()) {
                 dialogs.frontModal();
+            } else if (!waiting.isEmpty()) {
+                // A caller waits on a transmission's answer, part way through its work: answer it first
+                GpuHost.focus();
             } else if (!leaving.get()) {
                 app.exit(true);
             }
