@@ -86,6 +86,99 @@ final class StarMapShaders {
           }
           """;
 
+    /** A star of the deep sky: a_texCoord0 is (its brightness, a phase for its tint and twinkle). */
+    static final String BACKDROP_STAR_VERTEX = """
+          #version 330 core
+          in vec3 a_position;
+          in vec2 a_texCoord0;
+          uniform mat4 u_projView;
+          uniform float u_fade;
+          uniform float u_time;
+          uniform float u_scale;
+          out vec3 v_colour;
+          void main() {
+              float bright = a_texCoord0.x;
+              float phase = a_texCoord0.y;
+              vec3 tint = mix(vec3(0.70, 0.80, 1.0), vec3(1.0, 0.82, 0.62), smoothstep(0.7, 1.0, phase));
+              float twinkle = 0.8 + 0.2 * sin(u_time * (0.6 + phase) + phase * 61.0);
+              v_colour = tint * bright * twinkle * 1.1 * u_fade;
+              gl_Position = u_projView * vec4(a_position, 1.0);
+              gl_PointSize = (1.6 + bright * 2.8) * u_scale;
+          }
+          """;
+
+    static final String BACKDROP_STAR_FRAGMENT = """
+          #version 330 core
+          in vec3 v_colour;
+          out vec4 fragColor;
+          void main() {
+              float r = length(gl_PointCoord - 0.5) * 2.0;
+              float light = exp(-r * r * 5.0);
+              if (light < 0.01) {
+                  discard;
+              }
+              fragColor = vec4(v_colour * light, 1.0);
+          }
+          """;
+
+    /** The nebulae's plane, deep beneath the map: v_world is where on it, spinward and rimward. */
+    static final String NEBULA_VERTEX = """
+          #version 330 core
+          in vec3 a_position;
+          uniform mat4 u_projView;
+          out vec2 v_world;
+          void main() {
+              v_world = a_position.xz;
+              gl_Position = u_projView * vec4(a_position, 1.0);
+          }
+          """;
+
+    /**
+     * Dim drifting clouds of violet and teal gas, veined with dust, over a warm glow that grows coreward (-z), where
+     * the galaxy's heart lies.
+     */
+    static final String NEBULA_FRAGMENT = """
+          #version 330 core
+          in vec2 v_world;
+          uniform float u_fade;
+          uniform float u_time;
+          out vec4 fragColor;
+          float hash(vec2 p) {
+              return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+          }
+          float noise(vec2 p) {
+              vec2 i = floor(p);
+              vec2 f = fract(p);
+              vec2 u = f * f * (3.0 - 2.0 * f);
+              return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
+                         mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+          }
+          float fbm(vec2 p) {
+              float v = 0.0;
+              float a = 0.5;
+              for (int i = 0; i < 5; i++) {
+                  v += a * noise(p);
+                  p = p * 2.03 + vec2(17.1, 9.2);
+                  a *= 0.5;
+              }
+              return v;
+          }
+          void main() {
+              vec2 p = v_world / 2400.0;
+              vec2 warp = vec2(fbm(p + vec2(0.0, u_time * 0.003)), fbm(p + vec2(5.2, 1.3 - u_time * 0.002)));
+              float n = fbm(p * 1.4 + warp * 1.7);
+              float clouds = smoothstep(0.42, 0.9, n);
+              float dust = smoothstep(0.55, 0.8, fbm(p * 3.3 + warp * 2.0));
+              vec3 violet = vec3(0.16, 0.06, 0.30);
+              vec3 teal = vec3(0.03, 0.16, 0.24);
+              vec3 gas = mix(teal, violet, smoothstep(0.35, 0.65, warp.x)) * clouds * (1.0 - dust * 0.6);
+              float core = smoothstep(3000.0, -11000.0, v_world.y);
+              vec3 heart = vec3(1.0, 0.72, 0.45) * core * core * 0.35 * (0.7 + 0.3 * n);
+              float edge = 1.0 - smoothstep(7000.0, 11500.0, length(v_world));
+              fragColor = vec4((gas + heart) * 0.36 * edge * u_fade, 1.0);
+          }
+          """;
+
     /** A marker ring: a_texCoord0 is (its size in pixels, how much it pulses). */
     static final String RING_VERTEX = """
           #version 330 core

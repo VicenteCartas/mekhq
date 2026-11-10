@@ -164,6 +164,7 @@ final class StarMapView {
     private @Nullable LocalDate era;
     /** The realms' territory on the date shown, once its borders are read. */
     private final TerritoryField territory = new TerritoryField();
+    private final Backdrop backdrop = new Backdrop();
     /** The systems as {@link #territory}'s date had them, in the map's order; the map's own until it is read. */
     private List<StarMap.Star> shown = List.of();
     private @Nullable Mesh stars;
@@ -426,11 +427,12 @@ final class StarMapView {
         lineShader = HoloTableView.compile(StarMapShaders.LINE_VERTEX, StarMapShaders.LINE_FRAGMENT);
         routeShader = HoloTableView.compile(StarMapShaders.ROUTE_VERTEX, StarMapShaders.ROUTE_FRAGMENT);
         territory.create();
+        backdrop.create();
         grid = grid();
         rings = new Mesh(false, 64, 0, pointAttributes());
         camera = new PerspectiveCamera(FIELD_OF_VIEW, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         camera.near = 1;
-        camera.far = MAX_DISTANCE * 3;
+        camera.far = MAX_DISTANCE * 5;
         aim();
     }
 
@@ -479,6 +481,9 @@ final class StarMapView {
         Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
         Gdx.gl.glDisable(GL20.GL_CULL_FACE);
         Gdx.gl.glEnable(GL20.GL_BLEND);
+        backdrop.render(camera, fade, time, Gdx.graphics.getBackBufferHeight() / (float) Math.max(1,
+              Gdx.graphics.getHeight()));
+        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         territory.render(camera.combined, fade, time);
         Gdx.gl.glBlendFunc(GL20.GL_ONE, GL20.GL_ONE);
 
@@ -673,7 +678,7 @@ final class StarMapView {
 
     void dispose() {
         for (Disposable resource : new Disposable[] { starShader, ringShader, lineShader, routeShader,
-              stars, lines, route, preview, grid, rings, territory }) {
+              stars, lines, route, preview, grid, rings, territory, backdrop }) {
             if (resource != null) {
                 resource.dispose();
             }

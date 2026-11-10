@@ -74,6 +74,8 @@ final class StarLabels implements Disposable {
     private final Color tint = new Color();
     /** The boxes written this frame: x, y, right, top. */
     private final FloatArray placed = new FloatArray();
+    /** The realms' names written this frame, which only the most prominent system names may overlap. */
+    private final FloatArray realms = new FloatArray();
 
     StarLabels(UiTheme theme) {
         for (int i = 0; i < SIZES.length; i++) {
@@ -86,6 +88,7 @@ final class StarLabels implements Disposable {
     /** Writes {@code view}'s names over the stage {@code stage} draws to. */
     void draw(StarMapView view, Stage stage) {
         placed.clear();
+        realms.clear();
         batch.setProjectionMatrix(stage.getCamera().combined);
         batch.begin();
         view.realmNames((name, rgb, x, y, span, alpha) -> realm(stage, name, rgb, x, y, span, alpha));
@@ -120,6 +123,9 @@ final class StarLabels implements Disposable {
         float left = at.x - width / 2;
         // Below the realm's central system, clear of its capital's name
         float top = at.y - REALM_SIZE * 1.3f;
+        if (strength > 0.3f) {
+            realms.addAll(left, top - REALM_SIZE, left + width, top);
+        }
         for (int i = 0; i < text.length(); i++) {
             layout.setText(realmFont, text, i, i + 1, tint, 0, Align.left, false, null);
             realmFont.draw(batch, layout, left, top);
@@ -140,11 +146,8 @@ final class StarLabels implements Disposable {
         float top = at.y + OFFSET_Y + layout.height;
         float right = left + layout.width;
         float bottom = top - layout.height;
-        boolean free = wanted;
-        for (int i = 0; free && i < placed.size; i += 4) {
-            free = !(left < placed.get(i + 2) + GAP && right + GAP > placed.get(i) && bottom < placed.get(i + 3) + GAP
-                  && top + GAP > placed.get(i + 1));
-        }
+        boolean free = wanted && clear(placed, left, bottom, right, top) && (tier <= 1 || clear(realms, left, bottom,
+              right, top));
         if (free) {
             placed.addAll(left, bottom, right, top);
         }
@@ -164,6 +167,17 @@ final class StarLabels implements Disposable {
         font.setColor(tint);
         font.draw(batch, star.name(), left, top);
         return free;
+    }
+
+    /** Whether the box from (left, bottom) to (right, top) keeps clear of every box in {@code boxes}. */
+    private static boolean clear(FloatArray boxes, float left, float bottom, float right, float top) {
+        for (int i = 0; i < boxes.size; i += 4) {
+            if (left < boxes.get(i + 2) + GAP && right + GAP > boxes.get(i) && bottom < boxes.get(i + 3) + GAP
+                  && top + GAP > boxes.get(i + 1)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
