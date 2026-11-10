@@ -68,14 +68,15 @@ Campaign (domain, EDT-owned)  <--  Commands (EDT)  <--  GL screens (GPU thread)
 
 The 12 tabs and the menu bar are replaced by three things that work together:
 
-- **HQ hub (home).** The command-post art from the start screen, with clickable parts: the
-  monitors open the star map, the hangar door opens the hangar, the briefing table opens contracts,
-  and so on. The day starts here, and it's where you return to.
+- **HQ hub (home).** A 3D command post: a holotable in a dim room, projecting the star map
+  around the force, with the campaign's top bar (date, location, funds, alerts) over it. The day
+  starts here, and it's where you return to. It replaced an earlier idea of making the start
+  screen's command-post art clickable.
 - **Nav rail.** A slim, always-visible bar with an icon for each area (Command, Map, Forces,
-  Roster, Hangar, Logistics, Finances), with hotkeys 1-9. It's for fast travel during long
-  campaigns.
+  Roster, Hangar, Logistics, Finances), with hotkeys 1-7. It's for fast travel during long
+  campaigns. An area with several screens opens a flyout listing them.
 - **Command palette.** Ctrl+K, type ("repair", "hire", a person's name) and jump there. It covers
-  everything the menu bar does today.
+  everything the menu bar does today: screens, people, units and the menu items.
 
 ## Order of work
 
@@ -93,6 +94,11 @@ Each phase ships something playable and keeps everything else reachable through 
     event bus and runs the Swing and GPU threads as queues by hand.
 - MekHQ: the campaign shell scene: a top bar (date, funds, location, alerts), the HQ hub, the nav
   rail and the command palette. Every destination still opens the Swing tab for now.
+  - In `mekhq.gui.gdx.hub`: `CampaignHub` opens from the start screen's HQ (Experimental) entry.
+    It builds the campaign window hidden, shows it on the tab the rail or palette asks for, and
+    hides it again when its close box is clicked. Menu items run from the palette with their
+    dialogs over the hub. `HubArea` maps the rail's areas to the tabs, and `PaletteIndex` and
+    `PaletteSearch` gather and rank the palette's entries.
 
 **Phase 1: the star map**
 - The 3D interstellar map grows out of the start screen's star map. It replaces the 10k-line

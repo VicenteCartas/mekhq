@@ -34,18 +34,24 @@ package mekhq.gui.gdx.hub;
 
 import static mekhq.utilities.MHQInternationalization.getFormattedText;
 
+import java.awt.Frame;
 import java.awt.GraphicsEnvironment;
 import java.io.File;
 import java.nio.file.Path;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.swing.JFrame;
+import javax.swing.JMenuItem;
 import javax.swing.SwingUtilities;
 
 import com.badlogic.gdx.ApplicationListener;
 import jakarta.annotation.Nullable;
 import megamek.client.ui.clientGUI.GUIPreferences;
 import megamek.client.ui.clientGUI.boardview.gpu.GpuHost;
+import megamek.client.ui.clientGUI.boardview.gpu.GpuSceneDialogs;
 import megamek.client.ui.clientGUI.boardview.gpu.GpuStartWindow;
 import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent.StarChart;
 import megamek.client.ui.gdx.DisplayScale;
@@ -55,16 +61,20 @@ import mekhq.MekHQ;
 import mekhq.campaign.AbstractLocation;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.universe.PlanetarySystem;
+import mekhq.gui.CampaignGUI;
 import mekhq.gui.StartStarChart;
+import mekhq.gui.enums.MHQTabType;
 import mekhq.gui.model.view.CampaignSession;
 import mekhq.gui.model.view.TopBar;
 
 /**
  * The campaign's command post in the native window (docs/libgdx-ui-port-plan.md), which the start screen's HQ
- * (Experimental) entry opens a loaded campaign in. It only shows the campaign for now: Classic View or Esc hands the
- * campaign to its Swing window, and closing the window quits MekHQ.
+ * (Experimental) entry opens a loaded campaign in. Its rail and command palette open the campaign window, built hidden
+ * as the hub opens, on the screen, person or unit asked for, and run the window's menu items with their dialogs over the
+ * hub; the window's close box hides it again. Classic View or Esc leaves the hub for the campaign window, and closing
+ * the hub quits MekHQ, asking to save first.
  */
-public final class CampaignHub implements GpuHost.Scene {
+public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
     private static final MMLogger LOGGER = MMLogger.create(CampaignHub.class);
     static final Path TABLE = Path.of("data", "models", "hq", "holotable.glb");
     private static final String FACTIONS = "data/universe/factions";
@@ -73,25 +83,43 @@ public final class CampaignHub implements GpuHost.Scene {
 
     private final MekHQ app;
     private final Campaign campaign;
-    /** The start screen's hidden owner; it keeps Swing, and so MekHQ, running while only the native window shows. */
-    private final JFrame anchor;
     private final CampaignSession session;
     private final HubScreen screen;
     private final String title;
     private final AtomicBoolean leaving = new AtomicBoolean();
+    private final GpuSceneDialogs dialogs = new GpuSceneDialogs(new GpuSceneDialogs.Host() {
+        @Override
+        public @Nullable JFrame frame() {
+            CampaignGUI shown = gui;
+            return shown != null && !shown.getFrame().isVisible() ? shown.getFrame() : null;
+        }
 
-    private CampaignHub(MekHQ app, Campaign campaign, JFrame anchor, @Nullable StarChart chart, float scale) {
+        @Override
+        public void inputBlocked(boolean blocked) {
+            screen.blocked(blocked);
+        }
+
+        @Override
+        public boolean closing() {
+            return leaving.get();
+        }
+    });
+    /** Swing thread: the campaign window, hidden while the player stays in the hub; null until the hub opens. */
+    private @Nullable CampaignGUI gui;
+    /** The screens the campaign has, as the rail last heard them. */
+    private volatile Set<MHQTabType> screens = EnumSet.allOf(MHQTabType.class);
+
+    private CampaignHub(MekHQ app, Campaign campaign, @Nullable StarChart chart, float scale) {
         this.app = app;
         this.campaign = campaign;
-        this.anchor = anchor;
         title = getFormattedText("HqHub.windowTitle", campaign.getPlayerForce().getName());
         session = new CampaignSession(campaign);
-        screen = new HubScreen(TABLE, chart, campaign.getPlayerForce().getName(), scale, this::leave);
+        screen = new HubScreen(TABLE, chart, campaign.getPlayerForce().getName(), scale, this);
     }
 
     /**
      * EDT: shows {@code campaign}, just loaded over the start screen, in the command post in place of the start screen;
-     * {@code anchor} is the start screen's hidden owner, disposed as the campaign window takes over.
+     * {@code anchor} is the start screen's hidden owner, disposed once the hidden campaign window keeps MekHQ running.
      */
     public static void open(MekHQ app, Campaign campaign, JFrame anchor) {
         String date = campaign.getLocalDate().toString();
@@ -102,11 +130,20 @@ public final class CampaignHub implements GpuHost.Scene {
                 LOGGER.warn("The command post has no star chart: {}", failure.getMessage());
             }
             SwingUtilities.invokeLater(() -> {
-                CampaignHub hub = new CampaignHub(app, campaign, anchor, chart, scale);
-                // The hub replaces the start screen in the same window, which then stays open only for the hub
+                CampaignHub hub = new CampaignHub(app, campaign, chart, scale);
+                hub.dialogs.install();
+                // The hub replaces the start screen in the same window
                 GpuHost.show(hub);
                 GpuStartWindow.uninstall(() -> { });
+                app.activateCampaign(campaign, false);
+                hub.gui = app.getCampaigngui();
+                hub.gui.setCloseAction(hub::hideWindow);
+                anchor.dispose();
                 hub.session.watch(TopBar.model(), hub.screen::show);
+                hub.session.watch(HubArea.screens(), shown -> {
+                    hub.screens = shown;
+                    hub.screen.screens(shown);
+                });
             });
         });
     }
@@ -132,6 +169,76 @@ public final class CampaignHub implements GpuHost.Scene {
               .getDefaultConfiguration().getDefaultTransform().getScaleX();
     }
 
+    @Override
+    public void go(PaletteEntry.Target target) {
+        if (target instanceof PaletteEntry.Classic) {
+            leave();
+            return;
+        }
+        SwingUtilities.invokeLater(() -> {
+            CampaignGUI window = gui;
+            if (leaving.get() || window == null || dialogs.blocked()) {
+                return;
+            }
+            switch (target) {
+                case PaletteEntry.Screen screenTarget -> {
+                    window.setSelectedTab(screenTarget.tab());
+                    showWindow(window);
+                }
+                case PaletteEntry.PersonTarget person -> {
+                    window.focusOnPerson(person.id());
+                    showWindow(window);
+                }
+                case PaletteEntry.UnitTarget unit -> {
+                    window.focusOnUnit(unit.id());
+                    showWindow(window);
+                }
+                case PaletteEntry.MenuItem menu -> {
+                    // The item's dialogs open over the hub, owned by the hidden window
+                    JMenuItem item = PaletteIndex.menuItem(window.getFrame().getJMenuBar(), menu);
+                    if (item != null) {
+                        item.doClick(0);
+                    }
+                }
+                case PaletteEntry.Classic classic -> leave();
+            }
+        });
+    }
+
+    @Override
+    public void palette() {
+        session.dispatch(current -> {
+            CampaignGUI window = gui;
+            List<PaletteEntry> entries = PaletteIndex.build(current, screens,
+                  window == null ? null : window.getFrame().getJMenuBar());
+            GpuHost.post(() -> screen.palette(entries));
+        });
+    }
+
+    @Override
+    public void disposed() {
+        dialogs.released();
+    }
+
+    /** Swing thread: brings the campaign window up over the hub. */
+    private static void showWindow(CampaignGUI window) {
+        JFrame frame = window.getFrame();
+        if ((frame.getExtendedState() & Frame.ICONIFIED) != 0) {
+            frame.setExtendedState(frame.getExtendedState() & ~Frame.ICONIFIED);
+        }
+        frame.setVisible(true);
+        frame.toFront();
+    }
+
+    /** Swing thread, from the campaign window's close box: back to the hub. */
+    private void hideWindow() {
+        CampaignGUI window = gui;
+        if (window != null) {
+            window.getFrame().setVisible(false);
+        }
+        GpuHost.focus();
+    }
+
     /** Any thread: leaves the command post for the campaign's Swing window. */
     private void leave() {
         if (leaving.compareAndSet(false, true)) {
@@ -150,9 +257,27 @@ public final class CampaignHub implements GpuHost.Scene {
     }
 
     @Override
+    public void started(long windowHandle) {
+        dialogs.started(windowHandle);
+        SwingUtilities.invokeLater(dialogs::presented);
+    }
+
+    @Override
+    public void focusGained() {
+        if (dialogs.blocked()) {
+            SwingUtilities.invokeLater(dialogs::frontModal);
+        }
+    }
+
+    @Override
     public void closeRequested() {
-        // The hub changes nothing, so there is nothing to save
-        SwingUtilities.invokeLater(() -> app.exit(false));
+        SwingUtilities.invokeLater(() -> {
+            if (dialogs.blocked()) {
+                dialogs.frontModal();
+            } else if (!leaving.get()) {
+                app.exit(true);
+            }
+        });
     }
 
     @Override
@@ -163,8 +288,14 @@ public final class CampaignHub implements GpuHost.Scene {
             LOGGER.error(failure, "The command post failed; opening the campaign window");
         }
         SwingUtilities.invokeLater(() -> {
-            anchor.dispose();
-            app.activateCampaign(campaign);
+            dialogs.uninstall();
+            CampaignGUI window = gui;
+            if (window == null) {
+                app.activateCampaign(campaign);
+            } else {
+                window.setCloseAction(null);
+                showWindow(window);
+            }
         });
     }
 }
