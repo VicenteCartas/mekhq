@@ -280,6 +280,10 @@ public final class StarMapSnapshots {
         }
 
         @Override
+        public void dossier(String id) {
+        }
+
+        @Override
         public void cancelTrip() {
         }
 

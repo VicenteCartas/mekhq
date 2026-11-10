@@ -70,6 +70,7 @@ import mekhq.gui.enums.MHQTabType;
 import mekhq.gui.model.view.Borders;
 import mekhq.gui.model.view.CampaignSession;
 import mekhq.gui.model.view.StarMap;
+import mekhq.gui.model.view.SystemDossier;
 import mekhq.gui.model.view.TopBar;
 
 /**
@@ -264,6 +265,16 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
                 BeginTransit.begin(current, path, StarMap.assess(current, path));
             }
             system(id);
+        });
+    }
+
+    @Override
+    public void dossier(String id) {
+        session.dispatch(current -> {
+            SystemDossier read = SystemDossier.read(current, id);
+            if (read != null) {
+                GpuHost.post(() -> screen.dossier(read));
+            }
         });
     }
 

@@ -60,10 +60,12 @@ import com.badlogic.gdx.scenes.scene2d.InputEvent;
 import com.badlogic.gdx.scenes.scene2d.InputListener;
 import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.scenes.scene2d.Touchable;
+import com.badlogic.gdx.scenes.scene2d.actions.Actions;
 import com.badlogic.gdx.scenes.scene2d.ui.Cell;
 import com.badlogic.gdx.scenes.scene2d.ui.Container;
 import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
+import com.badlogic.gdx.scenes.scene2d.ui.ScrollPane;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
 import com.badlogic.gdx.scenes.scene2d.ui.TextField;
 import com.badlogic.gdx.scenes.scene2d.utils.ClickListener;
@@ -86,6 +88,7 @@ import mekhq.gui.enums.MHQTabType;
 import mekhq.gui.model.view.Borders;
 import mekhq.gui.model.view.MapLens;
 import mekhq.gui.model.view.StarMap;
+import mekhq.gui.model.view.SystemDossier;
 import mekhq.gui.model.view.TopBar;
 
 /**
@@ -107,6 +110,9 @@ final class HubScreen extends ApplicationAdapter {
     private static final int RESULTS = 12;
     private static final float PALETTE_WIDTH = 560;
     private static final float DETAIL_WIDTH = 320;
+    private static final float DOSSIER_WIDTH = 460;
+    /** The socio-industrial ratings, in the order a world's record lists them. */
+    private static final List<String> INDUSTRY = List.of("tech", "industry", "materials", "output", "agriculture");
     private static final float SEARCH_WIDTH = 300;
     /** Seconds the cancel-trip button waits for its confirming second press. */
     private static final float CANCEL_WINDOW = 3;
@@ -156,6 +162,9 @@ final class HubScreen extends ApplicationAdapter {
 
         /** Abandons the course the force is following, leaving it where it is. */
         void cancelTrip();
+
+        /** Reads the full record of the system {@code id}, for {@link HubScreen#dossier}. */
+        void dossier(String id);
 
         /** The screen's listener is being disposed. */
         void disposed();
@@ -224,6 +233,12 @@ final class HubScreen extends ApplicationAdapter {
     private int scaleShown;
     private Table detailLayer;
     private Table detail;
+    /** The chosen system's full record, beside its card, while asked for. */
+    private Table dossierPanel;
+    private boolean dossierOpen;
+    private @Nullable SystemDossier dossierShown;
+    private int dossierWorld;
+    private UiButton dossierButton;
     private Table hoverCard;
     private Label hoverStats;
     private Table rulerCard;
@@ -540,6 +555,8 @@ final class HubScreen extends ApplicationAdapter {
                 mapMenu.cancel();
             } else if (mapOpen && map.clearRuler()) {
                 rulerCard.setVisible(false);
+            } else if (mapOpen && dossierOpen) {
+                showDossier(false);
             } else if (mapOpen && map.chosen() != null) {
                 map.clearChoice();
             } else if (mapOpen) {
@@ -1106,16 +1123,22 @@ final class HubScreen extends ApplicationAdapter {
         detailLayer = new Table();
         detailLayer.setFillParent(true);
         detailLayer.top().right().padRight(space("xxl")).padTop(space("xxl") * 4);
-        detail = ui.panel(true);
-        detail.setTouchable(Touchable.enabled);
-        // The panel takes its own clicks, so they don't choose the systems behind it
-        detail.addListener(new InputListener() {
+        // The panels take their own clicks, so they don't choose the systems behind them
+        InputListener keep = new InputListener() {
             @Override
             public boolean touchDown(InputEvent event, float x, float y, int pointer, int button) {
                 return true;
             }
-        });
-        detailLayer.add(detail).width(DETAIL_WIDTH);
+        };
+        dossierPanel = ui.panel(true);
+        dossierPanel.setTouchable(Touchable.enabled);
+        dossierPanel.addListener(keep);
+        dossierPanel.setVisible(false);
+        detailLayer.add(dossierPanel).width(DOSSIER_WIDTH).top().padRight(space("lg"));
+        detail = ui.panel(true);
+        detail.setTouchable(Touchable.enabled);
+        detail.addListener(keep);
+        detailLayer.add(detail).width(DETAIL_WIDTH).top();
         detailLayer.setVisible(false);
         return detailLayer;
     }
@@ -1347,12 +1370,16 @@ final class HubScreen extends ApplicationAdapter {
         if (star == null) {
             detailId = null;
             detailLayer.setVisible(false);
+            showDossier(false);
             return;
         }
         detailId = star.id();
         fillDetail(star, null);
         detailLayer.setVisible(true);
         hub.system(star.id());
+        if (dossierOpen) {
+            showDossier(true);
+        }
     }
 
     /** Fills the detail panel for {@code star}; {@code read} null while the hub reads it. */
@@ -1415,12 +1442,146 @@ final class HubScreen extends ApplicationAdapter {
         UiKit.onChange(plot, () -> hub.go(new PaletteEntry.Screen(MHQTabType.NAVIGATION)));
         actions.add(plot);
         detail.add(actions).padTop(space("md")).row();
+        dossierButton = ui.button("button-secondary", "info",
+              getText(dossierOpen ? "HqHub.map.dossier.hide" : "HqHub.map.dossier.show"), null);
+        UiKit.onChange(dossierButton, () -> showDossier(!dossierOpen));
+        detail.add(dossierButton).left().fill(false, false).padTop(space("sm")).row();
         if (course != null && course.state() != StarMap.Departure.READY) {
             Label why = ui.caption(getText("HqHub.map.departure." + course.state().name()), true);
             why.setWrap(true);
             detail.add(why).padTop(space("xs")).row();
         }
         detail.add(ui.caption(getText("HqHub.map.close"), true)).padTop(space("sm"));
+    }
+
+    /** Opens the chosen system's full record beside its card and asks the hub for it, or closes it. */
+    private void showDossier(boolean open) {
+        dossierOpen = open && detailId != null;
+        if (dossierButton != null) {
+            dossierButton.setText(getText(dossierOpen ? "HqHub.map.dossier.hide" : "HqHub.map.dossier.show"));
+        }
+        if (!dossierOpen) {
+            dossierShown = null;
+            dossierPanel.setVisible(false);
+            return;
+        }
+        dossierShown = null;
+        fillDossier();
+        dossierPanel.setVisible(true);
+        dossierPanel.getColor().a = 0;
+        dossierPanel.clearActions();
+        dossierPanel.addAction(Actions.fadeIn(0.18f));
+        hub.dossier(detailId);
+    }
+
+    /** The full record of a system the player asked about. */
+    void dossier(SystemDossier read) {
+        if (dossierOpen && read.id().equals(detailId)) {
+            dossierShown = read;
+            dossierWorld = Math.max(0, read.primary());
+            fillDossier();
+        }
+    }
+
+    /** Fills the record panel: the system, then the world picked from its tabs, section by section. */
+    private void fillDossier() {
+        dossierPanel.clearChildren();
+        dossierPanel.defaults().left().growX();
+        dossierPanel.add(ui.caption(getText("HqHub.map.dossier.title"), true)).row();
+        SystemDossier read = dossierShown;
+        if (read == null) {
+            Table waiting = new Table();
+            ui.empty(waiting, getText("HqHub.map.reading"), true);
+            dossierPanel.add(waiting).padTop(space("sm"));
+            return;
+        }
+        Table body = new Table();
+        body.top().left();
+        body.defaults().left().growX();
+        dossierSection(body, "system", read.system());
+        if (!read.academies().isEmpty()) {
+            dossierText(body, "academies", String.join(", ", read.academies()), "text.primary");
+        }
+        if (!read.diseases().isEmpty()) {
+            dossierText(body, "diseases", String.join(", ", read.diseases()), "status.warning");
+        }
+        if (!read.worlds().isEmpty()) {
+            int index = Math.min(dossierWorld, read.worlds().size() - 1);
+            if (read.worlds().size() > 1) {
+                String[] names = read.worlds().stream().map(SystemDossier.World::name).toArray(String[]::new);
+                UiKit.Segmented tabs = ui.segmented("hud-tab", false, names);
+                for (int i = 0; i < tabs.buttons.size(); i++) {
+                    int picked = i;
+                    UiKit.onChange(tabs.buttons.get(i), () -> {
+                        dossierWorld = picked;
+                        fillDossier();
+                    });
+                }
+                tabs.select(index);
+                tabs.left();
+                body.add(ui.scrollStrip(tabs)).padTop(space("lg")).row();
+            }
+            SystemDossier.World world = read.worlds().get(index);
+            Label name = ui.roleTypeLabel("title", world.name(), "text.primary");
+            name.setWrap(true);
+            body.add(name).padTop(space("md")).row();
+            String kind = world.position().isBlank() ? world.kind()
+                  : getFormattedText("HqHub.map.dossier.where", world.kind(), world.position());
+            body.add(ui.label(kind, "hud-body", 13, UiTheme.tokenColor("text.secondary"))).padTop(space("xxs")).row();
+            dossierSection(body, "profile", world.profile());
+            dossierSection(body, "environment", world.environment());
+            dossierSection(body, "society", world.society());
+            if (world.industry().size() == INDUSTRY.size()) {
+                body.add(ui.caption(getText("HqHub.map.dossier.section.industry"), true)).padTop(space("lg")).row();
+                body.add(ui.solid(UiTheme.tokenColor("border.subtle"))).height(1).padTop(space("xxs")).row();
+                for (int i = 0; i < INDUSTRY.size(); i++) {
+                    dossierText(body, "industry." + INDUSTRY.get(i), world.industry().get(i), "text.primary");
+                }
+            }
+            if (!world.description().isBlank()) {
+                body.add(ui.caption(getText("HqHub.map.dossier.section.about"), true)).padTop(space("lg")).row();
+                body.add(ui.solid(UiTheme.tokenColor("border.subtle"))).height(1).padTop(space("xxs")).row();
+                Label about = ui.label(world.description(), "hud-body", 13, UiTheme.tokenColor("text.primary"));
+                about.setWrap(true);
+                body.add(about).padTop(space("sm")).row();
+            }
+        }
+        Label system = ui.roleTypeLabel("headline", read.name(), "text.primary");
+        system.setWrap(true);
+        dossierPanel.add(system).padTop(space("xs")).row();
+        ScrollPane scroll = ui.scrollList(body, true, false);
+        dossierPanel.add(scroll).padTop(space("sm")).maxHeight(Math.max(240, stage.getHeight() - space("xxl") * 8));
+    }
+
+    /** A titled run of facts in the record panel, label beside value; nothing when there are none. */
+    private void dossierSection(Table body, String section, List<SystemDossier.Fact> facts) {
+        if (facts.isEmpty()) {
+            return;
+        }
+        body.add(ui.caption(getText("HqHub.map.dossier.section." + section), true)).padTop(space("lg")).row();
+        body.add(ui.solid(UiTheme.tokenColor("border.subtle"))).height(1).padTop(space("xxs")).row();
+        Table rows = new Table();
+        rows.defaults().top().left().padTop(space("xs"));
+        for (SystemDossier.Fact fact : facts) {
+            rows.add(ui.label(getText("HqHub.map.dossier." + fact.key()), "hud-body", 13,
+                  UiTheme.tokenColor("text.secondary"))).width(150).padRight(space("md"));
+            Label value = ui.label(fact.value(), "hud-body", 13, UiTheme.tokenColor("text.primary"));
+            value.setWrap(true);
+            rows.add(value).growX().minWidth(0).row();
+        }
+        body.add(rows).padTop(space("xxs")).row();
+    }
+
+    /** A labelled paragraph in the record panel. */
+    private void dossierText(Table body, String key, String text, String colour) {
+        Table row = new Table();
+        row.defaults().top().left();
+        row.add(ui.label(getText("HqHub.map.dossier." + key), "hud-body", 13, UiTheme.tokenColor("text.secondary")))
+              .width(150).padRight(space("md"));
+        Label value = ui.label(text, "hud-body", 13, UiTheme.tokenColor(colour));
+        value.setWrap(true);
+        row.add(value).growX().minWidth(0);
+        body.add(row).padTop(space("xs")).row();
     }
 
     /**
