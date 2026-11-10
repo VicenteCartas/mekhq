@@ -36,7 +36,9 @@ import java.awt.Color;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -51,15 +53,21 @@ import mekhq.campaign.JumpPath;
 import mekhq.campaign.NavigationRouteAnalysis.PathAssessment;
 import mekhq.campaign.NavigationRouteAnalysis.Severity;
 import mekhq.campaign.RouteAlternativesPlanner.PlanningResult;
+import mekhq.campaign.base.PlayerBase;
 import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.events.LocationChangedEvent;
 import mekhq.campaign.events.NewDayEvent;
 import mekhq.campaign.events.PlanetarySystemsChangedEvent;
 import mekhq.campaign.events.TransitStatusChangedEvent;
+import mekhq.campaign.events.missions.MissionEvent;
+import mekhq.campaign.events.scenarios.ScenarioEvent;
 import mekhq.campaign.finances.Money;
+import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.mission.scenarios.Scenario;
 import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.PlanetarySystem;
+import mekhq.campaign.universe.enums.CapitalType;
 import mekhq.campaign.universe.enums.HPGRating;
 
 /**
@@ -71,9 +79,17 @@ import mekhq.campaign.universe.enums.HPGRating;
  * @param current the id of the system the force is at, or travelling from; null when nowhere
  * @param route   the ids of the systems on the force's route, the current one first; empty when it isn't travelling
  * @param voyage  how far the force is along its route; null when it isn't travelling
+ * @param marks   what the campaign has at systems by their ids: {@link #MISSION}, {@link #SCENARIO} and {@link #BASE}
+ *                together
  */
 public record StarMap(LocalDate date, List<Star> stars, @Nullable String current, List<String> route,
-      @Nullable Voyage voyage) {
+      @Nullable Voyage voyage, Map<String, Integer> marks) {
+    /** A mark: the target of one of the campaign's active contracts. */
+    public static final int MISSION = 1;
+    /** A mark: a scenario waiting to be fought. */
+    public static final int SCENARIO = 2;
+    /** A mark: one of the force's bases. */
+    public static final int BASE = 4;
     /** The colour of a system no one holds. */
     static final int UNCLAIMED = 0x8A9099;
 
@@ -88,14 +104,30 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
      * @param owner   its owners' names today, or blank when no one holds it
      * @param faction the name of the owner whose colour it wears, or blank
      * @param settled whether anyone but the abandoned holds it
+     * @param lenses  every {@link MapLens}'s level for it, as {@link MapLens#pack} packs them
+     * @param capital whose capital it is: 0 no one's, 1 a district's, 2 a region's, 3 a realm's
+     * @param people  how many live there
+     * @param code    the short name of the owner whose colour it wears, or blank
      */
     public record Star(String id, String name, double x, double y, int rgb, String owner, String faction,
-          boolean settled) {
+          boolean settled, long lenses, int capital, long people, String code) {
         public Star {
+            Objects.requireNonNull(code);
             Objects.requireNonNull(id);
             Objects.requireNonNull(name);
             Objects.requireNonNull(owner);
             Objects.requireNonNull(faction);
+        }
+
+        /** A system with no lenses, capital or people. */
+        public Star(String id, String name, double x, double y, int rgb, String owner, String faction,
+              boolean settled) {
+            this(id, name, x, y, rgb, owner, faction, settled, 0, 0, 0, "");
+        }
+
+        /** {@code lens}'s level for it, 0 when the lens doesn't rate it. */
+        public int level(MapLens lens) {
+            return lens.level(lenses);
         }
     }
 
@@ -185,28 +217,25 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
         Objects.requireNonNull(date);
         stars = List.copyOf(stars);
         route = List.copyOf(route);
+        marks = Map.copyOf(marks);
+    }
+
+    /** A map with nothing of the campaign's marked. */
+    public StarMap(LocalDate date, List<Star> stars, @Nullable String current, List<String> route,
+          @Nullable Voyage voyage) {
+        this(date, stars, current, route, voyage, Map.of());
     }
 
     /** The map, rebuilt as the day, the force's whereabouts or the systems change. */
     public static ViewModel<StarMap> model() {
         return ViewModel.of("StarMap", StarMap::of, List.of(NewDayEvent.class, LocationChangedEvent.class,
-              TransitStatusChangedEvent.class, PlanetarySystemsChangedEvent.class));
+              TransitStatusChangedEvent.class, PlanetarySystemsChangedEvent.class, MissionEvent.class,
+              ScenarioEvent.class));
     }
 
     static StarMap of(Campaign campaign) {
         LocalDate date = campaign.getLocalDate();
-        int year = date.getYear();
-        List<Star> stars = new ArrayList<>();
-        for (PlanetarySystem system : campaign.getSystems()) {
-            if (system == null || system.getId() == null || system.getX() == null || system.getY() == null) {
-                continue;
-            }
-            List<Faction> owners = owners(system, date);
-            boolean settled = owners.stream().anyMatch(faction -> !faction.is(FactionTag.ABANDONED));
-            String faction = owners.isEmpty() ? null : owners.get(0).getFullName(year);
-            stars.add(new Star(system.getId(), name(system, date), system.getX(), system.getY(), colour(owners),
-                  ownerNames(owners, year), faction == null ? "" : faction, settled));
-        }
+        List<Star> stars = stars(campaign.getSystems(), date);
         AbstractLocation location = campaign.getPlayerForce().getForceDetachment().getCurrentLocation();
         PlanetarySystem here = location == null ? null : location.getCurrentSystem();
         JumpPath path = location == null ? null : location.getJumpPath();
@@ -218,7 +247,68 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
             }
             voyage = voyage(campaign, location, path);
         }
-        return new StarMap(date, stars, here == null ? null : here.getId(), route, voyage);
+        return new StarMap(date, stars, here == null ? null : here.getId(), route, voyage, marks(campaign));
+    }
+
+    /** What the campaign has where: its contracts' targets, its scenarios' and its bases. */
+    private static Map<String, Integer> marks(Campaign campaign) {
+        Map<String, Integer> marks = new HashMap<>();
+        for (AbstractContract contract : campaign.getActiveContracts()) {
+            mark(marks, contract.getTargetSystem(), MISSION);
+        }
+        for (Scenario scenario : campaign.getActiveScenarios()) {
+            AbstractContract contract = campaign.getContract(scenario.getMissionId());
+            if (contract != null) {
+                mark(marks, contract.getTargetSystem(), SCENARIO);
+            }
+        }
+        for (PlayerBase base : campaign.getCampaignLocationManager().getPlayerBases()) {
+            AbstractLocation location = base.getCurrentLocation();
+            mark(marks, location == null ? null : location.getCurrentSystem(), BASE);
+        }
+        return marks;
+    }
+
+    private static void mark(Map<String, Integer> marks, @Nullable PlanetarySystem system, int mark) {
+        if (system != null && system.getId() != null) {
+            marks.merge(system.getId(), mark, (had, more) -> had | more);
+        }
+    }
+
+    /**
+     * Every system of {@code systems} with a position as it stood on {@code date}. It reads only the systems, so it can
+     * be called on any thread.
+     */
+    static List<Star> stars(Iterable<PlanetarySystem> systems, LocalDate date) {
+        int year = date.getYear();
+        List<Star> stars = new ArrayList<>();
+        for (PlanetarySystem system : systems) {
+            if (system == null || system.getId() == null || system.getX() == null || system.getY() == null) {
+                continue;
+            }
+            List<Faction> owners = owners(system, date);
+            boolean settled = false;
+            for (Faction owner : owners) {
+                settled |= !owner.is(FactionTag.ABANDONED);
+            }
+            String faction = owners.isEmpty() ? null : owners.get(0).getFullName(year);
+            stars.add(new Star(system.getId(), name(system, date), system.getX(), system.getY(), colour(owners),
+                  ownerNames(owners, year), faction == null ? "" : faction, settled,
+                  settled ? MapLens.pack(system, date) : 0, settled ? capital(system, date) : 0,
+                  settled ? system.getPopulation(date) : 0, code(owners)));
+        }
+        return stars;
+    }
+
+    /** Whose capital {@code system} is on {@code date}: 0 no one's, 1 a district's, 2 a region's, 3 a realm's. */
+    private static int capital(PlanetarySystem system, LocalDate date) {
+        CapitalType type = system.getCapitalType(date);
+        return type == null ? 0 : switch (type) {
+            case NATIONAL -> 3;
+            case REGION -> 2;
+            case DISTRICT -> 1;
+            case NONE -> 0;
+        };
     }
 
     /** Swing thread: the detail of the system {@code id}, or null when the campaign has no such system. */
@@ -359,17 +449,28 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
         return sorted;
     }
 
+    /** The short name of the first of {@code owners}, whose colour a system wears, or blank. */
+    private static String code(List<Faction> owners) {
+        String code = owners.isEmpty() ? null : owners.get(0).getShortName();
+        return code == null ? "" : code;
+    }
+
     private static int colour(List<Faction> owners) {
-        Color colour = owners.isEmpty() ? null : owners.get(0).getColor();
+        return owners.isEmpty() ? UNCLAIMED : rgb(owners.get(0));
+    }
+
+    /** {@code faction}'s colour, 0xRRGGBB. */
+    static int rgb(Faction faction) {
+        Color colour = faction.getColor();
         return colour == null ? UNCLAIMED : colour.getRGB() & 0xFFFFFF;
     }
 
-    private static String ownerNames(List<Faction> owners, int year) {
+    static String ownerNames(List<Faction> owners, int year) {
         return owners.stream().map(faction -> faction.getFullName(year)).filter(Objects::nonNull)
               .collect(Collectors.joining(" / "));
     }
 
-    private static String name(PlanetarySystem system, LocalDate date) {
+    static String name(PlanetarySystem system, LocalDate date) {
         String name = system.getPrintableName(date);
         return name == null || name.isBlank() ? system.getId() : name;
     }

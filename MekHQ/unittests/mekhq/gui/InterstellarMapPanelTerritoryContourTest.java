@@ -58,6 +58,9 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import mekhq.campaign.universe.Faction;
+import mekhq.campaign.universe.territory.TerritoryCell;
+import mekhq.campaign.universe.territory.TerritoryHex;
+import mekhq.campaign.universe.territory.TerritorySemantic;
 import org.junit.jupiter.api.Test;
 
 class InterstellarMapPanelTerritoryContourTest {
@@ -68,7 +71,7 @@ class InterstellarMapPanelTerritoryContourTest {
     @Test
     void adjacentCellsWithMatchingOwnershipBecomeOneSmoothCachedContour() {
         Faction faction = faction("FS");
-        Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> cells = new HashMap<>();
+        Map<TerritoryHex, TerritoryCell> cells = new HashMap<>();
         addCell(cells, 0, 0, List.of(faction));
         addCell(cells, 1, 0, List.of(faction));
 
@@ -78,7 +81,7 @@ class InterstellarMapPanelTerritoryContourTest {
         assertEquals(1, contours.size());
         InterstellarMapPanel.TerritoryContour contour = contours.getFirst();
         assertEquals(List.of(faction), contour.factions());
-      assertEquals(InterstellarMapPanel.TerritorySemantic.SOVEREIGN, contour.semantic());
+      assertEquals(TerritorySemantic.SOVEREIGN, contour.semantic());
         assertEquals(2, contour.cellCount());
         assertTrue(contour.shape().contains(HEX_SPACING_X / 2.0, HEX_SIZE / 4.0),
               "the shared edge must be inside one continuous region");
@@ -96,7 +99,7 @@ class InterstellarMapPanelTerritoryContourTest {
         Faction factionA = faction("A");
         Faction factionB = faction("B");
         Faction independent = faction("IND");
-        Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> cells = new HashMap<>();
+        Map<TerritoryHex, TerritoryCell> cells = new HashMap<>();
         addCell(cells, 0, 0, List.of(factionA));
         addCell(cells, 1, 0, List.of(factionA));
         addCell(cells, 2, 0, List.of(factionA, factionB));
@@ -123,29 +126,29 @@ class InterstellarMapPanelTerritoryContourTest {
         Faction owner = faction("A");
         Faction surroundingOwner = faction("B");
 
-        Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> exterior = new HashMap<>();
+        Map<TerritoryHex, TerritoryCell> exterior = new HashMap<>();
         addCell(exterior, 0, 0, List.of());
-        assertEquals(InterstellarMapPanel.TerritorySemantic.UNCLAIMED_EXTERIOR,
+        assertEquals(TerritorySemantic.UNCLAIMED_EXTERIOR,
               contourFor(exterior, List.of()).semantic());
 
-        Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> pocket =
+        Map<TerritoryHex, TerritoryCell> pocket =
               ringAround(List.of(), List.of(surroundingOwner));
-        assertEquals(InterstellarMapPanel.TerritorySemantic.UNCLAIMED_POCKET,
+        assertEquals(TerritorySemantic.UNCLAIMED_POCKET,
               contourFor(pocket, List.of()).semantic());
 
-        Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> enclave =
+        Map<TerritoryHex, TerritoryCell> enclave =
               ringAround(List.of(owner), List.of(surroundingOwner));
-        assertEquals(InterstellarMapPanel.TerritorySemantic.ENCLAVE,
+        assertEquals(TerritorySemantic.ENCLAVE,
               contourFor(enclave, List.of(owner)).semantic());
 
-        Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> disputed = new HashMap<>();
+        Map<TerritoryHex, TerritoryCell> disputed = new HashMap<>();
         addCell(disputed, 0, 0, List.of(owner, surroundingOwner));
-        assertEquals(InterstellarMapPanel.TerritorySemantic.DISPUTED,
+        assertEquals(TerritorySemantic.DISPUTED,
               contourFor(disputed, List.of(owner, surroundingOwner)).semantic());
 
-        Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> sovereign = new HashMap<>();
+        Map<TerritoryHex, TerritoryCell> sovereign = new HashMap<>();
         addCell(sovereign, 0, 0, List.of(owner));
-        assertEquals(InterstellarMapPanel.TerritorySemantic.SOVEREIGN,
+        assertEquals(TerritorySemantic.SOVEREIGN,
               contourFor(sovereign, List.of(owner)).semantic());
     }
 
@@ -155,19 +158,19 @@ class InterstellarMapPanelTerritoryContourTest {
         Faction surroundingOwner = faction("B");
         Faction otherOwner = faction("C");
 
-        Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> island =
+        Map<TerritoryHex, TerritoryCell> island =
               ringAround(List.of(owner), List.of());
-        assertEquals(InterstellarMapPanel.TerritorySemantic.SOVEREIGN,
+        assertEquals(TerritorySemantic.SOVEREIGN,
               contourFor(island, List.of(owner)).semantic());
 
-        Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> mixed =
+        Map<TerritoryHex, TerritoryCell> mixed =
               ringAround(List.of(owner), List.of(surroundingOwner));
         addCell(mixed, 0, -1, List.of(otherOwner));
-        assertEquals(InterstellarMapPanel.TerritorySemantic.SOVEREIGN,
+        assertEquals(TerritorySemantic.SOVEREIGN,
               contourFor(mixed, List.of(owner)).semantic());
         assertFalse(InterstellarMapPanel.buildTerritoryContours(mixed).stream()
               .filter(contour -> contour.factions().equals(List.of(owner)))
-              .anyMatch(contour -> contour.semantic() == InterstellarMapPanel.TerritorySemantic.ENCLAVE));
+              .anyMatch(contour -> contour.semantic() == TerritorySemantic.ENCLAVE));
     }
 
     @Test
@@ -189,20 +192,20 @@ class InterstellarMapPanelTerritoryContourTest {
               InterstellarMapPanel.TerritoryVisualProfile.create(4.0);
 
         BufferedImage exterior = render(semanticContour(
-              InterstellarMapPanel.TerritorySemantic.UNCLAIMED_EXTERIOR,
+              TerritorySemantic.UNCLAIMED_EXTERIOR,
               List.of(), Color.BLACK), detail);
         assertEquals(0, paintedPixelCount(exterior));
 
         List<BufferedImage> visibleStyles = List.of(
-              render(semanticContour(InterstellarMapPanel.TerritorySemantic.SOVEREIGN,
+              render(semanticContour(TerritorySemantic.SOVEREIGN,
                     List.of(factionA), new Color(218, 92, 72, 90)), detail),
-              render(semanticContour(InterstellarMapPanel.TerritorySemantic.DISPUTED,
+              render(semanticContour(TerritorySemantic.DISPUTED,
                     List.of(factionA, factionB), new GradientPaint(12, 12,
                           new Color(218, 92, 72, 90), 60, 60,
                           new Color(70, 156, 220, 90), true)), detail),
-              render(semanticContour(InterstellarMapPanel.TerritorySemantic.UNCLAIMED_POCKET,
+              render(semanticContour(TerritorySemantic.UNCLAIMED_POCKET,
                     List.of(), Color.BLACK), detail),
-              render(semanticContour(InterstellarMapPanel.TerritorySemantic.ENCLAVE,
+              render(semanticContour(TerritorySemantic.ENCLAVE,
                     List.of(factionA), new Color(218, 92, 72, 90)), detail));
 
         assertTrue(visibleStyles.stream().allMatch(image -> paintedPixelCount(image) > 0));
@@ -215,10 +218,10 @@ class InterstellarMapPanelTerritoryContourTest {
         Faction factionA = faction("A", new Color(218, 92, 72));
         Faction factionB = faction("B", new Color(70, 156, 220));
         InterstellarMapPanel.TerritoryContour disputed = semanticContour(
-              InterstellarMapPanel.TerritorySemantic.DISPUTED, List.of(factionA, factionB),
+              TerritorySemantic.DISPUTED, List.of(factionA, factionB),
               new Color(120, 120, 140, 90));
         InterstellarMapPanel.TerritoryContour pocket = semanticContour(
-              InterstellarMapPanel.TerritorySemantic.UNCLAIMED_POCKET, List.of(), Color.BLACK);
+              TerritorySemantic.UNCLAIMED_POCKET, List.of(), Color.BLACK);
 
         InterstellarMapPanel.TerritoryVisualProfile atlas =
               InterstellarMapPanel.TerritoryVisualProfile.create(1.0);
@@ -243,17 +246,17 @@ class InterstellarMapPanelTerritoryContourTest {
       }
 
     private static void addCell(
-          Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> cells,
+          Map<TerritoryHex, TerritoryCell> cells,
           int column, int row, List<Faction> factions) {
-        InterstellarMapPanel.TerritoryHex hex = new InterstellarMapPanel.TerritoryHex(column, row);
+        TerritoryHex hex = new TerritoryHex(column, row);
         double centerX = column * HEX_SPACING_X;
         double centerY = row * HEX_SIZE + (column % 2) * HEX_SIZE / 2.0;
-        cells.put(hex, new InterstellarMapPanel.TerritoryCell(hex, centerX, centerY, factions));
+        cells.put(hex, new TerritoryCell(hex, centerX, centerY, factions));
     }
 
-            private static Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> ringAround(
+            private static Map<TerritoryHex, TerritoryCell> ringAround(
                               List<Faction> centerFactions, List<Faction> ringFactions) {
-                        Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> cells = new HashMap<>();
+                        Map<TerritoryHex, TerritoryCell> cells = new HashMap<>();
                         addCell(cells, 0, 0, centerFactions);
                         addCell(cells, -1, 0, ringFactions);
                         addCell(cells, -1, 1, ringFactions);
@@ -265,7 +268,7 @@ class InterstellarMapPanelTerritoryContourTest {
             }
 
             private static InterstellarMapPanel.TerritoryContour contourFor(
-                              Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> cells,
+                              Map<TerritoryHex, TerritoryCell> cells,
                               List<Faction> factions) {
                         return InterstellarMapPanel.buildTerritoryContours(cells).stream()
                                           .filter(contour -> contour.factions().equals(factions))
@@ -274,7 +277,7 @@ class InterstellarMapPanelTerritoryContourTest {
             }
 
                               private static InterstellarMapPanel.TerritoryContour semanticContour(
-                                      InterstellarMapPanel.TerritorySemantic semantic, List<Faction> factions, Paint paint) {
+                                      TerritorySemantic semantic, List<Faction> factions, Paint paint) {
                                     Area shape = new Area(new Ellipse2D.Double(12, 12, 48, 48));
                                     return new InterstellarMapPanel.TerritoryContour(factions, semantic, shape, paint, 1,
                                             12, 60, 12, 60);

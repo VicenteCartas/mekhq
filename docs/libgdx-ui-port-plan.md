@@ -149,7 +149,59 @@ Each phase ships something playable and keeps everything else reachable through 
        dialogs on it (`CampaignGUI.isHosted`), so they show over the hub.
      - `StarMapView` draws routes with `StarMapShaders.ROUTE_*` and the force's marker;
        `HubScreen` adds Set course and the voyage line; `CampaignHub.travel` runs the departure.
-  3. **Borders by date.** Faction territory and a time scrubber.
+  3. **Borders by date (done).** The map shows the realms' territory as soft glowing regions
+     with crisp, two-tone borders; disputed ground is striped in the claimants' colours. A
+     timeline along the bottom ("Inner Sphere history") scrubs the map's date from 2150 to
+     3152: the territory, the systems' owners and colours, and the legend follow it. Era bands
+     sit on the track, and a notch marks the campaign's date. Drag, click or scroll the timeline;
+     `[` and `]` step a year (Shift: a decade). Today (key T) returns to the campaign's date.
+     Scrubbing never changes the campaign's date; the map opens on it.
+     - Territory is not a port of the Swing map's hex grid. It is a GPU influence field: each
+       held system spreads its realm's influence about 45 ly. Space belongs to the strongest
+       realm once that influence passes a threshold, so a lone world holds about 33 ly.
+     - `Borders` is a per-date snapshot of the owners' claims, built off the GPU thread.
+       `Borders.Realms` numbers realms the same on every date.
+     - `BorderHistory` reads dates on a worker thread with an LRU cache and prefetch; the newest
+       date asked for wins, so a frame never waits. It is invalidated when the systems change.
+     - `InfluenceMap` (in `mekhq.campaign.universe.territory`) spreads the claims into a 4 ly grid
+       off the GPU thread: per texel, its holder, the distance to their edge, and any dispute.
+       `TerritoryField` uploads it as an integer texture. The territory shader interpolates
+       reaches realm by realm and morphs one date's land into the next over 0.6 s, so borders
+       sweep, not fade.
+     - `TimeScrubber` is the timeline; `HubScreen` hosts it.
+     - The Swing map's territory logic moved to `mekhq.campaign.universe.territory`
+       (`TerritoryGrid` and friends). `InterstellarMapPanel` uses it unchanged in behaviour.
+     - Game-map layer, reimagining the Swing map's overlays for 3D:
+       - Lenses (key L) recolour the systems by a property and raise a column from each system
+         when the camera tilts, which it does on its own when a lens comes on: the higher the
+         level, the taller and brighter the column, glowing at its foot. A legend counts each
+         level and says so. Through a lens only the best rated systems keep their names.
+       - Realm names in wide capitals across their territory, with the faction's emblem under
+         them; system names give way by rank and fade rather than pop.
+       - Capital beacons (realm and region), an animated HPG backbone (H), and the force's jump
+         reach as a wave spreading jump by jump (J).
+       - Administrative regions (R) drawn where a realm's regions meet, read as the Swing map
+         reads them; empty systems can be hidden (E).
+       - Hovering a realm, or one of its systems, spotlights it; over open ground the card shows
+         its holdings (systems, people, capital).
+       - Contested ground is striped boldly in both claimants' colours, sliding slowly, inside a
+         dashed rim; hovering it names both sides and what each holds.
+       - Shift-drag measures distance in light years and jumps; Esc clears it.
+       - Right-click opens a context menu (details, measure from the force, centre, zoom, today).
+       - Deep-sky backdrop with nebulae and a starfield, a scale bar, and operation and base
+         markers that stay visible zoomed out.
+       - The header carries the route, not the controls: the voyage underway (leg progress,
+         an eye to show or hide the route, frame it, cancel the trip with a confirming second
+         press) or the course plotted to the chosen system (Set course, frame, clear). A help
+         button lists the controls.
+       - The system card's Details opens the system record beside it (`SystemDossier`, read on
+         the Swing thread): the system, then a tab per world with its profile, environment,
+         society, socio-industrial ratings and description, as the Swing planet view has them.
+         Beside it, an icon opens the Navigation tab's route planner.
+       - The system card and hover card show what matters to the force: hiring hall, academies,
+         capital, A/B industry, recharge stations and any health advisory.
+       - Hover cards stay off the chrome (header, legend, panels).
+     - Still to come: bloom.
   4. **Pins.** Contracts and markets on their systems.
 
 **Phase 2: the game loop**

@@ -272,6 +272,8 @@ dependencies {
     // The native window's scenes (mekhq.gui.gdx); the versions MegaMek's GPU window uses.
     implementation 'com.badlogicgames.gdx:gdx:1.14.2'
     implementation 'de.javagl:jgltf-model:2.0.4'
+    // The star map snapshots open a window of their own
+    testImplementation 'com.badlogicgames.gdx:gdx-backend-lwjgl3:1.14.2'
 
     implementation 'jakarta.xml.bind:jakarta.xml.bind-api:4.0.5'
     implementation 'jakarta.annotation:jakarta.annotation-api:3.0.0'
@@ -588,6 +590,17 @@ tasks.register('validateSystems', JavaExec) {
     args = ["${layout.projectDirectory.asFile}/data/universe/planetary_systems"]
 }
 
+// A developer's look at the command post's star map: renders it in a hidden window and writes PNGs to
+// build/star-map-snapshots. Shots are name:year:x:y:height[:tilt[:turn]], e.g. -Pshots="sol:0:0:0:300 old:2800:0:0:900"
+tasks.register('starMapSnapshots', JavaExec) {
+    dependsOn stageDataFiles
+    group = 'verification'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'mekhq.gui.gdx.hub.StarMapSnapshots'
+    workingDir = layout.projectDirectory.asFile
+    maxHeapSize = '4g'
+    args = (project.findProperty('shots') ?: '').toString().split(' ').findAll { !it.isBlank() }
+}
 tasks.register('officialUnitList', JavaExec) {
     dependsOn jar
     mustRunAfter(stageDataFiles)

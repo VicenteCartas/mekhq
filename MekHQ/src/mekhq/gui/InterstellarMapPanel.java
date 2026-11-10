@@ -73,7 +73,6 @@ import javax.swing.*;
 import javax.swing.Timer;
 import javax.swing.plaf.basic.BasicMenuItemUI;
 import javax.swing.plaf.basic.BasicMenuUI;
-import javax.vecmath.Vector2d;
 
 import jakarta.annotation.Nullable;
 import megamek.SuiteOptions;
@@ -108,6 +107,11 @@ import mekhq.campaign.universe.enums.HPGRating;
 import mekhq.campaign.universe.factionHints.FactionHints;
 import mekhq.campaign.universe.factionStanding.FactionStandingUtilities;
 import mekhq.campaign.universe.factionStanding.FactionStandings;
+import mekhq.campaign.universe.territory.AdministrativeKey;
+import mekhq.campaign.universe.territory.TerritoryCell;
+import mekhq.campaign.universe.territory.TerritoryGrid;
+import mekhq.campaign.universe.territory.TerritoryHex;
+import mekhq.campaign.universe.territory.TerritorySemantic;
 import mekhq.gui.baseComponents.ImmersiveCheckBox;
 import mekhq.gui.baseComponents.ImmersiveComboBox;
 import mekhq.gui.baseComponents.ImmersiveRadioButton;
@@ -305,10 +309,10 @@ public class InterstellarMapPanel extends JPanel {
               thread.setDaemon(true);
               return thread;
           });
-    private static final double TERRITORY_HEX_SIZE = 30.0;
-    private static final double TERRITORY_HEX_SPACING_X = TERRITORY_HEX_SIZE * Math.sqrt(3) / 2.0;
-    private static final double TERRITORY_HEX_RADIUS = TERRITORY_HEX_SIZE / Math.sqrt(3);
-    private static final int TERRITORY_HEX_MARGIN = 2;
+    private static final double TERRITORY_HEX_SIZE = TerritoryGrid.HEX_SIZE;
+    private static final double TERRITORY_HEX_SPACING_X = TerritoryGrid.SPACING_X;
+    private static final double TERRITORY_HEX_RADIUS = TerritoryGrid.HEX_RADIUS;
+    private static final int TERRITORY_HEX_MARGIN = TerritoryGrid.MARGIN;
         private static final BasicStroke TERRITORY_CONTOUR_SOFTENING_STROKE = new BasicStroke(5.0f,
                     BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND);
     private static final Color TERRITORY_BORDER_DARK = new Color(2, 6, 10, 175);
@@ -563,40 +567,9 @@ public class InterstellarMapPanel extends JPanel {
         return label;
     }
 
-    record TerritoryHex(int column, int row) {
-    }
-
-    enum TerritorySemantic {
-        SOVEREIGN,
-        DISPUTED,
-        UNCLAIMED_EXTERIOR,
-        UNCLAIMED_POCKET,
-        ENCLAVE
-    }
-
     enum AdministrativeBoundaryLevel {
         REGION,
         DISTRICT
-    }
-
-    record AdministrativeKey(Faction faction, List<String> path) {
-        AdministrativeKey {
-            path = List.copyOf(path);
-            if (path.isEmpty()) {
-                throw new IllegalArgumentException("Administrative path cannot be empty");
-            }
-        }
-
-        String region() {
-            return path.getFirst();
-        }
-    }
-
-    record TerritoryClassification(List<Faction> factions, List<PlanetarySystem> evidenceSystems) {
-        TerritoryClassification {
-            factions = List.copyOf(factions);
-            evidenceSystems = List.copyOf(evidenceSystems);
-        }
     }
 
     record AdministrativeBoundary(AdministrativeBoundaryLevel level, List<Faction> factions, Shape shape,
@@ -609,13 +582,6 @@ public class InterstellarMapPanel extends JPanel {
     private record AdministrativeBoundaryGroup(AdministrativeBoundaryLevel level, List<Faction> factions) {
         AdministrativeBoundaryGroup {
             factions = List.copyOf(factions);
-        }
-    }
-
-    record TerritoryCell(TerritoryHex hex, double centerX, double centerY, List<Faction> factions,
-          @Nullable AdministrativeKey administration) {
-        TerritoryCell(TerritoryHex hex, double centerX, double centerY, List<Faction> factions) {
-            this(hex, centerX, centerY, factions, null);
         }
     }
 
@@ -1694,15 +1660,6 @@ public class InterstellarMapPanel extends JPanel {
                 return SystemMarkerLayout.create(map2scrX(system.getX()), map2scrY(system.getY()), size,
                             routeState, selected, hovered);
         }
-
-    private static final Vector2d[] BASE_HEX_COORDS = {
-          new Vector2d(1.0, 0.0),
-          new Vector2d(Math.cos(Math.PI / 3.0), Math.sin(Math.PI / 3.0)),
-          new Vector2d(Math.cos(2.0 * Math.PI / 3.0), Math.sin(2.0 * Math.PI / 3.0)),
-          new Vector2d(-1.0, 0.0),
-          new Vector2d(Math.cos(4.0 * Math.PI / 3.0), Math.sin(4.0 * Math.PI / 3.0)),
-          new Vector2d(Math.cos(5.0 * Math.PI / 3.0), Math.sin(5.0 * Math.PI / 3.0))
-    };
 
     private final JLayeredPane pane;
     private final JPanel mapPanel;
@@ -4584,19 +4541,6 @@ public class InterstellarMapPanel extends JPanel {
         }
     }
 
-    private static void setupHexPath(@Nullable GeneralPath path, double centerX, double centerY, double radius) {
-        if (null == path) {
-            return;
-        }
-        radius *= Math.sqrt(4.0 / 3.0);
-        path.reset();
-        path.moveTo(centerX + radius * BASE_HEX_COORDS[0].x, centerY + radius * BASE_HEX_COORDS[0].y);
-        for (int i = 1; i < 6; ++i) {
-            path.lineTo(centerX + radius * BASE_HEX_COORDS[i].x, centerY + radius * BASE_HEX_COORDS[i].y);
-        }
-        path.closePath();
-    }
-
     private void paintStaticCartographyBackground(Graphics2D graphics, RenderViewKey renderViewKey) {
         drawMapBackground(graphics, renderViewKey.width(), renderViewKey.height());
     }
@@ -6203,128 +6147,35 @@ public class InterstellarMapPanel extends JPanel {
     }
 
     private TerritoryAtlas buildTerritoryAtlas(LocalDate date) {
-        if (systems.isEmpty()) {
+        TerritoryGrid grid = TerritoryGrid.build(systems, Systems.getInstance(), date);
+        if (grid.isEmpty()) {
             return new TerritoryAtlas(date, 0, -1, 0, -1, Map.of(), List.of(), List.of(), List.of());
         }
-
-        double systemMinX = systems.stream().mapToDouble(PlanetarySystem::getX).min().orElse(0.0);
-        double systemMaxX = systems.stream().mapToDouble(PlanetarySystem::getX).max().orElse(0.0);
-        double systemMinY = systems.stream().mapToDouble(PlanetarySystem::getY).min().orElse(0.0);
-        double systemMaxY = systems.stream().mapToDouble(PlanetarySystem::getY).max().orElse(0.0);
-        int minColumn = (int) Math.floor(systemMinX / TERRITORY_HEX_SPACING_X) - TERRITORY_HEX_MARGIN;
-        int maxColumn = (int) Math.ceil(systemMaxX / TERRITORY_HEX_SPACING_X) + TERRITORY_HEX_MARGIN;
-        int minRow = (int) Math.floor(systemMinY / TERRITORY_HEX_SIZE) - TERRITORY_HEX_MARGIN;
-        int maxRow = (int) Math.ceil(systemMaxY / TERRITORY_HEX_SIZE) + TERRITORY_HEX_MARGIN;
-        Faction independentFaction = Factions.getInstance().getFaction("IND");
-        Map<TerritoryHex, TerritoryCell> cells = new HashMap<>();
-
-        for (int column = minColumn; column <= maxColumn; column++) {
-            for (int row = minRow; row <= maxRow; row++) {
-                TerritoryHex hex = new TerritoryHex(column, row);
-                double centerX = column * TERRITORY_HEX_SPACING_X;
-                double centerY = row * TERRITORY_HEX_SIZE
-                      + (column % 2) * TERRITORY_HEX_SIZE / 2.0;
-                    TerritoryClassification classification = classifyTerritoryHex(
-                        centerX, centerY, date, independentFaction);
-                    AdministrativeKey administration = classifyAdministrativeKey(
-                        classification.factions(), classification.evidenceSystems(), date, centerX, centerY);
-                    cells.put(hex, new TerritoryCell(hex, centerX, centerY,
-                        classification.factions(), administration));
-            }
-        }
+        Map<TerritoryHex, TerritoryCell> cells = grid.cells();
         List<TerritoryContour> contours = buildTerritoryContours(cells);
         List<TerritoryComponent> components = buildTerritoryComponents(cells);
-              List<AdministrativeBoundary> administrativeBoundaries = buildAdministrativeBoundaries(cells, contours);
-              return new TerritoryAtlas(date, minColumn, maxColumn, minRow, maxRow, cells, contours, components,
-                  administrativeBoundaries);
+        List<AdministrativeBoundary> administrativeBoundaries = buildAdministrativeBoundaries(cells, contours);
+        return new TerritoryAtlas(date, grid.minColumn(), grid.maxColumn(), grid.minRow(), grid.maxRow(), cells,
+              contours, components, administrativeBoundaries);
     }
 
     static List<TerritoryContour> buildTerritoryContours(Map<TerritoryHex, TerritoryCell> cells) {
-        List<TerritoryCell> orderedCells = cells.values().stream()
-              .sorted(Comparator.comparingInt((TerritoryCell cell) -> cell.hex().column())
-                    .thenComparingInt(cell -> cell.hex().row()))
-              .toList();
-        Set<TerritoryHex> visited = new HashSet<>();
         List<TerritoryContour> contours = new ArrayList<>();
-
-        for (TerritoryCell seed : orderedCells) {
-            if (!visited.add(seed.hex())) {
-                continue;
-            }
-            List<TerritoryCell> regionCells = new ArrayList<>();
-            List<TerritoryHex> pending = new ArrayList<>();
-            pending.add(seed.hex());
-            for (int pendingIndex = 0; pendingIndex < pending.size(); pendingIndex++) {
-                TerritoryHex hex = pending.get(pendingIndex);
-                TerritoryCell cell = cells.get(hex);
-                regionCells.add(cell);
-                for (TerritoryHex neighborHex : getTerritoryNeighbors(hex)) {
-                    TerritoryCell neighbor = cells.get(neighborHex);
-                    if ((neighbor != null) && seed.factions().equals(neighbor.factions())
-                          && visited.add(neighborHex)) {
-                        pending.add(neighborHex);
-                    }
-                }
-            }
-
+        GeneralPath cellPath = new GeneralPath();
+        for (TerritoryGrid.Region region : TerritoryGrid.regions(cells)) {
             GeneralPath mergedCells = new GeneralPath();
-            GeneralPath cellPath = new GeneralPath();
-            for (TerritoryCell cell : regionCells) {
-                setupHexPath(cellPath, cell.centerX(), cell.centerY(), TERRITORY_HEX_SIZE / 2.0);
+            for (TerritoryCell cell : region.cells()) {
+                TerritoryGrid.outline(cellPath, cell.centerX(), cell.centerY());
                 mergedCells.append(cellPath, false);
             }
             Area contourArea = new Area(mergedCells);
             contourArea.add(new Area(TERRITORY_CONTOUR_SOFTENING_STROKE.createStrokedShape(contourArea)));
             Rectangle2D bounds = contourArea.getBounds2D();
-            TerritorySemantic semantic = classifyTerritorySemantic(seed.factions(), regionCells, cells);
-            contours.add(new TerritoryContour(List.copyOf(seed.factions()), semantic, contourArea,
-                  createTerritoryPaint(seed.factions()), regionCells.size(), bounds.getMinX(), bounds.getMaxX(),
-                  bounds.getMinY(), bounds.getMaxY()));
+            contours.add(new TerritoryContour(region.factions(), region.semantic(), contourArea,
+                  createTerritoryPaint(region.factions()), region.cells().size(), bounds.getMinX(),
+                  bounds.getMaxX(), bounds.getMinY(), bounds.getMaxY()));
         }
         return List.copyOf(contours);
-    }
-
-    private static TerritorySemantic classifyTerritorySemantic(List<Faction> factions,
-          List<TerritoryCell> regionCells, Map<TerritoryHex, TerritoryCell> cells) {
-        if (factions.size() > 1) {
-            return TerritorySemantic.DISPUTED;
-        }
-
-        Set<TerritoryHex> regionHexes = new HashSet<>();
-        for (TerritoryCell cell : regionCells) {
-            regionHexes.add(cell.hex());
-        }
-        boolean touchesAtlasEdge = regionCells.stream()
-              .flatMap(cell -> getTerritoryNeighbors(cell.hex()).stream())
-              .anyMatch(neighborHex -> !cells.containsKey(neighborHex));
-        if (factions.isEmpty()) {
-            return touchesAtlasEdge ? TerritorySemantic.UNCLAIMED_EXTERIOR
-                  : TerritorySemantic.UNCLAIMED_POCKET;
-        }
-        if (touchesAtlasEdge) {
-            return TerritorySemantic.SOVEREIGN;
-        }
-
-        Faction owner = factions.getFirst();
-        Faction surroundingOwner = null;
-        for (TerritoryCell cell : regionCells) {
-            for (TerritoryHex neighborHex : getTerritoryNeighbors(cell.hex())) {
-                if (regionHexes.contains(neighborHex)) {
-                    continue;
-                }
-                TerritoryCell neighbor = cells.get(neighborHex);
-                if ((neighbor == null) || (neighbor.factions().size() != 1)
-                      || owner.equals(neighbor.factions().getFirst())) {
-                    return TerritorySemantic.SOVEREIGN;
-                }
-                if (surroundingOwner == null) {
-                    surroundingOwner = neighbor.factions().getFirst();
-                } else if (!surroundingOwner.equals(neighbor.factions().getFirst())) {
-                    return TerritorySemantic.SOVEREIGN;
-                }
-            }
-        }
-        return surroundingOwner == null ? TerritorySemantic.SOVEREIGN : TerritorySemantic.ENCLAVE;
     }
 
     private static Paint createTerritoryPaint(List<Faction> factions) {
@@ -6350,63 +6201,9 @@ public class InterstellarMapPanel extends JPanel {
         return new Color(red / factionCount, green / factionCount, blue / factionCount, 0.18f);
     }
 
-    private TerritoryClassification classifyTerritoryHex(double centerX, double centerY, LocalDate date,
-          Faction independentFaction) {
-        GeneralPath path = new GeneralPath();
-        setupHexPath(path, centerX, centerY, TERRITORY_HEX_SIZE / 2.0);
-        List<PlanetarySystem> nearbySystems = Systems.getInstance().getNearbySystems(centerX, centerY,
-              (int) Math.round(TERRITORY_HEX_SIZE * 1.3));
-        Set<Faction> hexFactions = new HashSet<>();
-        List<PlanetarySystem> evidenceSystems = new ArrayList<>();
-
-        for (PlanetarySystem system : nearbySystems) {
-            if (!isSystemEmpty(system, date) && path.contains(system.getX(), system.getY())) {
-                evidenceSystems.add(system);
-                Set<Faction> factions = new HashSet<>(system.getFactionSet(date));
-                factions.remove(independentFaction);
-                hexFactions.addAll(factions);
-            }
-        }
-        if (hexFactions.isEmpty()) {
-            evidenceSystems.clear();
-            for (PlanetarySystem system : nearbySystems) {
-                if (!isSystemEmpty(system, date)) {
-                    evidenceSystems.add(system);
-                    hexFactions.addAll(new HashSet<>(system.getFactionSet(date)));
-                }
-            }
-        }
-        if (hexFactions.size() > 1) {
-            hexFactions.remove(independentFaction);
-        }
-
-        List<Faction> factions = hexFactions.stream()
-              .sorted(Comparator.comparing(Faction::getShortName))
-              .toList();
-        return new TerritoryClassification(factions, evidenceSystems);
-    }
-
     static @Nullable AdministrativeKey classifyAdministrativeKey(List<Faction> cellFactions,
           List<PlanetarySystem> evidenceSystems, LocalDate date, double centerX, double centerY) {
-        if ((cellFactions.size() != 1) || evidenceSystems.isEmpty()) {
-            return null;
-        }
-        Faction owner = cellFactions.getFirst();
-        return evidenceSystems.stream()
-              .filter(system -> {
-                  Set<Faction> factions = system.getFactionSet(date);
-                  return (factions != null) && (factions.size() == 1) && factions.contains(owner);
-              })
-              .filter(system -> {
-                  List<String> path = system.getAdministration(date);
-                  return !path.isEmpty() && path.stream()
-                        .noneMatch(component -> (component == null) || component.isBlank());
-              })
-              .min(Comparator.comparingDouble((PlanetarySystem system) ->
-                          Point2D.distanceSq(centerX, centerY, system.getX(), system.getY()))
-                    .thenComparing(PlanetarySystem::getId))
-              .map(system -> new AdministrativeKey(owner, system.getAdministration(date)))
-              .orElse(null);
+        return TerritoryGrid.classifyAdministrativeKey(cellFactions, evidenceSystems, date, centerX, centerY);
     }
 
     private static List<String> commonPrefix(List<String> first, List<String> second) {
@@ -6626,25 +6423,11 @@ public class InterstellarMapPanel extends JPanel {
     }
 
     private static boolean isHexBefore(TerritoryHex first, TerritoryHex second) {
-        return (first.column() < second.column())
-              || ((first.column() == second.column()) && (first.row() < second.row()));
+        return TerritoryGrid.isBefore(first, second);
     }
 
     private static List<TerritoryHex> getTerritoryNeighbors(TerritoryHex hex) {
-        int column = hex.column();
-        int row = hex.row();
-        int leftColumn = column - 1;
-        int rightColumn = column + 1;
-        double currentOffset = (column % 2) / 2.0;
-        double leftOffset = (leftColumn % 2) / 2.0;
-        double rightOffset = (rightColumn % 2) / 2.0;
-        int leftLowerRow = row + (int) Math.round(currentOffset - leftOffset - 0.5);
-        int leftUpperRow = row + (int) Math.round(currentOffset - leftOffset + 0.5);
-        int rightLowerRow = row + (int) Math.round(currentOffset - rightOffset - 0.5);
-        int rightUpperRow = row + (int) Math.round(currentOffset - rightOffset + 0.5);
-        return List.of(new TerritoryHex(leftColumn, leftLowerRow), new TerritoryHex(leftColumn, leftUpperRow),
-              new TerritoryHex(column, row - 1), new TerritoryHex(column, row + 1),
-              new TerritoryHex(rightColumn, rightLowerRow), new TerritoryHex(rightColumn, rightUpperRow));
+        return TerritoryGrid.neighbors(hex);
     }
 
     private double getFactionMapModeAlpha() {
@@ -9542,16 +9325,6 @@ public class InterstellarMapPanel extends JPanel {
             int threshold = UIUtil.scaleForGUI(5);
             return pressPoint.distanceSq(point) > (double) threshold * threshold;
         }
-    }
-
-    private static boolean isSystemEmpty(PlanetarySystem system, LocalDate date) {
-        Set<Faction> factions = system.getFactionSet(date);
-        if ((null == factions) || factions.isEmpty()) {
-            return true;
-        }
-
-        return factions.stream()
-                     .allMatch(faction -> faction.is(FactionTag.ABANDONED));
     }
 
     private boolean isSystemVisible(PlanetarySystem system, boolean hideEmpty) {

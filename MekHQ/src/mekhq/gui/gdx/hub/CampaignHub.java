@@ -62,12 +62,15 @@ import mekhq.campaign.AbstractLocation;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.JumpPath;
 import mekhq.campaign.universe.PlanetarySystem;
+import mekhq.campaign.universe.Systems;
 import mekhq.gui.BeginTransit;
 import mekhq.gui.CampaignGUI;
 import mekhq.gui.StartStarChart;
 import mekhq.gui.enums.MHQTabType;
+import mekhq.gui.model.view.Borders;
 import mekhq.gui.model.view.CampaignSession;
 import mekhq.gui.model.view.StarMap;
+import mekhq.gui.model.view.SystemDossier;
 import mekhq.gui.model.view.TopBar;
 
 /**
@@ -75,7 +78,8 @@ import mekhq.gui.model.view.TopBar;
  * (Experimental) entry opens a loaded campaign in. Its rail and command palette open the campaign window, built hidden
  * as the hub opens, on the screen, person or unit asked for, and run the window's menu items with their dialogs over the
  * hub; the window's close box hides it again. The rail's Map shows the campaign's {@link StarMap star map} in the hub
- * itself, watched only while it is open. Classic View or Esc leaves the hub for the campaign window, and closing
+ * itself, watched only while it is open, and the realms' borders on whatever date its timeline shows, read on a thread
+ * of their own and read again if the systems change. Classic View or Esc leaves the hub for the campaign window, and closing
  * the hub quits MekHQ, asking to save first.
  */
 public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
@@ -89,6 +93,10 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
     private final Campaign campaign;
     private final CampaignSession session;
     private final HubScreen screen;
+    /** The borders on the dates the star map shows, from the universe's systems. */
+    private final Borders.Realms realms = new Borders.Realms();
+    private final BorderHistory history = new BorderHistory(date -> Borders.of(
+          List.copyOf(Systems.getInstance().getSystems().values()), realms, date));
     private final String title;
     private final AtomicBoolean leaving = new AtomicBoolean();
     private final GpuSceneDialogs dialogs = new GpuSceneDialogs(new GpuSceneDialogs.Host() {
@@ -120,7 +128,8 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
         this.campaign = campaign;
         title = getFormattedText("HqHub.windowTitle", campaign.getPlayerForce().getName());
         session = new CampaignSession(campaign);
-        screen = new HubScreen(TABLE, chart, campaign.getPlayerForce().getName(), scale, this);
+        screen = new HubScreen(TABLE, chart, campaign.getPlayerForce().getName(), scale, this,
+              history);
     }
 
     /**
@@ -146,6 +155,7 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
                 hub.gui.setCloseAction(hub::hideWindow);
                 anchor.dispose();
                 hub.session.watch(TopBar.model(), hub.screen::show);
+                hub.session.watch(Borders.universe(), changed -> hub.history.invalidate());
                 hub.session.watch(HubArea.screens(), shown -> {
                     hub.screens = shown;
                     hub.screen.screens(shown);
@@ -259,6 +269,26 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
     }
 
     @Override
+    public void dossier(String id) {
+        session.dispatch(current -> {
+            SystemDossier read = SystemDossier.read(current, id);
+            if (read != null) {
+                GpuHost.post(() -> screen.dossier(read));
+            }
+        });
+    }
+
+    @Override
+    public void cancelTrip() {
+        session.dispatch(current -> {
+            AbstractLocation location = current.getPlayerForce().getForceDetachment().getCurrentLocation();
+            if (location != null && location.getJumpPath() != null) {
+                location.setJumpPath(null);
+            }
+        });
+    }
+
+    @Override
     public void disposed() {
         dialogs.released();
     }
@@ -327,6 +357,7 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
     public void ended(@Nullable Throwable failure) {
         // Closes the top bar's watch too
         session.close();
+        history.close();
         if (failure != null) {
             LOGGER.error(failure, "The command post failed; opening the campaign window");
         }

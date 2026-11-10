@@ -32,12 +32,15 @@
  */
 package mekhq.gui.gdx.hub;
 
+import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
@@ -53,18 +56,23 @@ import com.badlogic.gdx.math.Intersector;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Matrix4;
 import com.badlogic.gdx.math.Plane;
+import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.math.collision.Ray;
 import com.badlogic.gdx.utils.Disposable;
 import com.badlogic.gdx.utils.FloatArray;
 import jakarta.annotation.Nullable;
 import mekhq.MHQConstants;
+import mekhq.campaign.universe.territory.InfluenceMap;
+import mekhq.gui.model.view.Borders;
+import mekhq.gui.model.view.MapLens;
 import mekhq.gui.model.view.StarMap;
 
 /**
  * The campaign's star map, full screen: the systems laid out on the galactic plane (coreward away from the camera),
- * glowing in their owners' colours. It opens looking straight down with coreward up, as the holotable's dive ends,
- * and can be tilted from there. The force's system wears a pulsing ring with its jump
+ * glowing in their owners' colours over the realms' territory. It shows them on the campaign's date or, scrubbed
+ * through history, on any other ({@link #era}), fading from one date's borders to the next. It opens looking straight
+ * down with coreward up, as the holotable's dive ends, and can be tilted from there. The force's system wears a pulsing ring with its jump
  * range around it, its route is drawn star to star, solid as far as it has come with a marker where it is and dashed
  * ahead, a course previewed to the chosen system is dashed too, and the system under the cursor or chosen is ringed.
  *
@@ -79,11 +87,42 @@ final class StarMapView {
 
         /** The player chose {@code star}; null when the click was on empty space. */
         void chosen(@Nullable StarMap.Star star);
+
+        /**
+         * The cursor came over {@code held}'s territory, away from any system, which {@code rival} disputes when not
+         * null; null when it left.
+         */
+        default void realm(@Nullable Borders.Holding held, @Nullable Borders.Holding rival) {
+        }
+
+        /**
+         * The player right-clicked ({@code x}, {@code y}) light years, on {@code star} or, null, on open space;
+         * {@code screenX} and {@code screenY} are the input coordinates clicked.
+         */
+        default void context(@Nullable StarMap.Star star, double x, double y, int screenX, int screenY) {
+        }
     }
 
     /** Takes the names to write over the map, the most important first; x and y are input coordinates. */
     interface Labels {
-        void label(StarMap.Star star, float x, float y, boolean marked);
+        /**
+         * Writes {@code star}'s name at {@code alpha} of its strength, as prominent as {@code tier} (0 marked, then
+         * {@link #labelTier}); when {@code wanted}, takes its room if free and returns whether it did.
+         */
+        boolean label(StarMap.Star star, float x, float y, int tier, float alpha, boolean wanted);
+    }
+
+    /** Takes the realms' names to write large over their territory; x and y are input coordinates. */
+    interface RealmNames {
+        /**
+         * Writes {@code name} centred on (x, y) at {@code alpha} of its strength, in its realm's colour
+         * {@code rgb}; its territory spans about {@code span} pixels either side.
+         */
+        void realm(String name, String code, int rgb, float x, float y, float span, float alpha);
+    }
+
+    /** A realm's name and where it goes: by its most central settled system, its territory {@code spread} wide. */
+    record RealmName(String name, String code, int rgb, float x, float y, float spread) {
     }
 
     /** The holotable's, so its dive ends on the very view the map opens with. */
@@ -94,8 +133,42 @@ final class StarMapView {
     static final float START_DISTANCE = 650;
     private static final float MIN_PITCH = 20;
     /** Systems are named once the camera is this near, in light years. */
-    private static final float LABEL_DISTANCE = 700;
-    private static final int MAX_LABELS = 240;
+    /** How near the camera must be, in light years, for each {@link #labelTier} of name to show. */
+    private static final float[] LABEL_REACH = { Float.MAX_VALUE, Float.MAX_VALUE, 1500, 900, 330, 110 };
+    /** How fast names fade in and out, per second. */
+    private static final float LABEL_EASE = 7;
+    /** How far off screen, in pixels, a system may be and still keep its name fading. */
+    private static final float LABEL_MARGIN = 80;
+    /** Realms are named over their territory from this far out, in light years, fully by {@link #REALM_FAR}. */
+    private static final float REALM_NEAR = 420;
+    private static final float REALM_FAR = 800;
+    /** The fewest settled systems a realm needs for its name to be written over its territory. */
+    private static final int REALM_SYSTEMS = 12;
+    /** The tilt, in degrees, the camera eases to when a lens comes on looking straight down. */
+    private static final float LENS_PITCH = 52;
+    /** The ruler's colour, linear. */
+    private static final Vector3 RULER = new Vector3(0.55f, 0.95f, 1.0f);
+    /** How quickly, a share a second, the spotlight comes onto a realm or leaves it. */
+    private static final float SPOT_RATE = 6;
+    /** The tilt, in degrees, above which pillars and beacons fade, being seen end on. */
+    private static final float UPRIGHT_PITCH = 86;
+    /** How much of its strength the territory keeps under a lens. */
+    private static final float LENS_TERRITORY = 0.3f;
+    private static final Vector3 HPG_COLOUR = new Vector3(0.42f, 0.78f, 1.0f);
+    /** A marker's shapes, added to its pulse: a diamond for the campaign's operations, a square for its bases. */
+    private static final int DIAMOND = 10;
+    private static final int SQUARE = 20;
+    private static final Vector3 MISSION_COLOUR = new Vector3(1.0f, 0.55f, 0.12f);
+    private static final Vector3 BATTLE_COLOUR = new Vector3(1.0f, 0.16f, 0.12f);
+    private static final Vector3 BASE_COLOUR = new Vector3(0.3f, 1.0f, 0.55f);
+    /** The most jumps the force's reach is followed out to. */
+    private static final int REACH_JUMPS = 4;
+    /** How fast the reach spreads out when shown, in light years a second along its jumps. */
+    private static final float REACH_SPEED = 90;
+    /** The reach's colours by jump, from the first. */
+    private static final int[] REACH_COLOURS = { 0x7FF5FF, 0x58C8FF, 0x7A8CFF, 0xA070F0 };
+    /** How widely, in light years, a realm's systems may scatter and still be named as one territory. */
+    private static final double REALM_SCATTERED = 260;
     /** How far from a system, in pixels, the cursor may be to pick it. */
     static final float PICK_RADIUS = 14;
     /** How far a press may move, in pixels, and still be a click. */
@@ -119,15 +192,69 @@ final class StarMapView {
     private final Vector3 grab = new Vector3();
     private final Vector3 ground = new Vector3();
     private final Vector3 flight = new Vector3();
+    private final Vector3 scratch = new Vector3();
     private PerspectiveCamera camera;
     private ShaderProgram starShader;
     private ShaderProgram ringShader;
     private ShaderProgram lineShader;
     private ShaderProgram routeShader;
+    /** Where the borders on each date are read; none until the screen hands it over. */
+    private @Nullable BorderHistory history;
+    /** The date the map shows history on; null for the campaign's own. */
+    private @Nullable LocalDate era;
+    /** The realms' territory on the date shown, once its borders are read. */
+    private final TerritoryField territory = new TerritoryField();
+    private final Backdrop backdrop = new Backdrop();
+    /** The HPG network on the date shown, when it is. */
+    private final Strokes network = new Strokes();
+    /** The lens's pillars, rising from the systems it rates, their heights at 1 light year to the level. */
+    private final Strokes pillars = new Strokes();
+    /** The lens the systems are seen through; null for their owners. */
+    private @Nullable MapLens lens;
+    private boolean networkShown;
+    /** The capitals' light shafts, their heights at 1 light year to a realm's. */
+    private final Strokes beacons = new Strokes();
+    /** The force's reach, jump by jump, out from its system. */
+    private final Strokes reach = new Strokes();
+    private boolean reachShown;
+    /** When, in the view's time, the reach began spreading out. */
+    private float reachStart;
+    /** How far the lens has come in, 0 to 1, as the territory dims and the pillars rise. */
+    private float lensIn;
+    private boolean emptyShown = true;
+    /** The distance the camera glides to, or NaN when it stays. */
+    private float wantedDistance = Float.NaN;
+    /** The ruler: whether one is laid, being drawn out, its ends on the plane and its strokes. */
+    private boolean ruled;
+    private boolean measuring;
+    private boolean rulerStale;
+    private final Vector3 rulerFrom = new Vector3();
+    private final Vector3 rulerTo = new Vector3();
+    private final Strokes ruler = new Strokes();
+    /** Where the cursor points, in input coordinates; negative when it is off the map. */
+    private int pointX = -1;
+    private int pointY = -1;
+    /** The realm the cursor is over, from 1; 0 for none. */
+    private int spotWanted;
+    /** The realm in the spotlight, fading in or out at {@link #spotIn}. */
+    private int spot;
+    private float spotIn;
+    private boolean adminShown;
+    private float adminIn;
+    private @Nullable Borders.Holding spotHeld;
+    private @Nullable Borders.Holding spotRival;
+    /** How strongly ground must be disputed for the hover card to call it contested; the stripes start here too. */
+    private static final float DISPUTED_ABOVE = 0.3f;
+    /** The tilt the camera is easing to, in degrees; NaN when it isn't. */
+    private float wantedPitch = Float.NaN;
+    /** The systems as {@link #territory}'s date had them, in the map's order; the map's own until it is read. */
+    private List<StarMap.Star> shown = List.of();
     private @Nullable Mesh stars;
     private @Nullable Mesh lines;
     /** The force's route, star to star. */
     private @Nullable Mesh route;
+    /** Whether the voyage's route is drawn; the player can hide it. */
+    private boolean routeShown = true;
     /** How many light years along {@link #route} the force has come. */
     private float travelled;
     /** Where the force is between the first two systems of its route; null when it isn't between them. */
@@ -155,6 +282,9 @@ final class StarMapView {
     private @Nullable StarMap pending;
     /** Every system's position on screen last frame, x then y in input coordinates; NaN when behind the camera. */
     private float[] screen = new float[0];
+    /** How strongly each system's name shows, 0 to 1, easing towards whether it has room. */
+    private float[] labelAlpha = new float[0];
+    private List<RealmName> realmNames = List.of();
     private final Map<String, Integer> index = new HashMap<>();
     private int current = -1;
     private int hovered = -1;
@@ -171,7 +301,14 @@ final class StarMapView {
             pressY = screenY;
             pressButton = button;
             dragged = false;
-            grabbed = button == Input.Buttons.LEFT && ground(screenX, screenY, grab);
+            measuring = button == Input.Buttons.LEFT && (Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT)
+                  || Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT)) && snap(screenX, screenY, rulerFrom);
+            if (measuring) {
+                rulerTo.set(rulerFrom);
+                ruled = true;
+                rulerStale = true;
+            }
+            grabbed = !measuring && button == Input.Buttons.LEFT && ground(screenX, screenY, grab);
             return true;
         }
 
@@ -183,9 +320,16 @@ final class StarMapView {
             if (!dragged) {
                 return true;
             }
+            if (measuring) {
+                if (snap(screenX, screenY, rulerTo)) {
+                    rulerStale = true;
+                }
+                return true;
+            }
             flying = false;
             posing = false;
             if (pressButton == Input.Buttons.RIGHT) {
+                wantedPitch = Float.NaN;
                 yaw -= Gdx.input.getDeltaX() * 0.25f;
                 pitch = MathUtils.clamp(pitch + Gdx.input.getDeltaY() * 0.2f, MIN_PITCH, 90);
                 aim();
@@ -199,9 +343,21 @@ final class StarMapView {
 
         @Override
         public boolean touchUp(int screenX, int screenY, int pointer, int button) {
-            if (!dragged && button == Input.Buttons.LEFT && button == pressButton) {
+            if (measuring) {
+                measuring = false;
+                // A shift-click without a drag measures nothing
+                ruled = dragged;
+                rulerStale = true;
+            } else if (!dragged && button == Input.Buttons.LEFT && button == pressButton) {
                 int picked = nearest(screen, screenX, screenY, PICK_RADIUS);
                 choose(picked);
+            } else if (!dragged && button == Input.Buttons.RIGHT && button == pressButton) {
+                StarMap.Star on = star(nearest(screen, screenX, screenY, PICK_RADIUS));
+                if (on != null) {
+                    listener.context(on, on.x(), on.y(), screenX, screenY);
+                } else if (ground(screenX, screenY, scratch)) {
+                    listener.context(null, scratch.x, -scratch.z, screenX, screenY);
+                }
             }
             pressButton = -1;
             return true;
@@ -209,7 +365,7 @@ final class StarMapView {
 
         @Override
         public boolean mouseMoved(int screenX, int screenY) {
-            hover(nearest(screen, screenX, screenY, PICK_RADIUS));
+            point(screenX, screenY);
             return false;
         }
 
@@ -252,6 +408,25 @@ final class StarMapView {
         }
     }
 
+    /** Reads the borders on the dates the map shows through {@code borders}. */
+    void history(BorderHistory borders) {
+        history = borders;
+    }
+
+    /**
+     * Shows the systems and territory on {@code date}, or on the campaign's date when null, once that date's borders
+     * are read; until then the map keeps showing the date it did.
+     */
+    void era(@Nullable LocalDate date) {
+        era = date;
+    }
+
+    /** The date whose owners and borders the map shows; null until the first are read. */
+    @Nullable LocalDate shownDate() {
+        Borders showing = territory.shown();
+        return showing == null ? null : showing.date();
+    }
+
     /** Whether the view has a map to show yet. */
     boolean loaded() {
         return map != null || pending != null;
@@ -260,6 +435,16 @@ final class StarMapView {
     /** The system chosen, or null. */
     @Nullable StarMap.Star chosen() {
         return star(chosen);
+    }
+
+    /** Draws the voyage's route, its stops, their names and the force's ship on it, or hides them all. */
+    void showRoute(boolean shown) {
+        routeShown = shown;
+    }
+
+    /** Whether the voyage's route is drawn. */
+    boolean routeShown() {
+        return routeShown;
     }
 
     /** Lets go of the chosen system. */
@@ -272,6 +457,81 @@ final class StarMapView {
         StarMap.Star here = star(current);
         if (here != null) {
             flyTo(here);
+        }
+    }
+
+    /** Flies the camera over ({@code x}, {@code y}) light years. */
+    void flyTo(double x, double y) {
+        world(x, y, flight);
+        flying = true;
+        posing = false;
+    }
+
+    /** Flies the camera over the systems {@code ids}, far enough out to see them all. */
+    void frame(List<String> ids) {
+        double west = Double.MAX_VALUE;
+        double east = -Double.MAX_VALUE;
+        double south = Double.MAX_VALUE;
+        double north = -Double.MAX_VALUE;
+        for (String id : ids) {
+            StarMap.Star star = system(id);
+            if (star != null) {
+                west = Math.min(west, star.x());
+                east = Math.max(east, star.x());
+                south = Math.min(south, star.y());
+                north = Math.max(north, star.y());
+            }
+        }
+        if (west > east) {
+            return;
+        }
+        flyTo((west + east) / 2, (south + north) / 2);
+        float aspect = Math.max(1, (float) Gdx.graphics.getWidth() / Math.max(1, Gdx.graphics.getHeight()));
+        float span = (float) Math.max(north - south, (east - west) / aspect) + 30;
+        wantedDistance = MathUtils.clamp(span * 0.75f / MathUtils.tanDeg(FIELD_OF_VIEW / 2), MIN_DISTANCE,
+              MAX_DISTANCE);
+    }
+
+    /** Glides the camera {@code factor} times as far from the plane, within the zoom's limits. */
+    void zoomBy(float factor) {
+        float from = Float.isNaN(wantedDistance) ? distance : wantedDistance;
+        wantedDistance = MathUtils.clamp(from * factor, MIN_DISTANCE, MAX_DISTANCE);
+    }
+
+    /** The force's system, or null when the force is between systems or unknown. */
+    @Nullable StarMap.Star current() {
+        return star(current);
+    }
+
+    /** The system {@code id}, as the map shows it, or null when it shows none such. */
+    @Nullable StarMap.Star system(String id) {
+        Integer at = index.get(id);
+        return at == null ? null : star(at);
+    }
+
+    /** Shows the systems no one has settled, or hides them; the force's and the chosen stay. */
+    void empty(boolean shown) {
+        if (shown != emptyShown) {
+            emptyShown = shown;
+            restyle();
+        }
+    }
+
+    /** Whether the systems no one has settled show. */
+    boolean empty() {
+        return emptyShown;
+    }
+
+    /** Whether a ruler is laid. */
+    boolean ruled() {
+        return ruled;
+    }
+
+    /** Lays the ruler from the force's system to {@code star}. */
+    void measureFromForce(StarMap.Star star) {
+        StarMap.Star here = star(current);
+        if (here != null) {
+            measure(here.x(), here.y(), star.x(), star.y());
         }
     }
 
@@ -299,10 +559,26 @@ final class StarMapView {
 
     /** Puts the camera on the view the map opens with at once. */
     void snapToStart() {
+        wantedPitch = Float.NaN;
+        wantedDistance = Float.NaN;
         target.set(start);
         distance = START_DISTANCE;
         yaw = 0;
         pitch = 90;
+        flying = false;
+        posing = false;
+        aim();
+    }
+
+    /**
+     * Puts the camera over ({@code x}, {@code y}) light years at once, {@code height} light years away, tilted
+     * {@code tilt} degrees over the plane (90 straight down) and turned {@code turn} degrees from coreward.
+     */
+    void look(double x, double y, float height, float tilt, float turn) {
+        world(x, y, target);
+        distance = MathUtils.clamp(height, MIN_DISTANCE, MAX_DISTANCE);
+        pitch = MathUtils.clamp(tilt, MIN_PITCH, 90);
+        yaw = turn;
         flying = false;
         posing = false;
         aim();
@@ -318,10 +594,98 @@ final class StarMapView {
         return yaw;
     }
 
-    /** The systems shown, in the map's order; empty before it loads. */
+    /**
+     * Looks at the systems through {@code wanted}, or at their owners when null; looking down on the map, the camera
+     * tilts for the lens's pillars to show.
+     */
+    void lens(@Nullable MapLens wanted) {
+        if (wanted == lens) {
+            return;
+        }
+        lens = wanted;
+        if (wanted != null && pitch > LENS_PITCH + 5) {
+            wantedPitch = LENS_PITCH;
+        }
+        restyle();
+    }
+
+    /** The lens the systems are seen through; null for their owners. */
+    @Nullable MapLens lens() {
+        return lens;
+    }
+
+    /** Shows or hides the HPG network. */
+    void network(boolean shown) {
+        if (shown != networkShown) {
+            networkShown = shown;
+            restyle();
+        }
+    }
+
+    /** Whether the HPG network shows. */
+    boolean network() {
+        return networkShown;
+    }
+
+    /** Shows or hides how far the force reaches, jump by jump; shown, it spreads out from the force's system. */
+    void reach(boolean shown) {
+        if (shown != reachShown) {
+            reachShown = shown;
+            reachStart = time;
+            restyle();
+        }
+    }
+
+    /** Whether the force's reach shows. */
+    boolean reach() {
+        return reachShown;
+    }
+
+    /** Shows or hides where the realms' administrative regions meet, fading them in or out. */
+    void admin(boolean shown) {
+        adminShown = shown;
+    }
+
+    /** Whether the realms' administrative regions show. */
+    boolean admin() {
+        return adminShown;
+    }
+
+    /** How many settled systems on screen the lens rates at each level, from 1 to its levels; empty without one. */
+    int[] lensCounts() {
+        MapLens looking = lens;
+        if (looking == null || camera == null) {
+            return new int[0];
+        }
+        int[] counts = new int[looking.levels() + 1];
+        List<StarMap.Star> all = shown;
+        for (int i = 0; i < all.size() && i * 2 + 1 < screen.length; i++) {
+            float x = screen[i * 2];
+            float y = screen[i * 2 + 1];
+            if (Float.isNaN(x) || x < 0 || y < 0 || x > camera.viewportWidth || y > camera.viewportHeight) {
+                continue;
+            }
+            counts[looking.level(all.get(i).lenses())]++;
+        }
+        return counts;
+    }
+
+    /** How many input pixels a light year spans across the middle of the screen; 0 before the view is made. */
+    float pixelsPerLightYear() {
+        if (camera == null) {
+            return 0;
+        }
+        Vector3 near = camera.project(scratch.set(target));
+        float x = near.x;
+        float y = near.y;
+        Vector3 side = scratch.set(camera.direction).crs(camera.up).nor().scl(10).add(target);
+        camera.project(side);
+        return Vector2.dst(x, y, side.x, side.y) / 10;
+    }
+
+    /** The systems shown, in the map's order, as the date shown had them; empty before it loads. */
     List<StarMap.Star> stars() {
-        StarMap shown = map;
-        return shown == null ? List.of() : shown.stars();
+        return shown;
     }
 
     /** The factions with the most systems on screen, at most {@code limit} of them. */
@@ -331,15 +695,22 @@ final class StarMapView {
     }
 
     void create() {
-        starShader = HoloTableView.compile(StarMapShaders.STAR_VERTEX, HoloShaders.STAR_FRAGMENT);
+        starShader = HoloTableView.compile(StarMapShaders.STAR_VERTEX, StarMapShaders.STAR_FRAGMENT);
         ringShader = HoloTableView.compile(StarMapShaders.RING_VERTEX, StarMapShaders.RING_FRAGMENT);
         lineShader = HoloTableView.compile(StarMapShaders.LINE_VERTEX, StarMapShaders.LINE_FRAGMENT);
         routeShader = HoloTableView.compile(StarMapShaders.ROUTE_VERTEX, StarMapShaders.ROUTE_FRAGMENT);
+        territory.create();
+        backdrop.create();
+        network.create();
+        beacons.create();
+        reach.create();
+        ruler.create();
+        pillars.create();
         grid = grid();
-        rings = new Mesh(false, 64, 0, pointAttributes());
+        rings = new Mesh(false, 512, 0, pointAttributes());
         camera = new PerspectiveCamera(FIELD_OF_VIEW, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         camera.near = 1;
-        camera.far = MAX_DISTANCE * 3;
+        camera.far = MAX_DISTANCE * 5;
         aim();
     }
 
@@ -366,6 +737,7 @@ final class StarMapView {
             load(pending);
             pending = null;
         }
+        history(delta);
         if (previewStale && map != null) {
             if (preview != null) {
                 preview.dispose();
@@ -375,6 +747,23 @@ final class StarMapView {
         }
         if (flying) {
             fly(delta);
+        }
+        if (!Float.isNaN(wantedDistance)) {
+            distance = (float) Math.exp(MathUtils.lerp((float) Math.log(distance), (float) Math.log(wantedDistance),
+                  1 - (float) Math.exp(-delta * 6)));
+            if (Math.abs(distance - wantedDistance) < 0.05f) {
+                distance = wantedDistance;
+                wantedDistance = Float.NaN;
+            }
+            aim();
+        }
+        if (!Float.isNaN(wantedPitch)) {
+            pitch = MathUtils.lerp(pitch, wantedPitch, 1 - (float) Math.exp(-delta * 4));
+            if (Math.abs(pitch - wantedPitch) < 0.05f) {
+                pitch = wantedPitch;
+                wantedPitch = Float.NaN;
+            }
+            aim();
         }
         project();
 
@@ -387,6 +776,12 @@ final class StarMapView {
         Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
         Gdx.gl.glDisable(GL20.GL_CULL_FACE);
         Gdx.gl.glEnable(GL20.GL_BLEND);
+        backdrop.render(camera, fade, time, Gdx.graphics.getBackBufferHeight() / (float) Math.max(1,
+              Gdx.graphics.getHeight()));
+        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+        lensIn = MathUtils.clamp(lensIn + (lens == null ? -delta : delta) * 3, 0, 1);
+        spotlight(delta);
+        territory.render(camera.combined, fade * MathUtils.lerp(1, LENS_TERRITORY, lensIn), time);
         Gdx.gl.glBlendFunc(GL20.GL_ONE, GL20.GL_ONE);
 
         lineShader.bind();
@@ -409,12 +804,27 @@ final class StarMapView {
                 routeShader.setUniformf("u_done", -1f);
                 preview.render(routeShader, GL20.GL_LINES);
             }
-            if (route != null) {
+            if (route != null && routeShown) {
                 routeShader.setUniformf("u_done", travelled);
                 route.render(routeShader, GL20.GL_LINES);
             }
         }
 
+        network.render(camera, fade, time, 1);
+        if (rulerStale) {
+            rulerStale = false;
+            rulerStrokes();
+        }
+        ruler.render(camera, fade, time, 1);
+        if (reachShown) {
+            reach.render(camera, fade, time, 1, (time - reachStart) * REACH_SPEED);
+        }
+        // Seen from straight above, upright strokes are only streaks; they show as the map tilts
+        float upright = MathUtils.clamp((UPRIGHT_PITCH - pitch) / 20, 0, 1);
+        beacons.render(camera, fade * (1 - lensIn) * upright, time, beaconHeight());
+        if (lensIn > 0) {
+            pillars.render(camera, fade * upright, time, lensIn * lensIn * (3 - 2 * lensIn) * pillarHeight());
+        }
         Gdx.gl.glEnable(GL_PROGRAM_POINT_SIZE);
         if (stars != null) {
             starShader.bind();
@@ -438,31 +848,33 @@ final class StarMapView {
         Gdx.gl.glDisable(GL20.GL_BLEND);
     }
 
-    /** Hands {@code labels} the names to write this frame, the marked systems first, then the nearest the centre. */
+    /**
+     * Hands {@code labels} the names to write this frame, the most important first: the marked systems, then the
+     * realms' capitals, then the most populous worlds nearest the middle. Each name fades in and out as it comes and
+     * goes, and one already shown keeps its place ahead of one that would push it out.
+     */
     void labels(Labels labels) {
-        StarMap shown = map;
-        if (shown == null) {
+        StarMap today = map;
+        List<StarMap.Star> all = shown;
+        if (today == null || all.size() != labelAlpha.length) {
             return;
         }
-        List<StarMap.Star> all = shown.stars();
-        boolean[] done = new boolean[all.size()];
-        for (int marked : new int[] { chosen, hovered, current }) {
-            if (marked >= 0 && !done[marked] && !Float.isNaN(screen[marked * 2])) {
-                done[marked] = true;
-                labels.label(all.get(marked), screen[marked * 2], screen[marked * 2 + 1], true);
+        float ease = Math.min(1, Math.min(Gdx.graphics.getDeltaTime(), 0.1f) * LABEL_EASE);
+        boolean[] marked = new boolean[all.size()];
+        boolean[] quiet = new boolean[all.size()];
+        for (int at : new int[] { chosen, hovered, current }) {
+            if (at >= 0) {
+                marked[at] = true;
             }
         }
-        for (List<String> ids : List.of(shown.route(), previewed)) {
+        List<String> stops = routeShown ? today.route() : List.of();
+        for (List<String> ids : List.of(stops, previewed, List.copyOf(today.marks().keySet()))) {
             for (String id : ids) {
                 Integer at = index.get(id);
-                if (at != null && !done[at] && !Float.isNaN(screen[at * 2])) {
-                    done[at] = true;
-                    labels.label(all.get(at), screen[at * 2], screen[at * 2 + 1], true);
+                if (at != null) {
+                    marked[at] = true;
                 }
             }
-        }
-        if (distance > LABEL_DISTANCE) {
-            return;
         }
         float width = Gdx.graphics.getWidth();
         float height = Gdx.graphics.getHeight();
@@ -471,23 +883,121 @@ final class StarMapView {
         for (int i = 0; i < all.size(); i++) {
             float x = screen[i * 2];
             float y = screen[i * 2 + 1];
-            if (done[i] || Float.isNaN(x) || x < 0 || y < 0 || x > width || y > height || !all.get(i).settled()) {
+            if (Float.isNaN(x) || x < -LABEL_MARGIN || y < -LABEL_MARGIN || x > width + LABEL_MARGIN
+                  || y > height + LABEL_MARGIN) {
+                labelAlpha[i] = 0;
+                continue;
+            }
+            StarMap.Star star = all.get(i);
+            int tier = marked[i] ? 0 : labelTier(star);
+            // Through a lens only the best rated systems keep their names, so the columns read clearly
+            quiet[i] = !marked[i] && lens != null && lens.level(star.lenses()) * 4 < lens.levels() * 3;
+            boolean wanted = marked[i] || (!quiet[i] && distance <= LABEL_REACH[tier]);
+            if (!wanted && labelAlpha[i] <= 0) {
                 continue;
             }
             float dx = x - width / 2;
             float dy = y - height / 2;
-            order[count++] = ((long) (dx * dx + dy * dy) << 32) | i;
+            long near = Math.min((long) (dx * dx + dy * dy), Integer.MAX_VALUE);
+            long people = 15 - Math.min(15, (long) Math.log10(Math.max(1, star.people())));
+            long stay = labelAlpha[i] > 0.5f ? 0 : 1;
+            order[count++] = ((long) tier << 56) | (stay << 55) | (people << 51) | (near << 20) | i;
         }
         Arrays.sort(order, 0, count);
-        for (int n = 0; n < Math.min(count, MAX_LABELS); n++) {
-            int i = (int) order[n];
-            labels.label(all.get(i), screen[i * 2], screen[i * 2 + 1], false);
+        for (int n = 0; n < count; n++) {
+            int i = (int) (order[n] & 0xFFFFF);
+            int tier = (int) (order[n] >>> 56);
+            boolean wanted = tier == 0 || (!quiet[i] && distance <= LABEL_REACH[tier]);
+            float alpha = tier == 0 ? 1 : labelAlpha[i];
+            boolean placed = labels.label(all.get(i), screen[i * 2], screen[i * 2 + 1], tier, alpha, wanted);
+            labelAlpha[i] = tier == 0 ? 1 : alpha + ((placed ? 1 : 0) - alpha) * ease;
+            if (labelAlpha[i] < 0.01f && !placed) {
+                labelAlpha[i] = 0;
+            }
         }
     }
 
+    /** Hands {@code names} the realms' names to write over their territory, fading in as the camera pulls out. */
+    void realmNames(RealmNames names) {
+        float alpha = MathUtils.clamp((distance - REALM_NEAR) / (REALM_FAR - REALM_NEAR), 0, 1);
+        if (alpha <= 0 || camera == null) {
+            return;
+        }
+        float pixels = pixelsPerLightYear();
+        for (RealmName realm : realmNames) {
+            Vector3 at = camera.project(world(realm.x(), realm.y(), scratch));
+            names.realm(realm.name(), realm.code(), realm.rgb(), at.x, camera.viewportHeight - at.y,
+                  realm.spread() * pixels, alpha * alpha * (3 - 2 * alpha));
+        }
+    }
+
+    /**
+     * The realms holding at least {@link #REALM_SYSTEMS} settled systems of {@code all}, each named by its most central
+     * settled system.
+     */
+    static List<RealmName> realmNames(List<StarMap.Star> all) {
+        Map<String, double[]> sums = new HashMap<>();
+        Map<String, String> codes = new HashMap<>();
+        for (StarMap.Star star : all) {
+            if (star.settled() && !star.faction().isBlank()) {
+                double[] sum = sums.computeIfAbsent(star.faction(), name -> new double[5]);
+                sum[0] += star.x();
+                sum[1] += star.y();
+                sum[2] += star.x() * star.x() + star.y() * star.y();
+                sum[3]++;
+                sum[4] = star.rgb();
+                codes.put(star.faction(), star.code());
+            }
+        }
+        List<RealmName> names = new ArrayList<>();
+        for (Map.Entry<String, double[]> entry : sums.entrySet()) {
+            double[] sum = entry.getValue();
+            if (sum[3] < REALM_SYSTEMS) {
+                continue;
+            }
+            double cx = sum[0] / sum[3];
+            double cy = sum[1] / sum[3];
+            double spread = Math.sqrt(Math.max(0, sum[2] / sum[3] - cx * cx - cy * cy));
+            // Worlds scattered across the map, the independents', hold no one territory to name
+            if (spread > REALM_SCATTERED) {
+                continue;
+            }
+            StarMap.Star centre = null;
+            double best = Double.MAX_VALUE;
+            for (StarMap.Star star : all) {
+                if (star.settled() && entry.getKey().equals(star.faction())) {
+                    double d = (star.x() - cx) * (star.x() - cx) + (star.y() - cy) * (star.y() - cy);
+                    if (d < best) {
+                        best = d;
+                        centre = star;
+                    }
+                }
+            }
+            if (centre != null) {
+                names.add(new RealmName(entry.getKey(), codes.get(entry.getKey()), (int) sum[4], (float) centre.x(), (float) centre.y(),
+                      (float) spread));
+            }
+        }
+        return List.copyOf(names);
+    }
+
+    /** How prominent a system's name is: 1 a realm's capital, 2 a region's, 3 a district's, 4 settled, 5 empty. */
+    static int labelTier(StarMap.Star star) {
+        if (!star.settled()) {
+            return 5;
+        }
+        return switch (star.capital()) {
+            case 3 -> 1;
+            case 2 -> 2;
+            case 1 -> 3;
+            default -> 4;
+        };
+    }
+
     void dispose() {
-        for (Disposable resource : new Disposable[] { starShader, ringShader, lineShader, routeShader, stars, lines,
-              route, preview, grid, rings }) {
+        for (Disposable resource : new Disposable[] { starShader, ringShader, lineShader, routeShader,
+              stars, lines, route, preview, grid, rings, territory, backdrop, network, pillars, beacons, reach,
+              ruler }) {
             if (resource != null) {
                 resource.dispose();
             }
@@ -575,14 +1085,12 @@ final class StarMapView {
             index.put(all.get(i).id(), i);
         }
         screen = new float[all.size() * 2];
+        labelAlpha = new float[all.size()];
         Arrays.fill(screen, Float.NaN);
         current = changed.current() == null ? -1 : index.getOrDefault(changed.current(), -1);
         chosen = wasChosen == null ? -1 : index.getOrDefault(wasChosen.id(), -1);
         hovered = -1;
-        if (stars != null) {
-            stars.dispose();
-        }
-        stars = starMesh(all);
+        align();
         if (lines != null) {
             lines.dispose();
         }
@@ -603,8 +1111,310 @@ final class StarMapView {
     }
 
     private @Nullable StarMap.Star star(int at) {
-        StarMap shown = map;
-        return shown == null || at < 0 || at >= shown.stars().size() ? null : shown.stars().get(at);
+        List<StarMap.Star> all = shown;
+        return at < 0 || at >= all.size() ? null : all.get(at);
+    }
+
+    /**
+     * Turns the territory towards the date wanted, {@link #era} or the campaign's, once its borders are read, and the
+     * turning {@code delta} seconds on.
+     */
+    private void history(float delta) {
+        territory.update(delta);
+        StarMap today = map;
+        BorderHistory borders = history;
+        if (today == null || borders == null) {
+            return;
+        }
+        LocalDate wanted = era == null ? today.date() : era;
+        Borders showing = territory.shown();
+        if (showing != null && showing.date().equals(wanted)) {
+            return;
+        }
+        Borders read = borders.get(wanted);
+        if (read == null) {
+            return;
+        }
+        territory.show(read);
+        align();
+        if (hovered >= 0) {
+            listener.hovered(star(hovered));
+        }
+    }
+
+    /** Takes the systems shown from {@link #territory}'s date, in the map's order, and draws them so. */
+    private void align() {
+        StarMap today = map;
+        if (today == null) {
+            return;
+        }
+        Borders showing = territory.shown();
+        if (showing == null || showing.date().equals(today.date())) {
+            shown = today.stars();
+        } else {
+            Map<String, StarMap.Star> then = new HashMap<>();
+            for (StarMap.Star star : showing.stars()) {
+                then.put(star.id(), star);
+            }
+            List<StarMap.Star> aligned = new ArrayList<>(today.stars().size());
+            for (StarMap.Star star : today.stars()) {
+                aligned.add(then.getOrDefault(star.id(), star));
+            }
+            shown = aligned;
+        }
+        realmNames = realmNames(shown);
+        restyle();
+    }
+
+    /** Draws the systems shown again as the lens and overlays now have them. */
+    private void restyle() {
+        if (stars != null) {
+            stars.dispose();
+        }
+        stars = starMesh(shown, lens, emptyShown);
+        pillars.clear();
+        if (lens != null) {
+            pillars(pillars, shown, lens);
+        }
+        pillars.upload();
+        network.clear();
+        Borders showing = territory.shown();
+        if ((networkShown || lens == MapLens.HPG) && showing != null) {
+            float[] links = showing.hpgLinks();
+            for (int i = 0; i + 4 < links.length; i += 5) {
+                boolean a = links[i + 4] >= MapLens.HPG.levels();
+                float bright = a ? 0.5f : 0.22f;
+                network.add(links[i], 0, -links[i + 1], links[i + 2], 0, -links[i + 3], HPG_COLOUR.x * bright,
+                      HPG_COLOUR.y * bright, HPG_COLOUR.z * bright, 1, a ? 2.0f : 1.3f, 0, a ? 30 : 0);
+            }
+        }
+        network.upload();
+        beacons.clear();
+        for (StarMap.Star star : shown) {
+            if (star.capital() >= 2) {
+                beacon(beacons, star);
+            }
+        }
+        beacons.upload();
+        reach.clear();
+        if (reachShown) {
+            reach(reach, shown, current);
+        }
+        reach.upload();
+    }
+
+    /** A capital's light shaft in its realm's colour, brightest at its foot; a realm's stands twice a region's. */
+    private static void beacon(Strokes into, StarMap.Star star) {
+        int rgb = star.rgb();
+        float r = linear((rgb >> 16) & 0xFF);
+        float g = linear((rgb >> 8) & 0xFF);
+        float b = linear(rgb & 0xFF);
+        boolean realm = star.capital() >= 3;
+        float top = realm ? 1 : 0.5f;
+        float bright = realm ? 1 : 0.6f;
+        float x = (float) star.x();
+        float z = (float) -star.y();
+        float hr = r * 0.6f + 0.4f;
+        float hg = g * 0.6f + 0.4f;
+        float hb = b * 0.6f + 0.4f;
+        // A wide soft haze round a narrow hot core, both fading smoothly as they rise
+        into.add(x, 0, z, x, top, z, r, g, b, 0.9f * bright, 0, realm ? 22 : 13, 0, 0);
+        into.add(x, 0, z, x, top * 0.75f, z, hr, hg, hb, 2.2f * bright, 0, realm ? 4.5f : 3, 0, 0);
+    }
+
+    /** How tall, in light years, a realm's capital's beacon stands: taller the further out the camera is. */
+    private float beaconHeight() {
+        return MathUtils.clamp(distance * 0.08f, 10, 160);
+    }
+
+    /**
+     * The jumps out from {@code from} in {@code all}, up to {@value #REACH_JUMPS}, each system reached by its shortest
+     * count of jumps of {@link MHQConstants#MAX_JUMP_RADIUS} light years at most, its stroke from the system it was
+     * reached from coloured by the count and measured along from {@code from}, so the reach spreads out from it.
+     */
+    private static void reach(Strokes into, List<StarMap.Star> all, int from) {
+        if (from < 0 || from >= all.size()) {
+            return;
+        }
+        double radius = MHQConstants.MAX_JUMP_RADIUS;
+        Map<Long, List<Integer>> cells = new HashMap<>();
+        for (int i = 0; i < all.size(); i++) {
+            StarMap.Star star = all.get(i);
+            cells.computeIfAbsent(reachCell(Math.floor(star.x() / radius), Math.floor(star.y() / radius)),
+                  key -> new ArrayList<>()).add(i);
+        }
+        int[] jumps = new int[all.size()];
+        float[] along = new float[all.size()];
+        Arrays.fill(jumps, -1);
+        jumps[from] = 0;
+        List<Integer> ring = List.of(from);
+        for (int jump = 1; jump <= REACH_JUMPS && !ring.isEmpty(); jump++) {
+            List<Integer> next = new ArrayList<>();
+            int rgb = REACH_COLOURS[Math.min(jump, REACH_COLOURS.length) - 1];
+            float fade = 1.0f - 0.18f * (jump - 1);
+            for (int at : ring) {
+                StarMap.Star star = all.get(at);
+                double cx = Math.floor(star.x() / radius);
+                double cy = Math.floor(star.y() / radius);
+                for (int i = -1; i <= 1; i++) {
+                    for (int j = -1; j <= 1; j++) {
+                        for (int other : cells.getOrDefault(reachCell(cx + i, cy + j), List.of())) {
+                            if (jumps[other] >= 0) {
+                                continue;
+                            }
+                            StarMap.Star there = all.get(other);
+                            double dx = there.x() - star.x();
+                            double dy = there.y() - star.y();
+                            double length = Math.sqrt(dx * dx + dy * dy);
+                            if (length > radius) {
+                                continue;
+                            }
+                            jumps[other] = jump;
+                            along[other] = along[at] + (float) length;
+                            next.add(other);
+                            float bright = 1.2f * fade;
+                            into.add((float) star.x(), 0, (float) -star.y(), (float) there.x(), 0, (float) -there.y(),
+                                  linear((rgb >> 16) & 0xFF) * bright, linear((rgb >> 8) & 0xFF) * bright,
+                                  linear(rgb & 0xFF) * bright, 1, jump == 1 ? 3.0f : 2.2f, along[at], 18);
+                        }
+                    }
+                }
+            }
+            ring = next;
+        }
+    }
+
+    private static long reachCell(double i, double j) {
+        return ((long) i << 32) ^ ((long) j & 0xFFFFFFFFL);
+    }
+
+    /** The point on the plane under {@code screenX}, {@code screenY}, on the system there if any, into {@code out}. */
+    private boolean snap(int screenX, int screenY, Vector3 out) {
+        StarMap.Star near = star(nearest(screen, screenX, screenY, PICK_RADIUS));
+        if (near != null) {
+            world(near.x(), near.y(), out);
+            return true;
+        }
+        return ground(screenX, screenY, out);
+    }
+
+    /** Lays the ruler from ({@code x1}, {@code y1}) to ({@code x2}, {@code y2}) light years. */
+    void measure(double x1, double y1, double x2, double y2) {
+        world(x1, y1, rulerFrom);
+        world(x2, y2, rulerTo);
+        ruled = true;
+        rulerStale = true;
+    }
+
+    /** Takes the ruler away; false when none was laid. */
+    boolean clearRuler() {
+        if (!ruled) {
+            return false;
+        }
+        ruled = false;
+        measuring = false;
+        rulerStale = true;
+        return true;
+    }
+
+    /**
+     * The ruler's reading, or null when none is laid: where to write it, in input coordinates, then the light years it
+     * spans.
+     */
+    @Nullable float[] ruler() {
+        if (!ruled || camera == null) {
+            return null;
+        }
+        float span = rulerFrom.dst(rulerTo);
+        if (span < 0.05f) {
+            return null;
+        }
+        Vector3 mid = camera.project(scratch.set(rulerFrom).add(rulerTo).scl(0.5f));
+        return new float[] { mid.x, camera.viewportHeight - mid.y, span };
+    }
+
+    /** Lays the ruler's strokes: a flowing line with a tick at each jump's reach along it and a bar at each end. */
+    private void rulerStrokes() {
+        ruler.clear();
+        float span = rulerFrom.dst(rulerTo);
+        if (ruled && span > 0.05f) {
+            float dx = (rulerTo.x - rulerFrom.x) / span;
+            float dz = (rulerTo.z - rulerFrom.z) / span;
+            ruler.add(rulerFrom.x, 0, rulerFrom.z, rulerTo.x, 0, rulerTo.z, RULER.x, RULER.y, RULER.z, 1.0f, 3.4f,
+                  0, -6);
+            float tick = Math.max(1.2f, span * 0.012f);
+            float jump = (float) MHQConstants.MAX_JUMP_RADIUS;
+            for (float at = jump; at < span; at += jump) {
+                float x = rulerFrom.x + dx * at;
+                float z = rulerFrom.z + dz * at;
+                ruler.add(x - dz * tick, 0, z + dx * tick, x + dz * tick, 0, z - dx * tick, RULER.x, RULER.y,
+                      RULER.z, 1.2f, 2.0f, 0, 0);
+            }
+            for (Vector3 end : new Vector3[] { rulerFrom, rulerTo }) {
+                ruler.add(end.x - dz * tick * 2, 0, end.z + dx * tick * 2, end.x + dz * tick * 2, 0,
+                      end.z - dx * tick * 2, 1, 1, 1, 1.4f, 2.6f, 0, 0);
+            }
+        }
+        ruler.upload();
+    }
+
+    /** The cursor is at {@code screenX}, {@code screenY}, in input coordinates; negative when it left the map. */
+    void point(int screenX, int screenY) {
+        pointX = screenX;
+        pointY = screenY;
+        hover(screenX < 0 ? -1 : nearest(screen, screenX, screenY, PICK_RADIUS));
+    }
+
+    /**
+     * Finds the realm whose territory lies under the cursor, away from any system, and eases the spotlight onto it
+     * over {@code delta} seconds.
+     */
+    private void spotlight(float delta) {
+        Borders showing = territory.shown();
+        int wanted = 0;
+        Borders.Holding held = null;
+        Borders.Holding rival = null;
+        StarMap.Star over = star(hovered);
+        // Over a system the realm it lies in lights up too, but the card stays the system's
+        boolean atStar = over != null;
+        if (showing != null && pointX >= 0 && pressButton < 0 && !flying && lens == null
+              && (atStar || ground(pointX, pointY, scratch))) {
+            InfluenceMap land = showing.land();
+            int column = land.column(atStar ? (float) over.x() : scratch.x);
+            int row = land.row(atStar ? (float) over.y() : -scratch.z);
+            if (column >= 0 && row >= 0 && column < land.width() && row < land.height()) {
+                wanted = land.owner(column, row);
+                held = wanted > 0 ? showing.holding(wanted - 1) : null;
+                if (held == null) {
+                    wanted = 0;
+                }
+                int partner = land.partner(column, row);
+                if (held != null && partner > 0 && partner != wanted && land.dispute(column, row) >= DISPUTED_ABOVE) {
+                    rival = showing.holding(partner - 1);
+                }
+            }
+        }
+        if (atStar) {
+            held = null;
+            rival = null;
+        }
+        if (!Objects.equals(held, spotHeld) || !Objects.equals(rival, spotRival)) {
+            spotHeld = held;
+            spotRival = rival;
+            listener.realm(held, rival);
+        }
+        spotWanted = wanted;
+        if (spot == spotWanted) {
+            spotIn = Math.min(1, spotIn + delta * SPOT_RATE);
+        } else {
+            spotIn = Math.max(0, spotIn - delta * SPOT_RATE);
+            if (spotIn <= 0) {
+                spot = spotWanted;
+            }
+        }
+        territory.spotlight(spot, spotIn * spotIn * (3 - 2 * spotIn));
+        adminIn = MathUtils.clamp(adminIn + (adminShown ? delta : -delta) * SPOT_RATE / 2, 0, 1);
+        territory.admin(adminIn * adminIn * (3 - 2 * adminIn));
     }
 
     private void hover(int at) {
@@ -650,6 +1460,7 @@ final class StarMapView {
     }
 
     private void zoom(float amount, int screenX, int screenY) {
+        wantedDistance = Float.NaN;
         boolean anchored = ground(screenX, screenY, grab);
         distance = MathUtils.clamp(distance * (1 + amount * 0.12f), MIN_DISTANCE, MAX_DISTANCE);
         aim();
@@ -693,20 +1504,19 @@ final class StarMapView {
 
     /** Projects every system onto the screen for picking and labels. */
     private void project() {
-        StarMap shown = map;
-        if (shown == null) {
+        List<StarMap.Star> all = shown;
+        if (all.size() * 2 != screen.length) {
             return;
         }
         float[] m = camera.combined.val;
         float width = camera.viewportWidth;
         float height = camera.viewportHeight;
-        List<StarMap.Star> all = shown.stars();
         for (int i = 0; i < all.size(); i++) {
             StarMap.Star star = all.get(i);
             float x = (float) star.x();
             float z = (float) -star.y();
             float w = m[Matrix4.M30] * x + m[Matrix4.M32] * z + m[Matrix4.M33];
-            if (w <= camera.near) {
+            if (w <= camera.near || !emptyShown && !star.settled() && i != current && i != chosen) {
                 screen[i * 2] = Float.NaN;
                 screen[i * 2 + 1] = Float.NaN;
                 continue;
@@ -721,17 +1531,29 @@ final class StarMapView {
     /** Fills {@link #rings} with this frame's markers; returns how many. */
     private int rings() {
         FloatArray vertices = new FloatArray(POINT_FLOATS * 8);
-        StarMap shown = map;
-        if (shown != null) {
-            for (String id : shown.route()) {
+        StarMap today = map;
+        if (today != null) {
+            for (String id : routeShown ? today.route() : List.<String>of()) {
                 Integer at = index.get(id);
                 if (at != null && at != current) {
                     ring(vertices, star(at), AMBER, 0.55f, 12, 0);
                 }
             }
+            for (Map.Entry<String, Integer> mark : today.marks().entrySet()) {
+                StarMap.Star star = star(index.getOrDefault(mark.getKey(), -1));
+                int what = mark.getValue();
+                if ((what & StarMap.BASE) != 0) {
+                    ring(vertices, star, BASE_COLOUR, 1.1f, 18, SQUARE);
+                }
+                if ((what & StarMap.SCENARIO) != 0) {
+                    ring(vertices, star, BATTLE_COLOUR, 1.5f, 26, DIAMOND + 1);
+                } else if ((what & StarMap.MISSION) != 0) {
+                    ring(vertices, star, MISSION_COLOUR, 1.2f, 24, DIAMOND);
+                }
+            }
         }
         ring(vertices, star(current), CYAN, 1.2f, 30, 1);
-        if (shipShown) {
+        if (shipShown && routeShown) {
             float scale = Gdx.graphics.getBackBufferHeight() / (float) Math.max(1, Gdx.graphics.getHeight());
             vertices.addAll(ship.x, 0, ship.z, WHITE.x * 1.3f, WHITE.y * 1.3f, WHITE.z * 1.3f, 1, 14 * scale, 1);
         }
@@ -756,7 +1578,8 @@ final class StarMapView {
               colour.z * bright, 1, pixels * scale, pulse);
     }
 
-    private static @Nullable Mesh starMesh(List<StarMap.Star> all) {
+    /** The light of the systems {@code all}: in their owners' colours, or their levels' through {@code lens}. */
+    private static @Nullable Mesh starMesh(List<StarMap.Star> all, @Nullable MapLens lens, boolean empty) {
         if (all.isEmpty()) {
             return null;
         }
@@ -765,6 +1588,18 @@ final class StarMapView {
         for (StarMap.Star star : all) {
             float bright = star.settled() ? 1.6f : 0.3f;
             int rgb = star.settled() ? star.rgb() : 0x8A9099;
+            float size = star.settled() ? 1.0f : 0.65f;
+            if (lens != null) {
+                int level = lens.level(star.lenses());
+                rgb = level > 0 ? lens.rgb(level) : 0x5A6070;
+                bright = level > 0 ? 2.2f : 0.14f;
+                // Rated systems glow wide at the columns' feet, the best the widest
+                size = level > 0 ? 1.3f + 1.6f * level / lens.levels() : 0.5f;
+            }
+            if (!empty && !star.settled()) {
+                size = 0;
+                bright = 0;
+            }
             vertices[at++] = (float) star.x();
             vertices[at++] = 0;
             vertices[at++] = (float) -star.y();
@@ -772,12 +1607,44 @@ final class StarMapView {
             vertices[at++] = linear((rgb >> 8) & 0xFF) * bright;
             vertices[at++] = linear(rgb & 0xFF) * bright;
             vertices[at++] = 1;
-            vertices[at++] = star.settled() ? 1.0f : 0.65f;
+            vertices[at++] = size;
             vertices[at++] = HoloTableView.hash(star.x(), star.y());
         }
         Mesh mesh = new Mesh(true, all.size(), 0, pointAttributes());
         mesh.setVertices(vertices);
         return mesh;
+    }
+
+    /**
+     * Raises a column from each system of {@code all} that {@code lens} rates, at most a light year tall so the
+     * strokes' lift sets their height: the higher the level, the taller, steeply so the best stand out. Each column
+     * brightens from its foot to a glowing cap.
+     */
+    private static void pillars(Strokes into, List<StarMap.Star> all, MapLens lens) {
+        for (StarMap.Star star : all) {
+            int level = lens.level(star.lenses());
+            if (level <= 0) {
+                continue;
+            }
+            int rgb = lens.rgb(level);
+            float r = linear((rgb >> 16) & 0xFF);
+            float g = linear((rgb >> 8) & 0xFF);
+            float b = linear(rgb & 0xFF);
+            float x = (float) star.x();
+            float z = (float) -star.y();
+            float share = (float) level / lens.levels();
+            float top = 0.08f + 0.92f * share * share;
+            float width = 7 + 5 * share;
+            into.add(x, 0, z, x, top * 0.5f, z, r * 0.45f, g * 0.45f, b * 0.45f, 1, width, 0, 0);
+            into.add(x, top * 0.5f, z, x, top, z, r * 0.9f, g * 0.9f, b * 0.9f, 1, width + 1, 0, 0);
+            float cap = 0.014f;
+            into.add(x, top - cap, z, x, top + cap, z, 0.5f + r, 0.5f + g, 0.5f + b, 1, width * 2, 0, 0);
+        }
+    }
+
+    /** How tall, in light years, the lens's highest pillars stand: taller the further out the camera is. */
+    private float pillarHeight() {
+        return MathUtils.clamp(distance * 0.05f, 6, 90);
     }
 
     /** The force's jump range around its system. */

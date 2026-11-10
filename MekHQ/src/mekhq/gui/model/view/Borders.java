@@ -1,0 +1,444 @@
+/*
+ * Copyright (C) 2026 The MegaMek Team. All Rights Reserved.
+ *
+ * This file is part of MekHQ.
+ *
+ * MekHQ is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License (GPL),
+ * version 3 or (at your option) any later version,
+ * as published by the Free Software Foundation.
+ *
+ * MekHQ is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
+ *
+ * A copy of the GPL should have been included with this project;
+ * if not, see <https://www.gnu.org/licenses/>.
+ *
+ * NOTICE: The MegaMek organization is a non-profit group of volunteers
+ * creating free software for the BattleTech community.
+ *
+ * MechWarrior, BattleMech, `Mech and AeroTech are registered trademarks
+ * of The Topps Company, Inc. All Rights Reserved.
+ *
+ * Catalyst Game Labs and the Catalyst Game Labs logo are trademarks of
+ * InMediaRes Productions, LLC.
+ *
+ * MechWarrior Copyright Microsoft Corporation. MekHQ was created under
+ * Microsoft's "Game Content Usage Rules"
+ * <https://www.xbox.com/en-US/developers/rules> and it is not endorsed by or
+ * affiliated with Microsoft.
+ */
+package mekhq.gui.model.view;
+
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+import jakarta.annotation.Nullable;
+import megamek.common.universe.FactionTag;
+import mekhq.campaign.events.PlanetarySystemsChangedEvent;
+import mekhq.campaign.universe.Faction;
+import mekhq.campaign.universe.PlanetarySystem;
+import mekhq.campaign.universe.enums.CapitalType;
+import mekhq.campaign.universe.territory.InfluenceMap;
+
+/**
+ * The inner sphere as it stood on a date, for the star map to show history by: every system in its owner's colour
+ * then, every claim a realm laid to space, a settled system it held, and the territory those claims spread to. It
+ * reads only the systems and their factions, so it is built away from the Swing thread, and never changes once built.
+ */
+public final class Borders {
+    private static final String INDEPENDENT = "IND";
+    /** The {@link MapLens#HPG} level of an A station; a B station's is one less. */
+    private static final int HPG_A = 4;
+    /** How many of its nearest relays each HPG relay links to. */
+    private static final int HPG_FANOUT = 3;
+    private static final double HPG_A_REACH = 50;
+    private static final double HPG_B_REACH = 30;
+
+    /**
+     * A realm the map colours space for.
+     *
+     * @param shortName its faction's short name
+     * @param rgb       its colour, 0xRRGGBB
+     */
+    public record Realm(String shortName, int rgb) {
+        public Realm {
+            Objects.requireNonNull(shortName);
+        }
+    }
+
+    /**
+     * What a realm held on the date.
+     *
+     * @param name    its name on the date
+     * @param rgb     its colour, 0xRRGGBB
+     * @param systems how many systems it held, shared ones included
+     * @param people  how many lived in them
+     * @param capital its capital's name, or blank when it held none
+     */
+    public record Holding(String name, int rgb, int systems, long people, String capital) {
+        public Holding {
+            Objects.requireNonNull(name);
+            Objects.requireNonNull(capital);
+        }
+    }
+
+    /**
+     * Numbers the realms as they are first seen, the same on every date, so one date's territory can turn into
+     * another's. Any thread.
+     */
+    public static final class Realms {
+        private final Map<String, Integer> ids = new HashMap<>();
+        private final List<Realm> realms = new ArrayList<>();
+
+        /** The number of {@code faction}'s realm, numbering it if it is new. */
+        synchronized int id(Faction faction) {
+            Integer known = ids.get(faction.getShortName());
+            if (known != null) {
+                return known;
+            }
+            int id = realms.size();
+            ids.put(faction.getShortName(), id);
+            realms.add(new Realm(faction.getShortName(), StarMap.rgb(faction)));
+            return id;
+        }
+
+        /** Every realm numbered so far, by number. */
+        public synchronized List<Realm> all() {
+            return List.copyOf(realms);
+        }
+    }
+
+    private final LocalDate date;
+    private final List<StarMap.Star> stars;
+    private final float[] claimX;
+    private final float[] claimY;
+    private final int[] claimRealm;
+    private final boolean[] disputed;
+    private final List<Realm> realms;
+    private final float minX;
+    private final float minY;
+    private final float maxX;
+    private final float maxY;
+    private final InfluenceMap land;
+    private final InfluenceMap divisions;
+    private final float[] hpg;
+    private final Map<Integer, Holding> holdings;
+
+    private Borders(LocalDate date, List<StarMap.Star> stars, List<float[]> claims, List<Realm> realms,
+          float[] bounds, Map<Integer, Holding> holdings) {
+        this.date = date;
+        this.holdings = Map.copyOf(holdings);
+        this.stars = List.copyOf(stars);
+        int count = claims.size();
+        claimX = new float[count];
+        claimY = new float[count];
+        claimRealm = new int[count];
+        disputed = new boolean[count];
+        for (int i = 0; i < count; i++) {
+            float[] claim = claims.get(i);
+            claimX[i] = claim[0];
+            claimY[i] = claim[1];
+            claimRealm[i] = (int) claim[2];
+            disputed[i] = claim[3] > 0;
+        }
+        int[] division = divisions(claims);
+        this.realms = List.copyOf(realms);
+        minX = bounds[0];
+        minY = bounds[1];
+        maxX = bounds[2];
+        maxY = bounds[3];
+        int[] realm = new int[count];
+        for (int i = 0; i < count; i++) {
+            realm[i] = claimRealm[i] + 1;
+        }
+        land = InfluenceMap.of(count, claimX, claimY, realm, disputed, minX, minY, maxX, maxY);
+        divisions = InfluenceMap.of(count, claimX, claimY, division, new boolean[count], minX, minY, maxX, maxY);
+        hpg = hpgLinks(this.stars);
+    }
+
+    /**
+     * The administrative region, numbered from 1, of each of {@code claims}: that the system's administration names
+     * when its realm holds it alone, else that of the nearest system of the same realm whose administration is named,
+     * as the classic map reads them. A realm naming none of its systems is one region.
+     */
+    private int[] divisions(List<float[]> claims) {
+        int count = claims.size();
+        int[] division = new int[count];
+        Map<Integer, List<Integer>> named = new HashMap<>();
+        for (int i = 0; i < count; i++) {
+            division[i] = (int) claims.get(i)[4];
+            if (division[i] > 0) {
+                named.computeIfAbsent(claimRealm[i], realm -> new ArrayList<>()).add(i);
+            }
+        }
+        int next = 1;
+        for (int id : division) {
+            next = Math.max(next, id + 1);
+        }
+        Map<Integer, Integer> whole = new HashMap<>();
+        for (int i = 0; i < count; i++) {
+            if (division[i] > 0) {
+                continue;
+            }
+            List<Integer> candidates = named.get(claimRealm[i]);
+            if (candidates == null) {
+                if (!whole.containsKey(claimRealm[i])) {
+                    whole.put(claimRealm[i], next++);
+                }
+                division[i] = whole.get(claimRealm[i]);
+                continue;
+            }
+            float best = Float.MAX_VALUE;
+            for (int j : candidates) {
+                float dx = claimX[j] - claimX[i];
+                float dy = claimY[j] - claimY[i];
+                float d = dx * dx + dy * dy;
+                if (d < best) {
+                    best = d;
+                    division[i] = division[j];
+                }
+            }
+        }
+        return division;
+    }
+
+    /**
+     * The HPG network's backbone among {@code stars}: each A station, which reaches {@value #HPG_A_REACH} light years,
+     * and each B station, {@value #HPG_B_REACH}, links to its {@value #HPG_FANOUT} nearest A or B stations within
+     * reach, so the relays read as a web rather than a mat. Each link is five numbers: one end's x and y, the other's,
+     * and the lower of its ends' {@link MapLens#HPG} levels.
+     */
+    static float[] hpgLinks(List<StarMap.Star> stars) {
+        Map<Long, List<StarMap.Star>> cells = new HashMap<>();
+        List<StarMap.Star> relays = new ArrayList<>();
+        for (StarMap.Star star : stars) {
+            if (MapLens.HPG.level(star.lenses()) >= HPG_A - 1) {
+                relays.add(star);
+                cells.computeIfAbsent(cell(star.x(), star.y()), key -> new ArrayList<>()).add(star);
+            }
+        }
+        Map<String, float[]> links = new HashMap<>();
+        List<StarMap.Star> near = new ArrayList<>();
+        for (StarMap.Star station : relays) {
+            int level = MapLens.HPG.level(station.lenses());
+            double reach = level == HPG_A ? HPG_A_REACH : HPG_B_REACH;
+            long cx = Math.round(Math.floor(station.x() / HPG_A_REACH));
+            long cy = Math.round(Math.floor(station.y() / HPG_A_REACH));
+            near.clear();
+            for (long i = cx - 1; i <= cx + 1; i++) {
+                for (long j = cy - 1; j <= cy + 1; j++) {
+                    for (StarMap.Star other : cells.getOrDefault((i << 32) ^ (j & 0xFFFFFFFFL), List.of())) {
+                        if (other != station && squared(station, other) <= reach * reach) {
+                            near.add(other);
+                        }
+                    }
+                }
+            }
+            near.sort(Comparator.comparingDouble(other -> squared(station, other)));
+            for (StarMap.Star other : near.subList(0, Math.min(HPG_FANOUT, near.size()))) {
+                String key = station.id().compareTo(other.id()) < 0 ? station.id() + '|' + other.id()
+                      : other.id() + '|' + station.id();
+                int lower = Math.min(level, MapLens.HPG.level(other.lenses()));
+                links.putIfAbsent(key, new float[] { (float) station.x(), (float) station.y(), (float) other.x(),
+                                                     (float) other.y(), lower });
+            }
+        }
+        float[] flat = new float[links.size() * 5];
+        int at = 0;
+        for (float[] link : links.values()) {
+            System.arraycopy(link, 0, flat, at, 5);
+            at += 5;
+        }
+        return flat;
+    }
+
+    private static double squared(StarMap.Star one, StarMap.Star other) {
+        double dx = other.x() - one.x();
+        double dy = other.y() - one.y();
+        return dx * dx + dy * dy;
+    }
+
+    private static long cell(double x, double y) {
+        long i = Math.round(Math.floor(x / HPG_A_REACH));
+        long j = Math.round(Math.floor(y / HPG_A_REACH));
+        return (i << 32) ^ (j & 0xFFFFFFFFL);
+    }
+
+    /**
+     * The HPG network on the date: five numbers a link, the reaching station's x and y, the reached one's, and the
+     * reaching station's {@link MapLens#HPG} level. Not to be changed.
+     */
+    public float[] hpgLinks() {
+        return hpg;
+    }
+
+    /**
+     * Something that is watched for the systems changing, so borders read before can be read again: a new value each
+     * time they change.
+     */
+    public static ViewModel<Long> universe() {
+        return ViewModel.of("Universe", campaign -> System.nanoTime(),
+              List.of(PlanetarySystemsChangedEvent.class));
+    }
+
+    /**
+     * The inner sphere on {@code date}: the stars of {@code systems} and the claims of whoever held them, their realms
+     * numbered by {@code numbering}. A system holds no claim when no one or only the abandoned hold it; independents
+     * claim it only when no realm shares it. Any thread.
+     */
+    public static Borders of(Collection<PlanetarySystem> systems, Realms numbering, LocalDate date) {
+        List<StarMap.Star> stars = StarMap.stars(systems, date);
+        List<float[]> claims = new ArrayList<>();
+        float[] bounds = { Float.MAX_VALUE, Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE };
+        List<Faction> owners = new ArrayList<>();
+        Map<Integer, Faction> factions = new HashMap<>();
+        Map<Integer, long[]> tallies = new HashMap<>();
+        Map<Integer, String> capitals = new HashMap<>();
+        Map<String, Integer> regions = new HashMap<>();
+        for (PlanetarySystem system : systems) {
+            if (system == null || system.getX() == null || system.getY() == null) {
+                continue;
+            }
+            float x = system.getX().floatValue();
+            float y = system.getY().floatValue();
+            bounds[0] = Math.min(bounds[0], x);
+            bounds[1] = Math.min(bounds[1], y);
+            bounds[2] = Math.max(bounds[2], x);
+            bounds[3] = Math.max(bounds[3], y);
+            owners.clear();
+            Set<Faction> held = system.getFactionSet(date);
+            if (held != null) {
+                for (Faction faction : held) {
+                    if (faction != null && !faction.is(FactionTag.ABANDONED)) {
+                        owners.add(faction);
+                    }
+                }
+            }
+            if (owners.size() > 1) {
+                owners.removeIf(faction -> INDEPENDENT.equals(faction.getShortName()));
+            }
+            float contested = owners.size() > 1 ? 1 : 0;
+            long people = owners.isEmpty() ? 0 : system.getPopulation(date);
+            boolean capital = !owners.isEmpty() && system.getCapitalType(date) == CapitalType.NATIONAL;
+            int region = 0;
+            if (owners.size() == 1 && !INDEPENDENT.equals(owners.get(0).getShortName())) {
+                List<String> administration = system.getAdministration(date);
+                if (administration != null && !administration.isEmpty() && administration.get(0) != null
+                      && !administration.get(0).isBlank()) {
+                    region = regions.computeIfAbsent(numbering.id(owners.get(0)) + "/" + administration.get(0),
+                          key -> regions.size() + 1);
+                }
+            }
+            for (Faction owner : owners) {
+                int id = numbering.id(owner);
+                claims.add(new float[] { x, y, id, contested, region });
+                factions.putIfAbsent(id, owner);
+                long[] tally = tallies.computeIfAbsent(id, key -> new long[2]);
+                tally[0]++;
+                tally[1] += people;
+                if (capital && (owners.size() == 1 || !capitals.containsKey(id))) {
+                    capitals.put(id, StarMap.name(system, date));
+                }
+            }
+        }
+        if (bounds[0] > bounds[2]) {
+            bounds = new float[4];
+        }
+        Map<Integer, Holding> holdings = new HashMap<>();
+        for (Map.Entry<Integer, Faction> entry : factions.entrySet()) {
+            long[] tally = tallies.get(entry.getKey());
+            Faction faction = entry.getValue();
+            holdings.put(entry.getKey(), new Holding(faction.getFullName(date.getYear()), StarMap.rgb(faction),
+                  (int) tally[0], tally[1], capitals.getOrDefault(entry.getKey(), "")));
+        }
+        return new Borders(date, stars, claims, numbering.all(), bounds, holdings);
+    }
+
+    /** What the realm numbered {@code realm} held on the date, or null when it held nothing. */
+    public @Nullable Holding holding(int realm) {
+        return holdings.get(realm);
+    }
+
+    /** The date it shows. */
+    public LocalDate date() {
+        return date;
+    }
+
+    /** Every system with a position, as it stood on the date, in no particular order. */
+    public List<StarMap.Star> stars() {
+        return stars;
+    }
+
+    /** The number of claims. */
+    public int claims() {
+        return claimX.length;
+    }
+
+    /** Light years spinward of Terra of the system claim {@code i} is for. */
+    public float claimX(int i) {
+        return claimX[i];
+    }
+
+    /** Light years coreward of Terra of the system claim {@code i} is for. */
+    public float claimY(int i) {
+        return claimY[i];
+    }
+
+    /** The number of the realm laying claim {@code i}, an index in {@link #realms()}. */
+    public int claimRealm(int i) {
+        return claimRealm[i];
+    }
+
+    /** Whether others claim the same system as claim {@code i}. */
+    public boolean disputed(int i) {
+        return disputed[i];
+    }
+
+    /** Every realm numbered by the time it was read, by number; more than those claiming on the date. */
+    public List<Realm> realms() {
+        return realms;
+    }
+
+    /** The territory the claims spread to; its realms are numbered one past their index in {@link #realms()}. */
+    public InfluenceMap land() {
+        return land;
+    }
+
+    /**
+     * The realms' administrative regions, spread as the realms are: each is numbered from 1, numbers that hold only on
+     * the date. Their edges inside a realm are where its regions meet.
+     */
+    public InfluenceMap divisions() {
+        return divisions;
+    }
+
+    /** The westernmost of all the systems, claimed or not, in light years. */
+    public float minX() {
+        return minX;
+    }
+
+    /** The rimmost of all the systems. */
+    public float minY() {
+        return minY;
+    }
+
+    /** The easternmost of all the systems. */
+    public float maxX() {
+        return maxX;
+    }
+
+    /** The coremost of all the systems. */
+    public float maxY() {
+        return maxY;
+    }
+}

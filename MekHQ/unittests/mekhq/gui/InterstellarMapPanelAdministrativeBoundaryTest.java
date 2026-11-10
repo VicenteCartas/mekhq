@@ -54,6 +54,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.PlanetarySystem;
+import mekhq.campaign.universe.territory.AdministrativeKey;
+import mekhq.campaign.universe.territory.TerritoryCell;
+import mekhq.campaign.universe.territory.TerritoryHex;
 import org.junit.jupiter.api.Test;
 
 class InterstellarMapPanelAdministrativeBoundaryTest {
@@ -75,7 +78,7 @@ class InterstellarMapPanelAdministrativeBoundaryTest {
             for (List<PlanetarySystem> evidence : List.of(
                   List.of(farther, missing, malformed, wrongOwner, nearest),
                   List.of(nearest, wrongOwner, malformed, missing, farther))) {
-                InterstellarMapPanel.AdministrativeKey key = InterstellarMapPanel.classifyAdministrativeKey(
+                AdministrativeKey key = InterstellarMapPanel.classifyAdministrativeKey(
                       List.of(owner), evidence, DATE, 10, 20);
                 assertEquals(owner, key.faction());
                 assertEquals(List.of("Crucis March", "Coreward PDZ"), key.path());
@@ -102,7 +105,7 @@ class InterstellarMapPanelAdministrativeBoundaryTest {
     @Test
       void sharedEdgesAndNationalPerimeterFormAdministrativeBoundariesWithoutUnknownInternalEdges() {
         Faction owner = faction("FS", new Color(70, 156, 220));
-        Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> cells = new HashMap<>();
+        Map<TerritoryHex, TerritoryCell> cells = new HashMap<>();
       addCell(cells, 0, 0, owner, List.of("Crucis March", "Coreward PDZ"));
       addCell(cells, 1, 0, owner, List.of("Crucis March", "Capellan PDZ"));
       addCell(cells, 2, 0, owner, List.of("Draconis March", "Robinson PDZ"));
@@ -122,7 +125,7 @@ class InterstellarMapPanelAdministrativeBoundaryTest {
       void neighboringNationsUseClosedOutlinesWithoutAnIntermediateAdministrativeEdge() {
             Faction owner = faction("FS", Color.YELLOW);
             Faction other = faction("CC", Color.GREEN);
-            Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> cells = new HashMap<>();
+            Map<TerritoryHex, TerritoryCell> cells = new HashMap<>();
             addCell(cells, 0, 0, owner, List.of("Crucis March", "Coreward PDZ"));
             addCell(cells, 1, 0, other, List.of("Sian Commonality", "Sian District"));
 
@@ -152,14 +155,14 @@ class InterstellarMapPanelAdministrativeBoundaryTest {
         Faction other = faction("CC", Color.GREEN);
         for (List<String> adjacent : List.of(List.of("Crucis March", "Capellan PDZ"),
               List.of("Draconis March", "Robinson PDZ"))) {
-            Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> cells = new HashMap<>();
+            Map<TerritoryHex, TerritoryCell> cells = new HashMap<>();
             addCell(cells, 0, 0, owner, List.of("Crucis March", "Coreward PDZ"));
             addCell(cells, 1, 0, owner, adjacent);
             addCell(cells, 0, 1, other, null);
             addCell(cells, 1, -1, other, null);
-            InterstellarMapPanel.TerritoryHex disputedHex = new InterstellarMapPanel.TerritoryHex(1, -1);
-            InterstellarMapPanel.TerritoryCell disputed = cells.get(disputedHex);
-            cells.put(disputedHex, new InterstellarMapPanel.TerritoryCell(disputedHex,
+            TerritoryHex disputedHex = new TerritoryHex(1, -1);
+            TerritoryCell disputed = cells.get(disputedHex);
+            cells.put(disputedHex, new TerritoryCell(disputedHex,
                   disputed.centerX(), disputed.centerY(), List.of(owner, other), null));
 
             List<InterstellarMapPanel.AdministrativeBoundary> boundaries =
@@ -183,7 +186,7 @@ class InterstellarMapPanelAdministrativeBoundaryTest {
         Faction owner = faction("FS", Color.YELLOW);
         for (List<String> adjacent : List.of(List.of("Crucis March", "Capellan PDZ"),
               List.of("Draconis March", "Robinson PDZ"))) {
-            Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> cells = new HashMap<>();
+            Map<TerritoryHex, TerritoryCell> cells = new HashMap<>();
             addCell(cells, 0, 0, owner, List.of("Crucis March", "Coreward PDZ"));
             addCell(cells, 1, 0, owner, adjacent);
             addCell(cells, 0, 1, owner, null);
@@ -201,7 +204,7 @@ class InterstellarMapPanelAdministrativeBoundaryTest {
     @Test
     void singleAdministrationHasClosedNationalOutlineWithoutTerritoryFill() {
         Faction owner = faction("FS", Color.YELLOW);
-        Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> cells = new HashMap<>();
+        Map<TerritoryHex, TerritoryCell> cells = new HashMap<>();
         addCell(cells, 0, 0, owner, List.of("Crucis March", "Coreward PDZ"));
         List<InterstellarMapPanel.AdministrativeBoundary> boundaries =
               InterstellarMapPanel.buildAdministrativeBoundaries(cells);
@@ -231,7 +234,7 @@ class InterstellarMapPanelAdministrativeBoundaryTest {
     @Test
     void nationWithoutKnownAdministrationHasNoAdministrativeOutline() {
         Faction owner = faction("FS", Color.YELLOW);
-        Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> cells = new HashMap<>();
+        Map<TerritoryHex, TerritoryCell> cells = new HashMap<>();
         addCell(cells, 0, 0, owner, null);
 
         assertTrue(InterstellarMapPanel.buildAdministrativeBoundaries(cells).isEmpty());
@@ -242,7 +245,7 @@ class InterstellarMapPanelAdministrativeBoundaryTest {
             Faction owner = faction("FS", Color.YELLOW);
             for (List<String> adjacent : List.of(List.of("Crucis March", "Capellan PDZ"),
                     List.of("Draconis March", "Robinson PDZ"))) {
-                  Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> cells = new HashMap<>();
+                  Map<TerritoryHex, TerritoryCell> cells = new HashMap<>();
                   addCell(cells, 0, 0, owner, List.of("Crucis March", "Coreward PDZ"));
                   addCell(cells, 0, 1, owner, adjacent);
                   InterstellarMapPanel.TerritoryAtlas atlas = new InterstellarMapPanel.TerritoryAtlas(
@@ -277,7 +280,7 @@ class InterstellarMapPanelAdministrativeBoundaryTest {
               InterstellarMapPanel.AdministrativeBoundaryLevel.DISTRICT));
 
         Faction owner = faction("FS", new Color(70, 156, 220));
-        Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> cells = new HashMap<>();
+        Map<TerritoryHex, TerritoryCell> cells = new HashMap<>();
       addCell(cells, 0, 0, owner, List.of("Crucis March", "Coreward PDZ"));
       addCell(cells, 1, 0, owner, List.of("Crucis March", "Capellan PDZ"));
       addCell(cells, 2, 0, owner, List.of("Draconis March", "Robinson PDZ"));
@@ -337,15 +340,15 @@ class InterstellarMapPanelAdministrativeBoundaryTest {
     }
 
     private static void addCell(
-          Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> cells,
+          Map<TerritoryHex, TerritoryCell> cells,
           int column, int row, Faction faction, List<String> administration) {
-        InterstellarMapPanel.TerritoryHex hex = new InterstellarMapPanel.TerritoryHex(column, row);
+        TerritoryHex hex = new TerritoryHex(column, row);
         double centerX = column * HEX_SPACING_X;
         double centerY = row * HEX_SIZE + (column % 2) * HEX_SIZE / 2.0;
-        InterstellarMapPanel.AdministrativeKey key = administration == null
+        AdministrativeKey key = administration == null
               ? null
-              : new InterstellarMapPanel.AdministrativeKey(faction, administration);
-        cells.put(hex, new InterstellarMapPanel.TerritoryCell(
+              : new AdministrativeKey(faction, administration);
+        cells.put(hex, new TerritoryCell(
               hex, centerX, centerY, List.of(faction), key));
     }
 
@@ -384,13 +387,13 @@ class InterstellarMapPanelAdministrativeBoundaryTest {
     @Test
     void administrativeKeyRejectsAnEmptyPath() {
         assertThrows(IllegalArgumentException.class,
-              () -> new InterstellarMapPanel.AdministrativeKey(faction("FS", Color.BLUE), List.of()));
+              () -> new AdministrativeKey(faction("FS", Color.BLUE), List.of()));
     }
 
     @Test
     void prefixPathsDoNotCreateFalseDistrictBoundaries() {
         Faction owner = faction("LC", new Color(70, 156, 220));
-        Map<InterstellarMapPanel.TerritoryHex, InterstellarMapPanel.TerritoryCell> cells = new HashMap<>();
+        Map<TerritoryHex, TerritoryCell> cells = new HashMap<>();
         addCell(cells, 0, 0, owner, List.of("Skye Province"));
         addCell(cells, 1, 0, owner, List.of("Skye Province", "Freedom Theater"));
 
