@@ -184,6 +184,14 @@ public final class StarMapSnapshots {
                 if (List.of(wanted.layers().split("\\+")).contains("ruler")) {
                     view.measure(-20, 10, 160, 120);
                 }
+                if (List.of(wanted.layers().split("\\+")).contains("menu") && menuShot != shot
+                      && view.system("Tharkad") != null) {
+                    menuShot = shot;
+                    StarMap.Star tharkad = view.system("Tharkad");
+                    view.measure(-20, 10, 160, 120);
+                    call("openMapMenu", new Class<?>[] { StarMap.Star.class, double.class, double.class, int.class,
+                          int.class }, tharkad, tharkad.x(), tharkad.y(), 700, 400);
+                }
                 if (List.of(wanted.layers().split("\\+")).contains("spot")) {
                     view.point(Gdx.graphics.getWidth() * 2 / 5, Gdx.graphics.getHeight() / 2);
                 }
@@ -212,6 +220,8 @@ public final class StarMapSnapshots {
                     throw new IllegalStateException(ex);
                 }
             }
+
+            private int menuShot = -1;
 
             private void call(String name, Class<?>[] types, Object... values) {
                 try {

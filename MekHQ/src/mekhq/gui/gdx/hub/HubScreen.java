@@ -214,6 +214,8 @@ final class HubScreen extends ApplicationAdapter {
     private Table hoverCard;
     private Label hoverStats;
     private Table rulerCard;
+    private UiPopover mapMenu;
+    private UiMenuList mapMenuList;
     private Label rulerReading;
     private Label rulerJumps;
     /** Whether the hover card shows a realm rather than a system. */
@@ -268,6 +270,11 @@ final class HubScreen extends ApplicationAdapter {
             @Override
             public void realm(@Nullable Borders.Holding held) {
                 hoverRealm(held);
+            }
+
+            @Override
+            public void context(@Nullable StarMap.Star star, double x, double y, int screenX, int screenY) {
+                openMapMenu(star, x, y, screenX, screenY);
             }
         });
         if (chart != null) {
@@ -370,6 +377,9 @@ final class HubScreen extends ApplicationAdapter {
         flyout = new UiPopover(ui, () -> flyoutArea = null, UiTheme.TOKEN);
         flyoutList = new UiMenuList(ui, UiTheme.TOKEN_MENU_ROW);
         stage.addActor(flyout);
+        mapMenu = new UiPopover(ui, () -> { }, UiTheme.TOKEN);
+        mapMenuList = new UiMenuList(ui, UiTheme.TOKEN_MENU_ROW);
+        stage.addActor(mapMenu);
         stage.addActor(paletteLayer());
         InputAdapter keys = new InputAdapter() {
             @Override
@@ -511,6 +521,8 @@ final class HubScreen extends ApplicationAdapter {
                 skip();
             } else if (flyout.isVisible()) {
                 flyout.back();
+            } else if (mapMenu.isVisible()) {
+                mapMenu.cancel();
             } else if (mapOpen && map.clearRuler()) {
                 rulerCard.setVisible(false);
             } else if (mapOpen && map.chosen() != null) {
@@ -1344,6 +1356,62 @@ final class HubScreen extends ApplicationAdapter {
 
     private static String owner(String owner) {
         return owner.isBlank() ? getText("HqHub.map.unclaimed") : owner;
+    }
+
+    /**
+     * Opens the map's menu where the player right-clicked: what can be done with {@code star}, or with the open space
+     * at ({@code x}, {@code y}) light years, and with the view.
+     */
+    private void openMapMenu(@Nullable StarMap.Star star, double x, double y, int screenX, int screenY) {
+        if (!mapOpen || moving()) {
+            return;
+        }
+        mapMenuList.clearChildren();
+        StarMap.Star force = map.current();
+        if (star != null) {
+            menuItem("HqHub.map.menu.details", null, () -> map.focus(star));
+            if (force != null && !force.id().equals(star.id())) {
+                menuItem("HqHub.map.menu.measure", null, () -> map.measureFromForce(star));
+            }
+        }
+        menuItem("HqHub.map.menu.centre", null, () -> map.flyTo(x, y));
+        if (force != null) {
+            menuItem("HqHub.map.menu.force", getText("HqHub.map.menu.forceKey"), map::home);
+        }
+        StarMap.Star terra = map.system("Terra");
+        if (terra != null) {
+            menuItem("HqHub.map.menu.terra", null, () -> map.flyTo(terra.x(), terra.y()));
+        }
+        mapMenuList.separator();
+        menuItem("HqHub.map.menu.zoomIn", null, () -> map.zoomBy(0.5f));
+        menuItem("HqHub.map.menu.zoomOut", null, () -> map.zoomBy(2));
+        if (map.ruled() || (today != null && scrubber != null && scrubber.year() != today.getYear())) {
+            mapMenuList.separator();
+        }
+        if (map.ruled()) {
+            menuItem("HqHub.map.menu.clearRuler", getText("HqHub.map.menu.clearRulerKey"), () -> {
+                map.clearRuler();
+                rulerCard.setVisible(false);
+            });
+        }
+        if (today != null && scrubber != null && scrubber.year() != today.getYear()) {
+            menuItem("HqHub.map.menu.today", getText("HqHub.map.menu.todayKey"), this::backToToday);
+        }
+        String title = star != null ? star.name() : getText("HqHub.map.menu.space");
+        String where = getFormattedText("HqHub.map.menu.coordinates",
+              String.format(Locale.getDefault(), "%.1f", x), String.format(Locale.getDefault(), "%.1f", y));
+        String detail = star != null ? owner(star.owner()) + "  \u00b7  " + where : where;
+        Vector2 corner = stage.screenToStageCoordinates(new Vector2(screenX, screenY));
+        mapMenu.header(title, detail).content(mapMenuList);
+        mapMenu.showAt(corner.x, corner.y);
+        hoverCard.setVisible(false);
+    }
+
+    private void menuItem(String key, @Nullable String hint, Runnable action) {
+        mapMenuList.item(getText(key), hint, null, false, true, () -> {
+            mapMenu.cancel();
+            action.run();
+        });
     }
 
     /** The ruler's reading, written at its middle. */

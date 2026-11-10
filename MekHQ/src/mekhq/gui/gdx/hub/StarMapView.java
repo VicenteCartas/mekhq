@@ -91,6 +91,13 @@ final class StarMapView {
         /** The cursor came over {@code held}'s territory, away from any system; null when it left. */
         default void realm(@Nullable Borders.Holding held) {
         }
+
+        /**
+         * The player right-clicked ({@code x}, {@code y}) light years, on {@code star} or, null, on open space;
+         * {@code screenX} and {@code screenY} are the input coordinates clicked.
+         */
+        default void context(@Nullable StarMap.Star star, double x, double y, int screenX, int screenY) {
+        }
     }
 
     /** Takes the names to write over the map, the most important first; x and y are input coordinates. */
@@ -211,6 +218,8 @@ final class StarMapView {
     private float reachStart;
     /** How far the lens has come in, 0 to 1, as the territory dims and the pillars rise. */
     private float lensIn;
+    /** The distance the camera glides to, or NaN when it stays. */
+    private float wantedDistance = Float.NaN;
     /** The ruler: whether one is laid, being drawn out, its ends on the plane and its strokes. */
     private boolean ruled;
     private boolean measuring;
@@ -331,6 +340,13 @@ final class StarMapView {
             } else if (!dragged && button == Input.Buttons.LEFT && button == pressButton) {
                 int picked = nearest(screen, screenX, screenY, PICK_RADIUS);
                 choose(picked);
+            } else if (!dragged && button == Input.Buttons.RIGHT && button == pressButton) {
+                StarMap.Star on = star(nearest(screen, screenX, screenY, PICK_RADIUS));
+                if (on != null) {
+                    listener.context(on, on.x(), on.y(), screenX, screenY);
+                } else if (ground(screenX, screenY, scratch)) {
+                    listener.context(null, scratch.x, -scratch.z, screenX, screenY);
+                }
             }
             pressButton = -1;
             return true;
@@ -423,6 +439,43 @@ final class StarMapView {
         }
     }
 
+    /** Flies the camera over ({@code x}, {@code y}) light years. */
+    void flyTo(double x, double y) {
+        world(x, y, flight);
+        flying = true;
+        posing = false;
+    }
+
+    /** Glides the camera {@code factor} times as far from the plane, within the zoom's limits. */
+    void zoomBy(float factor) {
+        float from = Float.isNaN(wantedDistance) ? distance : wantedDistance;
+        wantedDistance = MathUtils.clamp(from * factor, MIN_DISTANCE, MAX_DISTANCE);
+    }
+
+    /** The force's system, or null when the force is between systems or unknown. */
+    @Nullable StarMap.Star current() {
+        return star(current);
+    }
+
+    /** The system {@code id}, as the map shows it, or null when it shows none such. */
+    @Nullable StarMap.Star system(String id) {
+        Integer at = index.get(id);
+        return at == null ? null : star(at);
+    }
+
+    /** Whether a ruler is laid. */
+    boolean ruled() {
+        return ruled;
+    }
+
+    /** Lays the ruler from the force's system to {@code star}. */
+    void measureFromForce(StarMap.Star star) {
+        StarMap.Star here = star(current);
+        if (here != null) {
+            measure(here.x(), here.y(), star.x(), star.y());
+        }
+    }
+
     /** Flies the camera to {@code star} and chooses it. */
     void focus(StarMap.Star star) {
         Integer at = index.get(star.id());
@@ -448,6 +501,7 @@ final class StarMapView {
     /** Puts the camera on the view the map opens with at once. */
     void snapToStart() {
         wantedPitch = Float.NaN;
+        wantedDistance = Float.NaN;
         target.set(start);
         distance = START_DISTANCE;
         yaw = 0;
@@ -624,6 +678,15 @@ final class StarMapView {
         }
         if (flying) {
             fly(delta);
+        }
+        if (!Float.isNaN(wantedDistance)) {
+            distance = (float) Math.exp(MathUtils.lerp((float) Math.log(distance), (float) Math.log(wantedDistance),
+                  1 - (float) Math.exp(-delta * 6)));
+            if (Math.abs(distance - wantedDistance) < 0.05f) {
+                distance = wantedDistance;
+                wantedDistance = Float.NaN;
+            }
+            aim();
         }
         if (!Float.isNaN(wantedPitch)) {
             pitch = MathUtils.lerp(pitch, wantedPitch, 1 - (float) Math.exp(-delta * 4));
@@ -1307,6 +1370,7 @@ final class StarMapView {
     }
 
     private void zoom(float amount, int screenX, int screenY) {
+        wantedDistance = Float.NaN;
         boolean anchored = ground(screenX, screenY, grab);
         distance = MathUtils.clamp(distance * (1 + amount * 0.12f), MIN_DISTANCE, MAX_DISTANCE);
         aim();
