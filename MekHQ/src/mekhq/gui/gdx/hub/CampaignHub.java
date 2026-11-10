@@ -65,13 +65,15 @@ import mekhq.gui.CampaignGUI;
 import mekhq.gui.StartStarChart;
 import mekhq.gui.enums.MHQTabType;
 import mekhq.gui.model.view.CampaignSession;
+import mekhq.gui.model.view.StarMap;
 import mekhq.gui.model.view.TopBar;
 
 /**
  * The campaign's command post in the native window (docs/libgdx-ui-port-plan.md), which the start screen's HQ
  * (Experimental) entry opens a loaded campaign in. Its rail and command palette open the campaign window, built hidden
  * as the hub opens, on the screen, person or unit asked for, and run the window's menu items with their dialogs over the
- * hub; the window's close box hides it again. Classic View or Esc leaves the hub for the campaign window, and closing
+ * hub; the window's close box hides it again. The rail's Map shows the campaign's {@link StarMap star map} in the hub
+ * itself, watched only while it is open. Classic View or Esc leaves the hub for the campaign window, and closing
  * the hub quits MekHQ, asking to save first.
  */
 public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
@@ -108,6 +110,8 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
     private @Nullable CampaignGUI gui;
     /** The screens the campaign has, as the rail last heard them. */
     private volatile Set<MHQTabType> screens = EnumSet.allOf(MHQTabType.class);
+    /** The star map's watch while the map is open. */
+    private @Nullable CampaignSession.Watch mapWatch;
 
     private CampaignHub(MekHQ app, Campaign campaign, @Nullable StarChart chart, float scale) {
         this.app = app;
@@ -212,6 +216,28 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
             List<PaletteEntry> entries = PaletteIndex.build(current, screens,
                   window == null ? null : window.getFrame().getJMenuBar());
             GpuHost.post(() -> screen.palette(entries));
+        });
+    }
+
+    @Override
+    public void mapShown(boolean shown) {
+        CampaignSession.Watch watched;
+        synchronized (this) {
+            watched = mapWatch;
+            mapWatch = shown ? session.watch(StarMap.model(), screen::map) : null;
+        }
+        if (watched != null) {
+            watched.close();
+        }
+    }
+
+    @Override
+    public void system(String id) {
+        session.dispatch(current -> {
+            StarMap.Detail read = StarMap.detail(current, id);
+            if (read != null) {
+                GpuHost.post(() -> screen.detail(read));
+            }
         });
     }
 

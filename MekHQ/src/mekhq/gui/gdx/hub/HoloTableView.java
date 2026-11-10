@@ -362,7 +362,7 @@ final class HoloTableView extends ApplicationAdapter {
         return mesh;
     }
 
-    private static float hash(double x, double y) {
+    static float hash(double x, double y) {
         long bits = Double.doubleToLongBits(x * 12.9898 + y * 78.233);
         bits ^= bits >>> 33;
         bits *= 0xff51afd7ed558ccdL;
@@ -371,7 +371,7 @@ final class HoloTableView extends ApplicationAdapter {
     }
 
     /** A linear value as the shaders write it: ACES filmic, then sRGB gamma. */
-    private static float display(float linear) {
+    static float display(float linear) {
         float mapped = linear * (2.51f * linear + 0.03f) / (linear * (2.43f * linear + 0.59f) + 0.14f);
         return (float) Math.pow(MathUtils.clamp(mapped, 0, 1), 1 / 2.2);
     }
@@ -385,7 +385,7 @@ final class HoloTableView extends ApplicationAdapter {
     }
 
     /** Compiles self-contained GLSL: the window's version prefix (which declares fragColor) is set aside meanwhile. */
-    private static ShaderProgram compile(String vertex, String fragment) {
+    static ShaderProgram compile(String vertex, String fragment) {
         String vertexPrefix = ShaderProgram.prependVertexCode;
         String fragmentPrefix = ShaderProgram.prependFragmentCode;
         ShaderProgram program;

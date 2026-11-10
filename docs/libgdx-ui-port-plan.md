@@ -105,6 +105,22 @@ Each phase ships something playable and keeps everything else reachable through 
   `InterstellarMapPanel` and `NavigationTab`.
 - Features: travel routes, jump paths, faction borders by date, contracts and markets pinned on
   systems, and a time scrubber.
+- It ships in slices, each playable:
+  1. **The map (done).** The rail's Map (key 2) swaps the holotable for a full-screen 3D map in the
+     hub. Each system glows in its owner's colour, and the map pans, zooms toward the cursor and
+     turns. The force's system has a pulsing ring with its jump range, and the current route runs
+     star to star. Hovering a system names its owners. Clicking opens its detail: population, HPG,
+     star, recharge, and the distance and jumps from the force. Plot a course still opens the
+     Swing Navigation tab.
+     - In `mekhq.gui.model.view`: `StarMap`, the snapshot of the systems, the force's system and
+       its route, and `StarMap.detail` for a chosen system. The hub watches it only while the map
+       is open.
+     - In `mekhq.gui.gdx.hub`: `StarMapView` (camera, meshes, picking), `StarMapShaders` and
+       `StarLabels` (the names, laid out so they don't overlap).
+  2. **Travel.** Preview a route to the chosen system (jumps, days, cost), then confirm it, without
+     Swing.
+  3. **Borders by date.** Faction territory and a time scrubber.
+  4. **Pins.** Contracts and markets on their systems.
 
 **Phase 2: the game loop**
 - The day loop is MekHQ's main loop, so it should feel like "End Turn".
