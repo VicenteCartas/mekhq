@@ -269,6 +269,10 @@ dependencies {
         exclude group: 'xml-apis'
     }
 
+    // The native window's scenes (mekhq.gui.gdx); the versions MegaMek's GPU window uses.
+    implementation 'com.badlogicgames.gdx:gdx:1.14.2'
+    implementation 'de.javagl:jgltf-model:2.0.4'
+
     implementation 'jakarta.xml.bind:jakarta.xml.bind-api:4.0.5'
     implementation 'jakarta.annotation:jakarta.annotation-api:3.0.0'
 

@@ -44,6 +44,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.function.Consumer;
 import javax.swing.JFrame;
 import javax.swing.SwingWorker;
 
@@ -60,14 +61,17 @@ import megamek.logging.MMLogger;
 import mekhq.MHQConstants;
 import mekhq.MekHQ;
 import mekhq.Utilities;
+import mekhq.campaign.Campaign;
 import mekhq.gui.dialog.DataLoadingDialog;
 import mekhq.gui.dialog.MHQOptionsTreeDialog;
 import mekhq.gui.dialog.NewPlayerQuickstartDialog;
+import mekhq.gui.gdx.hub.CampaignHub;
 
 /**
  * MekHQ's start screen, shown in the suite's native start window: the MekHQ art, the greeting and a menu to continue
- * the last campaign, start or load one, or start the new player quickstart. It ends once a campaign has loaded and the
- * campaign's own window takes over, and {@link MekHQ#restart} shows it again.
+ * the last campaign, start or load one, start the new player quickstart, or open a campaign in the experimental
+ * command post. It ends once a campaign has loaded and the campaign's own window or the command post takes over, and
+ * {@link MekHQ#restart} shows it again.
  */
 public final class MHQStartScreen extends StartScreenContent {
     private static final MMLogger LOGGER = MMLogger.create(MHQStartScreen.class);
@@ -203,6 +207,8 @@ public final class MHQStartScreen extends StartScreenContent {
         if (quickstartFile.isFile()) {
             menu.add(new Button(getText("StartScreen.quickstart"), Emphasis.SECONDARY, this::quickstart));
         }
+        menu.add(new Button(getText("StartScreen.hq"), save == null ? getText("StartScreen.hqPick") : saveTitle(save
+              .getName()), Emphasis.SECONDARY, () -> openHub(save)));
         return menu;
     }
 
@@ -272,10 +278,37 @@ public final class MHQStartScreen extends StartScreenContent {
     }
 
     /**
+     * EDT: loads the campaign in {@code save}, or one the player picks when null, into the experimental command post
+     * instead of the campaign's window.
+     */
+    private void openHub(@Nullable File save) {
+        if (loading) {
+            return;
+        }
+        if (save != null) {
+            load(save, campaign -> CampaignHub.open(app, campaign, anchor));
+        } else {
+            FileDialogs.openCampaign(anchor).ifPresent(file -> load(file,
+                  campaign -> CampaignHub.open(app, campaign, anchor)));
+        }
+    }
+
+    /**
      * EDT: loads the campaign in {@code file}, or starts a new one when null, over the start screen, which then gives way
      * to the campaign's window; the screen stays when loading fails.
      */
     private void startCampaign(@Nullable File file) {
+        load(file, campaign -> GpuStartWindow.uninstall(() -> {
+            anchor.dispose();
+            app.activateCampaign(campaign);
+        }));
+    }
+
+    /**
+     * EDT: loads the campaign in {@code file}, or starts a new one when null, over the start screen, and hands it to
+     * {@code loaded}; the screen stays when loading fails.
+     */
+    private void load(@Nullable File file, Consumer<Campaign> loaded) {
         if (loading) {
             return;
         }
@@ -285,10 +318,7 @@ public final class MHQStartScreen extends StartScreenContent {
                 loading = false;
                 return;
             }
-            GpuStartWindow.uninstall(() -> {
-                anchor.dispose();
-                app.activateCampaign(campaign);
-            });
+            loaded.accept(campaign);
         }).setVisible(true);
     }
 }

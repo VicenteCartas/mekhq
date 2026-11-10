@@ -31,6 +31,7 @@
 /MekHQ/mmconf/*.properties
 /MekHQ/mmconf/searches/*.json
 /MekHQ/mmconf/recent-advanced-searches.json
+/MekHQ/mmconf/gpu-program-cache/
 /MekHQ/out/
 /MekHQ/pkgdir/
 /MekHQ/savegames/
