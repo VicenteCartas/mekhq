@@ -247,6 +247,8 @@ final class StarMapView {
     private @Nullable Mesh lines;
     /** The force's route, star to star. */
     private @Nullable Mesh route;
+    /** Whether the voyage's route is drawn; the player can hide it. */
+    private boolean routeShown = true;
     /** How many light years along {@link #route} the force has come. */
     private float travelled;
     /** Where the force is between the first two systems of its route; null when it isn't between them. */
@@ -427,6 +429,16 @@ final class StarMapView {
     /** The system chosen, or null. */
     @Nullable StarMap.Star chosen() {
         return star(chosen);
+    }
+
+    /** Draws the voyage's route, or hides it. */
+    void showRoute(boolean shown) {
+        routeShown = shown;
+    }
+
+    /** Whether the voyage's route is drawn. */
+    boolean routeShown() {
+        return routeShown;
     }
 
     /** Lets go of the chosen system. */
@@ -786,7 +798,7 @@ final class StarMapView {
                 routeShader.setUniformf("u_done", -1f);
                 preview.render(routeShader, GL20.GL_LINES);
             }
-            if (route != null) {
+            if (route != null && routeShown) {
                 routeShader.setUniformf("u_done", travelled);
                 route.render(routeShader, GL20.GL_LINES);
             }
@@ -1351,11 +1363,14 @@ final class StarMapView {
         Borders showing = territory.shown();
         int wanted = 0;
         Borders.Holding held = null;
-        if (showing != null && hovered < 0 && pointX >= 0 && pressButton < 0 && !flying && lens == null
-              && ground(pointX, pointY, scratch)) {
+        StarMap.Star over = star(hovered);
+        // Over a system the realm it lies in lights up too, but the card stays the system's
+        boolean atStar = over != null;
+        if (showing != null && pointX >= 0 && pressButton < 0 && !flying && lens == null
+              && (atStar || ground(pointX, pointY, scratch))) {
             InfluenceMap land = showing.land();
-            int column = land.column(scratch.x);
-            int row = land.row(-scratch.z);
+            int column = land.column(atStar ? (float) over.x() : scratch.x);
+            int row = land.row(atStar ? (float) over.y() : -scratch.z);
             if (column >= 0 && row >= 0 && column < land.width() && row < land.height()) {
                 wanted = land.owner(column, row);
                 held = wanted > 0 ? showing.holding(wanted - 1) : null;
@@ -1363,6 +1378,9 @@ final class StarMapView {
                     wanted = 0;
                 }
             }
+        }
+        if (atStar) {
+            held = null;
         }
         if (!Objects.equals(held, spotHeld)) {
             spotHeld = held;

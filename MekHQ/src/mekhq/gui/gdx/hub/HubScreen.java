@@ -38,6 +38,7 @@ import static mekhq.utilities.MHQInternationalization.getText;
 import java.nio.file.Path;
 import java.text.NumberFormat;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.EnumSet;
@@ -241,6 +242,7 @@ final class HubScreen extends ApplicationAdapter {
     private UiButton dossierButton;
     private Table hoverCard;
     private Label hoverStats;
+    private Table hoverPerks;
     private Table rulerCard;
     private UiPopover mapMenu;
     private UiMenuList mapMenuList;
@@ -1154,7 +1156,9 @@ final class HubScreen extends ApplicationAdapter {
         hoverCard.add(hoverOwner).padTop(space("xxs")).row();
         hoverStats = ui.label("", "hud-body", 13, UiTheme.tokenColor("text.primary"));
         hoverStats.setVisible(false);
-        hoverCard.add(hoverStats).padTop(space("xxs")).height(0);
+        hoverCard.add(hoverStats).padTop(space("xxs")).height(0).row();
+        hoverPerks = new Table();
+        hoverCard.add(hoverPerks);
         hoverCard.setVisible(false);
         return hoverCard;
     }
@@ -1326,6 +1330,11 @@ final class HubScreen extends ApplicationAdapter {
         hoverCard.getCell(hoverStats).height(0);
         hoverOwner.setText(owner(star.owner()));
         hoverOwner.setColor(lifted(star.rgb()));
+        hoverPerks.clearChildren();
+        for (Perk perk : perks(star)) {
+            UiKit.Icon icon = ui.icon(perk.icon(), 16, perk.colour());
+            hoverPerks.add(icon).size(16).padRight(space("xs")).padTop(space("xs"));
+        }
         hoverCard.pack();
         hoverCard.setVisible(true);
     }
@@ -1341,6 +1350,7 @@ final class HubScreen extends ApplicationAdapter {
             return;
         }
         realmShown = true;
+        hoverPerks.clearChildren();
         hoverName.setText(ui.cased("name", held.name()));
         hoverName.setColor(lifted(held.rgb()));
         hoverOwner.setText(getFormattedText("HqHub.map.realm.systems", held.systems()));
@@ -1393,6 +1403,22 @@ final class HubScreen extends ApplicationAdapter {
         Label owner = ui.label(owner(star.owner()), "hud-body", 14, lifted(star.rgb()));
         owner.setWrap(true);
         detail.add(owner).padTop(space("xxs")).row();
+        List<Perk> perks = perks(star);
+        if (!perks.isEmpty()) {
+            Table chips = new Table();
+            chips.left();
+            for (int i = 0; i < perks.size(); i++) {
+                Perk perk = perks.get(i);
+                Table chip = new Table();
+                chip.add(ui.icon(perk.icon(), 16, perk.colour())).size(16).padRight(space("xs"));
+                chip.add(ui.label(perk.text(), "hud-body", 13, perk.colour()));
+                chips.add(chip).left().padRight(space("md")).padTop(space("xs"));
+                if (i % 2 == 1) {
+                    chips.row();
+                }
+            }
+            detail.add(chips).padTop(space("xs")).row();
+        }
         Table facts = new Table();
         facts.defaults().padTop(space("sm"));
         if (read == null) {
@@ -1438,20 +1464,59 @@ final class HubScreen extends ApplicationAdapter {
             });
             actions.add(go).padRight(space("sm"));
         }
-        UiButton plot = ui.button("button-secondary", null, getText("HqHub.map.navigation"), null);
-        UiKit.onChange(plot, () -> hub.go(new PaletteEntry.Screen(MHQTabType.NAVIGATION)));
-        actions.add(plot);
-        detail.add(actions).padTop(space("md")).row();
         dossierButton = ui.button("button-secondary", "info",
               getText(dossierOpen ? "HqHub.map.dossier.hide" : "HqHub.map.dossier.show"), null);
         UiKit.onChange(dossierButton, () -> showDossier(!dossierOpen));
-        detail.add(dossierButton).left().fill(false, false).padTop(space("sm")).row();
+        actions.add(dossierButton).padRight(space("sm"));
+        UiButton plot = iconButton("tune", "HqHub.map.navigation");
+        UiKit.onChange(plot, () -> hub.go(new PaletteEntry.Screen(MHQTabType.NAVIGATION)));
+        actions.add(plot);
+        detail.add(actions).padTop(space("md")).row();
         if (course != null && course.state() != StarMap.Departure.READY) {
             Label why = ui.caption(getText("HqHub.map.departure." + course.state().name()), true);
             why.setWrap(true);
             detail.add(why).padTop(space("xs")).row();
         }
         detail.add(ui.caption(getText("HqHub.map.close"), true)).padTop(space("sm"));
+    }
+
+    /** Something about a system that matters to the force: its icon, its words and its colour. */
+    private record Perk(String icon, String text, Color colour) {}
+
+    /** What {@code star} offers the force, or warns it of: hiring hall, academies, capital, industry, stations, health. */
+    private static List<Perk> perks(StarMap.Star star) {
+        List<Perk> perks = new ArrayList<>();
+        Color good = UiTheme.tokenColor("text.primary");
+        int hall = MapLens.HIRING_HALLS.level(star.lenses());
+        if (hall > 0) {
+            perks.add(new Perk("group", getText("HqHub.map.perk.hall." + hall), good));
+        }
+        int academies = MapLens.ACADEMIES.level(star.lenses());
+        if (academies > 0) {
+            perks.add(new Perk("book", getFormattedText("HqHub.map.perk.academies", academies), good));
+        }
+        if (star.capital() > 0) {
+            perks.add(new Perk("star", getText("HqHub.map.perk.capital." + Math.min(3, star.capital())),
+                  UiTheme.tokenColor("accent.primary")));
+        }
+        int industry = MapLens.INDUSTRY.level(star.lenses());
+        if (industry >= 4) {
+            perks.add(new Perk("factory", getText("HqHub.map.perk.industry." + industry), good));
+        }
+        if (MapLens.RECHARGE.level(star.lenses()) >= 2) {
+            perks.add(new Perk("power", getText("HqHub.map.perk.recharge"), good));
+        }
+        if (MapLens.DISEASES.level(star.lenses()) > 0) {
+            perks.add(new Perk("warn", getText("HqHub.map.perk.health"), UiTheme.tokenColor("status.warning")));
+        }
+        return perks;
+    }
+
+    /** A bare icon button with a tooltip read from {@code tipKey}. */
+    private UiButton iconButton(String icon, String tipKey) {
+        UiButton button = ui.button("hud-icon", icon, null, null);
+        ui.tip(button).getActor().setText(getText(tipKey));
+        return button;
     }
 
     /** Opens the chosen system's full record beside its card and asks the hub for it, or closes it. */
@@ -1607,12 +1672,20 @@ final class HubScreen extends ApplicationAdapter {
             leg.add(ui.solid(UiTheme.tokenColor("border.subtle"))).height(2).width(160 * (1 - done));
             about.add(leg).left().padTop(space("xs"));
             List<String> whole = voyageRoute;
-            UiButton show = ui.button("button-secondary", null, getText("HqHub.map.route.show"), null);
+            boolean drawn = map.routeShown();
+            UiButton eye = iconButton(drawn ? "show" : "hide", drawn ? "HqHub.map.route.hide" : "HqHub.map.route.reveal");
+            UiKit.onChange(eye, () -> {
+                map.showRoute(!map.routeShown());
+                writeRoute();
+            });
+            actions.add(eye).padRight(space("xs"));
+            UiButton show = iconButton("locate", "HqHub.map.route.show");
             UiKit.onChange(show, () -> map.frame(whole));
-            actions.add(show).padRight(space("sm"));
+            actions.add(show).padRight(space("xs"));
             boolean armed = cancelArmed > 0;
-            UiButton cancel = ui.button(armed ? "button-primary" : "button-secondary", null,
-                  getText(armed ? "HqHub.map.route.confirm" : "HqHub.map.route.cancel"), null);
+            UiButton cancel = armed
+                  ? ui.button("button-primary", "cancel", getText("HqHub.map.route.confirm"), null)
+                  : iconButton("cancel", "HqHub.map.route.cancel");
             UiKit.onChange(cancel, () -> {
                 if (cancelArmed > 0) {
                     cancelArmed = 0;
@@ -1645,10 +1718,10 @@ final class HubScreen extends ApplicationAdapter {
             });
             actions.add(go).padRight(space("sm"));
             List<String> whole = course.route();
-            UiButton show = ui.button("button-secondary", null, getText("HqHub.map.route.show"), null);
+            UiButton show = iconButton("locate", "HqHub.map.route.show");
             UiKit.onChange(show, () -> map.frame(whole));
-            actions.add(show).padRight(space("sm"));
-            UiButton clear = ui.button("button-secondary", null, getText("HqHub.map.route.clear"), null);
+            actions.add(show).padRight(space("xs"));
+            UiButton clear = iconButton("close", "HqHub.map.route.clear");
             UiKit.onChange(clear, () -> {
                 map.clearChoice();
                 chooseSystem(null);
