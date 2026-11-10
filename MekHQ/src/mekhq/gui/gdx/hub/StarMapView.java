@@ -437,7 +437,7 @@ final class StarMapView {
         return star(chosen);
     }
 
-    /** Draws the voyage's route, or hides it. */
+    /** Draws the voyage's route, its stops, their names and the force's ship on it, or hides them all. */
     void showRoute(boolean shown) {
         routeShown = shown;
     }
@@ -867,7 +867,8 @@ final class StarMapView {
                 marked[at] = true;
             }
         }
-        for (List<String> ids : List.of(today.route(), previewed, List.copyOf(today.marks().keySet()))) {
+        List<String> stops = routeShown ? today.route() : List.of();
+        for (List<String> ids : List.of(stops, previewed, List.copyOf(today.marks().keySet()))) {
             for (String id : ids) {
                 Integer at = index.get(id);
                 if (at != null) {
@@ -1532,7 +1533,7 @@ final class StarMapView {
         FloatArray vertices = new FloatArray(POINT_FLOATS * 8);
         StarMap today = map;
         if (today != null) {
-            for (String id : today.route()) {
+            for (String id : routeShown ? today.route() : List.<String>of()) {
                 Integer at = index.get(id);
                 if (at != null && at != current) {
                     ring(vertices, star(at), AMBER, 0.55f, 12, 0);
@@ -1552,7 +1553,7 @@ final class StarMapView {
             }
         }
         ring(vertices, star(current), CYAN, 1.2f, 30, 1);
-        if (shipShown) {
+        if (shipShown && routeShown) {
             float scale = Gdx.graphics.getBackBufferHeight() / (float) Math.max(1, Gdx.graphics.getHeight());
             vertices.addAll(ship.x, 0, ship.z, WHITE.x * 1.3f, WHITE.y * 1.3f, WHITE.z * 1.3f, 1, 14 * scale, 1);
         }

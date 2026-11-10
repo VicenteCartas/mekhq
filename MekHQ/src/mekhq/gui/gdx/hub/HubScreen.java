@@ -691,6 +691,19 @@ final class HubScreen extends ApplicationAdapter {
             helpPanel.add(ui.label(control.trim(), "hud-body", 13, UiTheme.tokenColor("text.primary")))
                   .padTop(space("xxs")).row();
         }
+        // The key to the icons on the system cards
+        helpPanel.add(ui.caption(getText("HqHub.map.key"), true)).padTop(space("md")).padBottom(space("xs")).row();
+        String[][] icons = { { "group", "hall" }, { "book", "academies" }, { "star", "capital" },
+              { "factory", "industry" }, { "power", "recharge" }, { "warn", "health" } };
+        for (String[] icon : icons) {
+            Color colour = UiTheme.tokenColor(icon[0].equals("star") ? "accent.primary"
+                  : icon[0].equals("warn") ? "status.warning" : "text.primary");
+            Table row = new Table();
+            row.add(ui.icon(icon[0], 16, colour)).size(16).padRight(space("sm"));
+            row.add(ui.label(getText("HqHub.map.key." + icon[1]), "hud-body", 13,
+                  UiTheme.tokenColor("text.primary")));
+            helpPanel.add(row).padTop(space("xxs")).row();
+        }
         helpPanel.setVisible(false);
         header.add(helpPanel).right().padTop(space("sm")).padRight(SEARCH_WIDTH + space("lg"));
         writeRoute();
