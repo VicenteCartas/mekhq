@@ -60,7 +60,7 @@ import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent.StarChart;
  * lights and the hologram's own light, and the hologram drawn additively over it (a disc of rings, a beam from the
  * emitter, and the systems as glowing points in their owners' colours, tinted towards the projector's cyan).
  *
- * <p>The camera orbits slowly on its own; dragging turns it and the wheel moves it in or out ({@link #input}).</p>
+ * <p>The camera starts at a fixed view; dragging turns it and the wheel moves it in or out ({@link #input}).</p>
  */
 final class HoloTableView extends ApplicationAdapter {
     /** The projector's colour, linear. */
@@ -79,8 +79,6 @@ final class HoloTableView extends ApplicationAdapter {
     private static final float TABLE_RADIUS = 0.8f;
     private static final float FIELD_OF_VIEW = 42;
     private static final int GL_PROGRAM_POINT_SIZE = 0x8642;
-    /** Seconds without input before the camera orbits on its own again. */
-    private static final float IDLE = 4;
 
     private final Path glb;
     private final @Nullable StarChart chart;
@@ -101,20 +99,17 @@ final class HoloTableView extends ApplicationAdapter {
     private float yaw = 35;
     private float pitch = 24;
     private float distance = 3.3f;
-    private float idle = IDLE;
     private final InputProcessor orbit = new InputAdapter() {
         @Override
         public boolean touchDragged(int screenX, int screenY, int pointer) {
             yaw -= Gdx.input.getDeltaX() * 0.25f;
             pitch = MathUtils.clamp(pitch + Gdx.input.getDeltaY() * 0.2f, 4, 80);
-            idle = 0;
             return true;
         }
 
         @Override
         public boolean scrolled(float amountX, float amountY) {
             distance = MathUtils.clamp(distance * (1 + amountY * 0.08f), 1.2f, 8);
-            idle = 0;
             return true;
         }
     };
@@ -161,12 +156,7 @@ final class HoloTableView extends ApplicationAdapter {
 
     @Override
     public void render() {
-        float delta = Math.min(Gdx.graphics.getDeltaTime(), 0.1f);
-        time += delta;
-        idle += delta;
-        if (idle > IDLE) {
-            yaw += delta * 3.5f;
-        }
+        time += Math.min(Gdx.graphics.getDeltaTime(), 0.1f);
         Vector3 target = new Vector3(0, anchor.y * 0.9f, 0);
         float cosPitch = MathUtils.cosDeg(pitch);
         camera.position.set(MathUtils.sinDeg(yaw) * cosPitch, MathUtils.sinDeg(pitch), MathUtils.cosDeg(yaw) * cosPitch)
