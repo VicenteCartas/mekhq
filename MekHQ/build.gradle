@@ -588,17 +588,6 @@ tasks.register('validateSystems', JavaExec) {
     args = ["${layout.projectDirectory.asFile}/data/universe/planetary_systems"]
 }
 
-tasks.register('holotablePreview', JavaExec) {
-    dependsOn stageDataFiles
-    description = 'Developer preview of the HQ holotable scene in the native window: gradlew :MekHQ:holotablePreview -Pglb=<file> [-Pcapture=<png>]'
-    group = 'application'
-    classpath = sourceSets.main.runtimeClasspath
-    mainClass = 'mekhq.gui.gdx.hub.HoloTablePreview'
-    jvmArgs = mhqJvmOptions
-    args = (project.hasProperty('glb') ? [project.property('glb')] : ['data/models/hq/holotable.glb']) +
-            (project.hasProperty('capture') ? [project.property('capture')] : [])
-}
-
 tasks.register('officialUnitList', JavaExec) {
     dependsOn jar
     mustRunAfter(stageDataFiles)

@@ -34,17 +34,15 @@ package mekhq.gui.gdx.hub;
 
 import java.nio.file.Path;
 import java.util.Map;
-import java.util.zip.Deflater;
 
 import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.InputAdapter;
-import com.badlogic.gdx.files.FileHandle;
+import com.badlogic.gdx.InputProcessor;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.Mesh;
 import com.badlogic.gdx.graphics.PerspectiveCamera;
 import com.badlogic.gdx.graphics.Pixmap;
-import com.badlogic.gdx.graphics.PixmapIO;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.VertexAttribute;
 import com.badlogic.gdx.graphics.VertexAttributes;
@@ -62,7 +60,7 @@ import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent.StarChart;
  * lights and the hologram's own light, and the hologram drawn additively over it (a disc of rings, a beam from the
  * emitter, and the systems as glowing points in their owners' colours, tinted towards the projector's cyan).
  *
- * <p>The camera orbits slowly on its own; dragging turns it and the wheel moves it in or out.</p>
+ * <p>The camera orbits slowly on its own; dragging turns it and the wheel moves it in or out ({@link #input}).</p>
  */
 final class HoloTableView extends ApplicationAdapter {
     /** The projector's colour, linear. */
@@ -86,7 +84,6 @@ final class HoloTableView extends ApplicationAdapter {
 
     private final Path glb;
     private final @Nullable StarChart chart;
-    private final @Nullable Path capture;
     private final Matrix4 model = new Matrix4();
     private final Vector3 anchor = new Vector3();
     private PerspectiveCamera camera;
@@ -105,16 +102,32 @@ final class HoloTableView extends ApplicationAdapter {
     private float pitch = 24;
     private float distance = 3.3f;
     private float idle = IDLE;
-    private boolean captured;
+    private final InputProcessor orbit = new InputAdapter() {
+        @Override
+        public boolean touchDragged(int screenX, int screenY, int pointer) {
+            yaw -= Gdx.input.getDeltaX() * 0.25f;
+            pitch = MathUtils.clamp(pitch + Gdx.input.getDeltaY() * 0.2f, 4, 80);
+            idle = 0;
+            return true;
+        }
 
-    /**
-     * @param capture where to write one frame as a PNG once the scene has settled, for checking the look without
-     *                looking at the window; null for none
-     */
-    HoloTableView(Path glb, @Nullable StarChart chart, @Nullable Path capture) {
+        @Override
+        public boolean scrolled(float amountX, float amountY) {
+            distance = MathUtils.clamp(distance * (1 + amountY * 0.08f), 1.2f, 8);
+            idle = 0;
+            return true;
+        }
+    };
+
+    /** The table from the GLB file {@code glb}, with {@code chart} over it; none when null. */
+    HoloTableView(Path glb, @Nullable StarChart chart) {
         this.glb = glb;
         this.chart = chart;
-        this.capture = capture;
+    }
+
+    /** The camera's controls, for the screen showing the view to put behind its own. */
+    InputProcessor input() {
+        return orbit;
     }
 
     @Override
@@ -136,22 +149,6 @@ final class HoloTableView extends ApplicationAdapter {
         camera = new PerspectiveCamera(FIELD_OF_VIEW, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         camera.near = 0.05f;
         camera.far = 60;
-        Gdx.input.setInputProcessor(new InputAdapter() {
-            @Override
-            public boolean touchDragged(int screenX, int screenY, int pointer) {
-                yaw -= Gdx.input.getDeltaX() * 0.25f;
-                pitch = MathUtils.clamp(pitch + Gdx.input.getDeltaY() * 0.2f, 4, 80);
-                idle = 0;
-                return true;
-            }
-
-            @Override
-            public boolean scrolled(float amountX, float amountY) {
-                distance = MathUtils.clamp(distance * (1 + amountY * 0.08f), 1.2f, 8);
-                idle = 0;
-                return true;
-            }
-        });
     }
 
     @Override
@@ -196,16 +193,6 @@ final class HoloTableView extends ApplicationAdapter {
         Gdx.gl.glDepthMask(true);
         Gdx.gl.glDisable(GL20.GL_BLEND);
         Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
-        if (capture != null && !captured && time > 3) {
-            captured = true;
-            Pixmap frame = Pixmap.createFromFrameBuffer(0, 0, Gdx.graphics.getBackBufferWidth(),
-                  Gdx.graphics.getBackBufferHeight());
-            try {
-                PixmapIO.writePNG(new FileHandle(capture.toFile()), frame, Deflater.DEFAULT_COMPRESSION, true);
-            } finally {
-                frame.dispose();
-            }
-        }
     }
 
     private void drawRoom(float flicker) {
