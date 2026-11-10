@@ -449,6 +449,31 @@ final class StarMapView {
         posing = false;
     }
 
+    /** Flies the camera over the systems {@code ids}, far enough out to see them all. */
+    void frame(List<String> ids) {
+        double west = Double.MAX_VALUE;
+        double east = -Double.MAX_VALUE;
+        double south = Double.MAX_VALUE;
+        double north = -Double.MAX_VALUE;
+        for (String id : ids) {
+            StarMap.Star star = system(id);
+            if (star != null) {
+                west = Math.min(west, star.x());
+                east = Math.max(east, star.x());
+                south = Math.min(south, star.y());
+                north = Math.max(north, star.y());
+            }
+        }
+        if (west > east) {
+            return;
+        }
+        flyTo((west + east) / 2, (south + north) / 2);
+        float aspect = Math.max(1, (float) Gdx.graphics.getWidth() / Math.max(1, Gdx.graphics.getHeight()));
+        float span = (float) Math.max(north - south, (east - west) / aspect) + 30;
+        wantedDistance = MathUtils.clamp(span * 0.75f / MathUtils.tanDeg(FIELD_OF_VIEW / 2), MIN_DISTANCE,
+              MAX_DISTANCE);
+    }
+
     /** Glides the camera {@code factor} times as far from the plane, within the zoom's limits. */
     void zoomBy(float factor) {
         float from = Float.isNaN(wantedDistance) ? distance : wantedDistance;

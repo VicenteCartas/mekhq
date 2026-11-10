@@ -280,6 +280,10 @@ public final class StarMapSnapshots {
         }
 
         @Override
+        public void cancelTrip() {
+        }
+
+        @Override
         public void disposed() {
         }
     }

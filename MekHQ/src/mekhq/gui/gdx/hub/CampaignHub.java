@@ -268,6 +268,16 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
     }
 
     @Override
+    public void cancelTrip() {
+        session.dispatch(current -> {
+            AbstractLocation location = current.getPlayerForce().getForceDetachment().getCurrentLocation();
+            if (location != null && location.getJumpPath() != null) {
+                location.setJumpPath(null);
+            }
+        });
+    }
+
+    @Override
     public void disposed() {
         dialogs.released();
     }
