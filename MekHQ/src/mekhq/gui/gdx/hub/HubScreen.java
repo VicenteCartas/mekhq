@@ -80,6 +80,7 @@ import megamek.client.ui.gdx.UiModal;
 import megamek.client.ui.gdx.UiPopover;
 import megamek.client.ui.gdx.UiTheme;
 import megamek.common.Configuration;
+import mekhq.MHQConstants;
 import mekhq.campaign.universe.eras.Eras;
 import mekhq.gui.enums.MHQTabType;
 import mekhq.gui.model.view.Borders;
@@ -212,6 +213,9 @@ final class HubScreen extends ApplicationAdapter {
     private Table detail;
     private Table hoverCard;
     private Label hoverStats;
+    private Table rulerCard;
+    private Label rulerReading;
+    private Label rulerJumps;
     /** Whether the hover card shows a realm rather than a system. */
     private boolean realmShown;
     private Label hoverName;
@@ -360,6 +364,7 @@ final class HubScreen extends ApplicationAdapter {
         stage.addActor(detailLayer());
         stage.addActor(header());
         stage.addActor(searchPanel());
+        stage.addActor(rulerCard());
         stage.addActor(hoverCard());
         stage.addActor(rail());
         flyout = new UiPopover(ui, () -> flyoutArea = null, UiTheme.TOKEN);
@@ -506,6 +511,8 @@ final class HubScreen extends ApplicationAdapter {
                 skip();
             } else if (flyout.isVisible()) {
                 flyout.back();
+            } else if (mapOpen && map.clearRuler()) {
+                rulerCard.setVisible(false);
             } else if (mapOpen && map.chosen() != null) {
                 map.clearChoice();
             } else if (mapOpen) {
@@ -1339,6 +1346,35 @@ final class HubScreen extends ApplicationAdapter {
         return owner.isBlank() ? getText("HqHub.map.unclaimed") : owner;
     }
 
+    /** The ruler's reading, written at its middle. */
+    private Table rulerCard() {
+        rulerCard = ui.panel(true);
+        rulerCard.setTouchable(Touchable.disabled);
+        rulerReading = ui.label("", "hud-body", 14, UiTheme.tokenColor("text.primary"));
+        rulerJumps = ui.caption("", true);
+        rulerCard.add(rulerReading).row();
+        rulerCard.add(rulerJumps).padTop(space("xxs"));
+        rulerCard.setVisible(false);
+        return rulerCard;
+    }
+
+    /** Writes the ruler's reading at its middle, or hides it when no ruler is laid. */
+    private void placeRuler() {
+        float[] reading = mapOpen ? map.ruler() : null;
+        if (reading == null) {
+            rulerCard.setVisible(false);
+            return;
+        }
+        String span = String.format(Locale.getDefault(), "%.1f", reading[2]);
+        int jumps = (int) Math.ceil(reading[2] / MHQConstants.MAX_JUMP_RADIUS - 1e-4);
+        rulerReading.setText(getFormattedText("HqHub.map.lightYears", span));
+        rulerJumps.setText(getFormattedText("HqHub.map.ruler.jumps", jumps));
+        rulerCard.pack();
+        Vector2 at = stage.screenToStageCoordinates(new Vector2(reading[0], reading[1]));
+        rulerCard.setPosition(Math.round(at.x - rulerCard.getWidth() / 2), Math.round(at.y + HOVER_OFFSET));
+        rulerCard.setVisible(true);
+    }
+
     /** Keeps the hover card beside the cursor, flipped inwards near the window's edges. */
     private void placeHoverCard() {
         if (!hoverCard.isVisible()) {
@@ -1567,6 +1603,7 @@ final class HubScreen extends ApplicationAdapter {
         if (progress >= 1) {
             labels.draw(map, stage);
             placeHoverCard();
+            placeRuler();
             followTimeline();
             legendClock -= delta;
             if (legendClock <= 0) {

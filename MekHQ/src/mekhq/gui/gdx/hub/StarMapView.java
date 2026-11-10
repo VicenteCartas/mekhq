@@ -136,6 +136,8 @@ final class StarMapView {
     private static final int REALM_SYSTEMS = 12;
     /** The tilt, in degrees, the camera eases to when a lens comes on looking straight down. */
     private static final float LENS_PITCH = 52;
+    /** The ruler's colour, linear. */
+    private static final Vector3 RULER = new Vector3(0.55f, 0.95f, 1.0f);
     /** How quickly, a share a second, the spotlight comes onto a realm or leaves it. */
     private static final float SPOT_RATE = 6;
     /** The tilt, in degrees, above which pillars and beacons fade, being seen end on. */
@@ -209,6 +211,13 @@ final class StarMapView {
     private float reachStart;
     /** How far the lens has come in, 0 to 1, as the territory dims and the pillars rise. */
     private float lensIn;
+    /** The ruler: whether one is laid, being drawn out, its ends on the plane and its strokes. */
+    private boolean ruled;
+    private boolean measuring;
+    private boolean rulerStale;
+    private final Vector3 rulerFrom = new Vector3();
+    private final Vector3 rulerTo = new Vector3();
+    private final Strokes ruler = new Strokes();
     /** Where the cursor points, in input coordinates; negative when it is off the map. */
     private int pointX = -1;
     private int pointY = -1;
@@ -272,7 +281,14 @@ final class StarMapView {
             pressY = screenY;
             pressButton = button;
             dragged = false;
-            grabbed = button == Input.Buttons.LEFT && ground(screenX, screenY, grab);
+            measuring = button == Input.Buttons.LEFT && (Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT)
+                  || Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT)) && snap(screenX, screenY, rulerFrom);
+            if (measuring) {
+                rulerTo.set(rulerFrom);
+                ruled = true;
+                rulerStale = true;
+            }
+            grabbed = !measuring && button == Input.Buttons.LEFT && ground(screenX, screenY, grab);
             return true;
         }
 
@@ -282,6 +298,12 @@ final class StarMapView {
                 dragged = true;
             }
             if (!dragged) {
+                return true;
+            }
+            if (measuring) {
+                if (snap(screenX, screenY, rulerTo)) {
+                    rulerStale = true;
+                }
                 return true;
             }
             flying = false;
@@ -301,7 +323,12 @@ final class StarMapView {
 
         @Override
         public boolean touchUp(int screenX, int screenY, int pointer, int button) {
-            if (!dragged && button == Input.Buttons.LEFT && button == pressButton) {
+            if (measuring) {
+                measuring = false;
+                // A shift-click without a drag measures nothing
+                ruled = dragged;
+                rulerStale = true;
+            } else if (!dragged && button == Input.Buttons.LEFT && button == pressButton) {
                 int picked = nearest(screen, screenX, screenY, PICK_RADIUS);
                 choose(picked);
             }
@@ -554,6 +581,7 @@ final class StarMapView {
         network.create();
         beacons.create();
         reach.create();
+        ruler.create();
         pillars.create();
         grid = grid();
         rings = new Mesh(false, 512, 0, pointAttributes());
@@ -651,6 +679,11 @@ final class StarMapView {
         }
 
         network.render(camera, fade, time, 1);
+        if (rulerStale) {
+            rulerStale = false;
+            rulerStrokes();
+        }
+        ruler.render(camera, fade, time, 1);
         if (reachShown) {
             reach.render(camera, fade, time, 1, (time - reachStart) * REACH_SPEED);
         }
@@ -825,7 +858,8 @@ final class StarMapView {
 
     void dispose() {
         for (Disposable resource : new Disposable[] { starShader, ringShader, lineShader, routeShader,
-              stars, lines, route, preview, grid, rings, territory, backdrop, network, pillars, beacons, reach }) {
+              stars, lines, route, preview, grid, rings, territory, backdrop, network, pillars, beacons, reach,
+              ruler }) {
             if (resource != null) {
                 resource.dispose();
             }
@@ -1114,6 +1148,76 @@ final class StarMapView {
 
     private static long reachCell(double i, double j) {
         return ((long) i << 32) ^ ((long) j & 0xFFFFFFFFL);
+    }
+
+    /** The point on the plane under {@code screenX}, {@code screenY}, on the system there if any, into {@code out}. */
+    private boolean snap(int screenX, int screenY, Vector3 out) {
+        StarMap.Star near = star(nearest(screen, screenX, screenY, PICK_RADIUS));
+        if (near != null) {
+            world(near.x(), near.y(), out);
+            return true;
+        }
+        return ground(screenX, screenY, out);
+    }
+
+    /** Lays the ruler from ({@code x1}, {@code y1}) to ({@code x2}, {@code y2}) light years. */
+    void measure(double x1, double y1, double x2, double y2) {
+        world(x1, y1, rulerFrom);
+        world(x2, y2, rulerTo);
+        ruled = true;
+        rulerStale = true;
+    }
+
+    /** Takes the ruler away; false when none was laid. */
+    boolean clearRuler() {
+        if (!ruled) {
+            return false;
+        }
+        ruled = false;
+        measuring = false;
+        rulerStale = true;
+        return true;
+    }
+
+    /**
+     * The ruler's reading, or null when none is laid: where to write it, in input coordinates, then the light years it
+     * spans.
+     */
+    @Nullable float[] ruler() {
+        if (!ruled || camera == null) {
+            return null;
+        }
+        float span = rulerFrom.dst(rulerTo);
+        if (span < 0.05f) {
+            return null;
+        }
+        Vector3 mid = camera.project(scratch.set(rulerFrom).add(rulerTo).scl(0.5f));
+        return new float[] { mid.x, camera.viewportHeight - mid.y, span };
+    }
+
+    /** Lays the ruler's strokes: a flowing line with a tick at each jump's reach along it and a bar at each end. */
+    private void rulerStrokes() {
+        ruler.clear();
+        float span = rulerFrom.dst(rulerTo);
+        if (ruled && span > 0.05f) {
+            float dx = (rulerTo.x - rulerFrom.x) / span;
+            float dz = (rulerTo.z - rulerFrom.z) / span;
+            ruler.add(rulerFrom.x, 0, rulerFrom.z, rulerTo.x, 0, rulerTo.z, RULER.x, RULER.y, RULER.z, 1.0f, 3.4f,
+                  0, -6);
+            float tick = Math.max(1.2f, span * 0.012f);
+            float jump = (float) MHQConstants.MAX_JUMP_RADIUS;
+            for (float at = jump; at < span; at += jump) {
+                float x = rulerFrom.x + dx * at;
+                float z = rulerFrom.z + dz * at;
+                ruler.add(x - dz * tick, 0, z + dx * tick, x + dz * tick, 0, z - dx * tick, RULER.x, RULER.y,
+                      RULER.z, 1.2f, 2.0f, 0, 0);
+            }
+            for (Vector3 end : new Vector3[] { rulerFrom, rulerTo }) {
+                ruler.add(end.x - dz * tick * 2, 0, end.z + dx * tick * 2, end.x + dz * tick * 2, 0,
+                      end.z - dx * tick * 2, 1, 1, 1, 1.4f, 2.6f, 0, 0);
+            }
+        }
+        ruler.upload();
     }
 
     /** The cursor is at {@code screenX}, {@code screenY}, in input coordinates; negative when it left the map. */
