@@ -751,8 +751,9 @@ final class TransmissionView implements Disposable {
     }
 
     private static boolean listed(Transmission.Stepper stepper) {
+        // In longs, as an unbounded spinner runs from Integer.MIN_VALUE to Integer.MAX_VALUE
         return stepper.step() > 1 && stepper.max() >= stepper.min()
-              && (stepper.max() - stepper.min()) / stepper.step() < LISTED_VALUES;
+              && ((long) stepper.max() - stepper.min()) / stepper.step() < LISTED_VALUES;
     }
 
     private void send(int index, int value) {
