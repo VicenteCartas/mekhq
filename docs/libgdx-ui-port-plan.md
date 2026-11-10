@@ -99,6 +99,9 @@ Each phase ships something playable and keeps everything else reachable through 
     hides it again when its close box is clicked. Menu items run from the palette with their
     dialogs over the hub. `HubArea` maps the rail's areas to the tabs, and `PaletteIndex` and
     `PaletteSearch` gather and rank the palette's entries.
+- MekHQ: the startup welcome (licensing and disclaimer) shows on the start screen as MegaMek's
+  libGDX `StartWelcome`, named for MekHQ; the Swing `LicensingDialog` is only the fallback when no
+  start screen opens.
 
 **Phase 1: the star map**
 - The 3D interstellar map grows out of the start screen's star map. It replaces the 10k-line

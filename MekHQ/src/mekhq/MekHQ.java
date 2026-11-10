@@ -258,9 +258,14 @@ public class MekHQ implements GameListener {
         initEventHandlers();
         MHQStartScreen.show(this, true);
 
-        // Show the licensing/welcome dialog once the greeting has played
-        GpuStartWindow.whenSettled(() -> LicensingDialog.showIfNeeded(null,
-              "Welcome to " + MHQConstants.PROJECT_NAME + " " + MHQConstants.VERSION));
+        // Show the licensing/welcome dialog once the greeting has played: on the start screen, or as the Swing form when
+        // no start screen could open
+        GpuStartWindow.whenSettled(() -> {
+            if (!GpuStartWindow.showWelcome()) {
+                LicensingDialog.showIfNeeded(null,
+                      "Welcome to " + MHQConstants.PROJECT_NAME + " " + MHQConstants.VERSION);
+            }
+        });
     }
 
     /**
