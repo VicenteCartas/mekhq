@@ -32,10 +32,12 @@
  */
 package mekhq.gui.gdx.hub;
 
+import java.time.LocalDate;
 import java.util.Locale;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
@@ -63,12 +65,18 @@ final class StarLabels implements Disposable {
     private static final float OFFSET_X = 7;
     private static final float OFFSET_Y = 4;
     private static final float GAP = 3;
+    /** A realm's emblem's size, how strong it shows against the realm's name, and its gap below the name. */
+    private static final float EMBLEM_SIZE = 46;
+    private static final float EMBLEM_ALPHA = 0.85f;
+    private static final float EMBLEM_GAP = 6;
     private static final Color OUTLINE = new Color(0.01f, 0.015f, 0.03f, 0.85f);
 
     private final SpriteBatch batch = new SpriteBatch();
     private final BitmapFont[] fonts = new BitmapFont[SIZES.length];
     private final BitmapFont[] outlines = new BitmapFont[SIZES.length];
     private final BitmapFont realmFont;
+    private final FactionEmblems emblems = new FactionEmblems();
+    private int year;
     private final GlyphLayout layout = new GlyphLayout();
     private final Vector2 at = new Vector2();
     private final Color tint = new Color();
@@ -89,18 +97,21 @@ final class StarLabels implements Disposable {
     void draw(StarMapView view, Stage stage) {
         placed.clear();
         realms.clear();
+        emblems.upload();
+        LocalDate date = view.shownDate();
+        year = date == null ? 0 : date.getYear();
         batch.setProjectionMatrix(stage.getCamera().combined);
         batch.begin();
-        view.realmNames((name, rgb, x, y, span, alpha) -> realm(stage, name, rgb, x, y, span, alpha));
+        view.realmNames((name, code, rgb, x, y, span, alpha) -> realm(stage, name, code, rgb, x, y, span, alpha));
         view.labels((star, x, y, tier, alpha, wanted) -> write(stage, star, x, y, tier, alpha, wanted));
         batch.end();
     }
 
     /**
      * Writes a realm's name in wide-tracked capitals centred on (x, y), faint, in its colour; it fades away when it
-     * would run far past its territory.
+     * would run far past its territory. The faction's emblem, once read, hangs under the name.
      */
-    private void realm(Stage stage, String name, int rgb, float x, float y, float span, float alpha) {
+    private void realm(Stage stage, String name, String code, int rgb, float x, float y, float span, float alpha) {
         String text = name.toUpperCase(Locale.ROOT);
         stage.screenToStageCoordinates(at.set(x, y));
         float scale = stage.getWidth() / Math.max(1, Gdx.graphics.getWidth());
@@ -130,6 +141,18 @@ final class StarLabels implements Disposable {
             layout.setText(realmFont, text, i, i + 1, tint, 0, Align.left, false, null);
             realmFont.draw(batch, layout, left, top);
             left += layout.width + tracking;
+        }
+        Texture emblem = year == 0 ? null : emblems.emblem(code, year);
+        if (emblem != null) {
+            float emblemTop = top - REALM_SIZE - EMBLEM_GAP;
+            float emblemLeft = at.x - EMBLEM_SIZE / 2;
+            if (strength > 0.3f) {
+                realms.addAll(emblemLeft, emblemTop - EMBLEM_SIZE, emblemLeft + EMBLEM_SIZE, emblemTop);
+            }
+            tint.a = REALM_ALPHA * EMBLEM_ALPHA * strength;
+            batch.setColor(tint);
+            batch.draw(emblem, emblemLeft, emblemTop - EMBLEM_SIZE, EMBLEM_SIZE, EMBLEM_SIZE);
+            batch.setColor(Color.WHITE);
         }
     }
 
@@ -183,5 +206,6 @@ final class StarLabels implements Disposable {
     @Override
     public void dispose() {
         batch.dispose();
+        emblems.dispose();
     }
 }

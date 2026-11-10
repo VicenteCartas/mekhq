@@ -107,10 +107,12 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
      * @param lenses  every {@link MapLens}'s level for it, as {@link MapLens#pack} packs them
      * @param capital whose capital it is: 0 no one's, 1 a district's, 2 a region's, 3 a realm's
      * @param people  how many live there
+     * @param code    the short name of the owner whose colour it wears, or blank
      */
     public record Star(String id, String name, double x, double y, int rgb, String owner, String faction,
-          boolean settled, long lenses, int capital, long people) {
+          boolean settled, long lenses, int capital, long people, String code) {
         public Star {
+            Objects.requireNonNull(code);
             Objects.requireNonNull(id);
             Objects.requireNonNull(name);
             Objects.requireNonNull(owner);
@@ -120,7 +122,7 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
         /** A system with no lenses, capital or people. */
         public Star(String id, String name, double x, double y, int rgb, String owner, String faction,
               boolean settled) {
-            this(id, name, x, y, rgb, owner, faction, settled, 0, 0, 0);
+            this(id, name, x, y, rgb, owner, faction, settled, 0, 0, 0, "");
         }
 
         /** {@code lens}'s level for it, 0 when the lens doesn't rate it. */
@@ -293,7 +295,7 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
             stars.add(new Star(system.getId(), name(system, date), system.getX(), system.getY(), colour(owners),
                   ownerNames(owners, year), faction == null ? "" : faction, settled,
                   settled ? MapLens.pack(system, date) : 0, settled ? capital(system, date) : 0,
-                  settled ? system.getPopulation(date) : 0));
+                  settled ? system.getPopulation(date) : 0, code(owners)));
         }
         return stars;
     }
@@ -445,6 +447,12 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
         sorted.sort(Comparator.comparing((Faction faction) -> faction.is(FactionTag.ABANDONED))
               .thenComparing(Faction::getShortName, Comparator.nullsLast(Comparator.naturalOrder())));
         return sorted;
+    }
+
+    /** The short name of the first of {@code owners}, whose colour a system wears, or blank. */
+    private static String code(List<Faction> owners) {
+        String code = owners.isEmpty() ? null : owners.get(0).getShortName();
+        return code == null ? "" : code;
     }
 
     private static int colour(List<Faction> owners) {

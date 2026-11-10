@@ -115,11 +115,11 @@ final class StarMapView {
          * Writes {@code name} centred on (x, y) at {@code alpha} of its strength, in its realm's colour
          * {@code rgb}; its territory spans about {@code span} pixels either side.
          */
-        void realm(String name, int rgb, float x, float y, float span, float alpha);
+        void realm(String name, String code, int rgb, float x, float y, float span, float alpha);
     }
 
     /** A realm's name and where it goes: by its most central settled system, its territory {@code spread} wide. */
-    record RealmName(String name, int rgb, float x, float y, float spread) {
+    record RealmName(String name, String code, int rgb, float x, float y, float spread) {
     }
 
     /** The holotable's, so its dive ends on the very view the map opens with. */
@@ -867,8 +867,8 @@ final class StarMapView {
         float pixels = pixelsPerLightYear();
         for (RealmName realm : realmNames) {
             Vector3 at = camera.project(world(realm.x(), realm.y(), scratch));
-            names.realm(realm.name(), realm.rgb(), at.x, camera.viewportHeight - at.y, realm.spread() * pixels,
-                  alpha * alpha * (3 - 2 * alpha));
+            names.realm(realm.name(), realm.code(), realm.rgb(), at.x, camera.viewportHeight - at.y,
+                  realm.spread() * pixels, alpha * alpha * (3 - 2 * alpha));
         }
     }
 
@@ -878,6 +878,7 @@ final class StarMapView {
      */
     static List<RealmName> realmNames(List<StarMap.Star> all) {
         Map<String, double[]> sums = new HashMap<>();
+        Map<String, String> codes = new HashMap<>();
         for (StarMap.Star star : all) {
             if (star.settled() && !star.faction().isBlank()) {
                 double[] sum = sums.computeIfAbsent(star.faction(), name -> new double[5]);
@@ -886,6 +887,7 @@ final class StarMapView {
                 sum[2] += star.x() * star.x() + star.y() * star.y();
                 sum[3]++;
                 sum[4] = star.rgb();
+                codes.put(star.faction(), star.code());
             }
         }
         List<RealmName> names = new ArrayList<>();
@@ -913,7 +915,7 @@ final class StarMapView {
                 }
             }
             if (centre != null) {
-                names.add(new RealmName(entry.getKey(), (int) sum[4], (float) centre.x(), (float) centre.y(),
+                names.add(new RealmName(entry.getKey(), codes.get(entry.getKey()), (int) sum[4], (float) centre.x(), (float) centre.y(),
                       (float) spread));
             }
         }
