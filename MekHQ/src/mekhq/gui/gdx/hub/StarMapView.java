@@ -133,6 +133,12 @@ final class StarMapView {
     /** How much of its strength the territory keeps under a lens. */
     private static final float LENS_TERRITORY = 0.3f;
     private static final Vector3 HPG_COLOUR = new Vector3(0.42f, 0.78f, 1.0f);
+    /** The most jumps the force's reach is followed out to. */
+    private static final int REACH_JUMPS = 4;
+    /** How fast the reach spreads out when shown, in light years a second along its jumps. */
+    private static final float REACH_SPEED = 90;
+    /** The reach's colours by jump, from the first. */
+    private static final int[] REACH_COLOURS = { 0x7FF5FF, 0x58C8FF, 0x7A8CFF, 0xA070F0 };
     /** How widely, in light years, a realm's systems may scatter and still be named as one territory. */
     private static final double REALM_SCATTERED = 260;
     /** How far from a system, in pixels, the cursor may be to pick it. */
@@ -178,6 +184,13 @@ final class StarMapView {
     /** The lens the systems are seen through; null for their owners. */
     private @Nullable MapLens lens;
     private boolean networkShown;
+    /** The capitals' light shafts, their heights at 1 light year to a realm's. */
+    private final Strokes beacons = new Strokes();
+    /** The force's reach, jump by jump, out from its system. */
+    private final Strokes reach = new Strokes();
+    private boolean reachShown;
+    /** When, in the view's time, the reach began spreading out. */
+    private float reachStart;
     /** How far the lens has come in, 0 to 1, as the territory dims and the pillars rise. */
     private float lensIn;
     /** The tilt the camera is easing to, in degrees; NaN when it isn't. */
@@ -449,6 +462,20 @@ final class StarMapView {
         return networkShown;
     }
 
+    /** Shows or hides how far the force reaches, jump by jump; shown, it spreads out from the force's system. */
+    void reach(boolean shown) {
+        if (shown != reachShown) {
+            reachShown = shown;
+            reachStart = time;
+            restyle();
+        }
+    }
+
+    /** Whether the force's reach shows. */
+    boolean reach() {
+        return reachShown;
+    }
+
     /** How many settled systems on screen the lens rates at each level, from 1 to its levels; empty without one. */
     int[] lensCounts() {
         MapLens looking = lens;
@@ -500,6 +527,8 @@ final class StarMapView {
         territory.create();
         backdrop.create();
         network.create();
+        beacons.create();
+        reach.create();
         pillars.create();
         grid = grid();
         rings = new Mesh(false, 64, 0, pointAttributes());
@@ -596,6 +625,10 @@ final class StarMapView {
         }
 
         network.render(camera, fade, time, 1);
+        if (reachShown) {
+            reach.render(camera, fade, time, 1, (time - reachStart) * REACH_SPEED);
+        }
+        beacons.render(camera, fade * (1 - lensIn), time, beaconHeight());
         if (lensIn > 0) {
             pillars.render(camera, fade, time, lensIn * lensIn * (3 - 2 * lensIn) * pillarHeight());
         }
@@ -764,7 +797,7 @@ final class StarMapView {
 
     void dispose() {
         for (Disposable resource : new Disposable[] { starShader, ringShader, lineShader, routeShader,
-              stars, lines, route, preview, grid, rings, territory, backdrop, network, pillars }) {
+              stars, lines, route, preview, grid, rings, territory, backdrop, network, pillars, beacons, reach }) {
             if (resource != null) {
                 resource.dispose();
             }
@@ -956,6 +989,105 @@ final class StarMapView {
             }
         }
         network.upload();
+        beacons.clear();
+        for (StarMap.Star star : shown) {
+            if (star.capital() >= 2) {
+                beacon(beacons, star);
+            }
+        }
+        beacons.upload();
+        reach.clear();
+        if (reachShown) {
+            reach(reach, shown, current);
+        }
+        reach.upload();
+    }
+
+    /** A capital's light shaft in its realm's colour, brightest at its foot; a realm's stands twice a region's. */
+    private static void beacon(Strokes into, StarMap.Star star) {
+        int rgb = star.rgb();
+        float r = linear((rgb >> 16) & 0xFF);
+        float g = linear((rgb >> 8) & 0xFF);
+        float b = linear(rgb & 0xFF);
+        boolean realm = star.capital() >= 3;
+        float top = realm ? 1 : 0.5f;
+        float width = realm ? 5.0f : 3.2f;
+        float x = (float) star.x();
+        float z = (float) -star.y();
+        float[] glow = { 2.4f, 1.2f, 0.5f, 0.16f };
+        for (int i = 0; i < glow.length; i++) {
+            float lo = top * i / glow.length;
+            float hi = top * (i + 1) / glow.length;
+            float bright = glow[i] * (realm ? 1 : 0.6f);
+            into.add(x, lo, z, x, hi, z, (r * 0.6f + 0.4f) * bright, (g * 0.6f + 0.4f) * bright,
+                  (b * 0.6f + 0.4f) * bright, 1, width, 0, 0);
+        }
+    }
+
+    /** How tall, in light years, a realm's capital's beacon stands: taller the further out the camera is. */
+    private float beaconHeight() {
+        return MathUtils.clamp(distance * 0.08f, 10, 160);
+    }
+
+    /**
+     * The jumps out from {@code from} in {@code all}, up to {@value #REACH_JUMPS}, each system reached by its shortest
+     * count of jumps of {@link MHQConstants#MAX_JUMP_RADIUS} light years at most, its stroke from the system it was
+     * reached from coloured by the count and measured along from {@code from}, so the reach spreads out from it.
+     */
+    private static void reach(Strokes into, List<StarMap.Star> all, int from) {
+        if (from < 0 || from >= all.size()) {
+            return;
+        }
+        double radius = MHQConstants.MAX_JUMP_RADIUS;
+        Map<Long, List<Integer>> cells = new HashMap<>();
+        for (int i = 0; i < all.size(); i++) {
+            StarMap.Star star = all.get(i);
+            cells.computeIfAbsent(reachCell(Math.floor(star.x() / radius), Math.floor(star.y() / radius)),
+                  key -> new ArrayList<>()).add(i);
+        }
+        int[] jumps = new int[all.size()];
+        float[] along = new float[all.size()];
+        Arrays.fill(jumps, -1);
+        jumps[from] = 0;
+        List<Integer> ring = List.of(from);
+        for (int jump = 1; jump <= REACH_JUMPS && !ring.isEmpty(); jump++) {
+            List<Integer> next = new ArrayList<>();
+            int rgb = REACH_COLOURS[Math.min(jump, REACH_COLOURS.length) - 1];
+            float fade = 1.0f - 0.18f * (jump - 1);
+            for (int at : ring) {
+                StarMap.Star star = all.get(at);
+                double cx = Math.floor(star.x() / radius);
+                double cy = Math.floor(star.y() / radius);
+                for (int i = -1; i <= 1; i++) {
+                    for (int j = -1; j <= 1; j++) {
+                        for (int other : cells.getOrDefault(reachCell(cx + i, cy + j), List.of())) {
+                            if (jumps[other] >= 0) {
+                                continue;
+                            }
+                            StarMap.Star there = all.get(other);
+                            double dx = there.x() - star.x();
+                            double dy = there.y() - star.y();
+                            double length = Math.sqrt(dx * dx + dy * dy);
+                            if (length > radius) {
+                                continue;
+                            }
+                            jumps[other] = jump;
+                            along[other] = along[at] + (float) length;
+                            next.add(other);
+                            float bright = 1.2f * fade;
+                            into.add((float) star.x(), 0, (float) -star.y(), (float) there.x(), 0, (float) -there.y(),
+                                  linear((rgb >> 16) & 0xFF) * bright, linear((rgb >> 8) & 0xFF) * bright,
+                                  linear(rgb & 0xFF) * bright, 1, jump == 1 ? 3.0f : 2.2f, along[at], 18);
+                        }
+                    }
+                }
+            }
+            ring = next;
+        }
+    }
+
+    private static long reachCell(double i, double j) {
+        return ((long) i << 32) ^ ((long) j & 0xFFFFFFFFL);
     }
 
     private void hover(int at) {

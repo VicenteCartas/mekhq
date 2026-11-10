@@ -228,8 +228,12 @@ final class StarMapShaders {
           in float v_flow;
           uniform float u_fade;
           uniform float u_time;
+          uniform float u_reveal;
           out vec4 fragColor;
           void main() {
+              if (v_along > u_reveal) {
+                  discard;
+              }
               float d = abs(v_side);
               float core = 1.0 - smoothstep(0.18, 0.42, d);
               float glow = exp(-d * d * 5.0) * 0.45;
@@ -242,6 +246,8 @@ final class StarMapShaders {
                   float p = fract((v_along - u_time * -v_flow * 0.4) / -v_flow);
                   light *= 0.15 + 0.85 * smoothstep(0.0, 0.08, p) * (1.0 - smoothstep(0.5, 0.58, p));
               }
+              float front = (u_reveal - v_along) / 5.0;
+              light *= 1.0 + 3.0 * exp(-front * front);
               light *= v_colour.a * u_fade;
               if (light < 0.003) {
                   discard;

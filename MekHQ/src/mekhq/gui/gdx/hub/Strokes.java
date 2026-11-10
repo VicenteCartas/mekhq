@@ -113,6 +113,14 @@ final class Strokes implements Disposable {
      * heights over the plane times {@code lift}.
      */
     void render(Camera camera, float fade, float time, float lift) {
+        render(camera, fade, time, lift, Float.MAX_VALUE);
+    }
+
+    /**
+     * Draws as {@link #render(Camera, float, float, float)} does, only as far along the strokes as {@code reveal}
+     * light years, a bright front where they end.
+     */
+    void render(Camera camera, float fade, float time, float lift, float reveal) {
         if (count == 0 || fade <= 0) {
             return;
         }
@@ -125,6 +133,7 @@ final class Strokes implements Disposable {
         shader.setUniformf("u_fade", fade);
         shader.setUniformf("u_time", time);
         shader.setUniformf("u_lift", lift);
+        shader.setUniformf("u_reveal", reveal);
         mesh.render(shader, GL20.GL_TRIANGLES, 0, count);
     }
 

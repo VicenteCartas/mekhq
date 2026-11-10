@@ -165,6 +165,7 @@ public final class StarMapSnapshots {
                     call("era", new Class<?>[0]);
                     view.lens(wanted.lens());
                     view.network(List.of(wanted.layers().split("\\+")).contains("net"));
+                    view.reach(List.of(wanted.layers().split("\\+")).contains("reach"));
                     call("rebuildLenses", new Class<?>[0]);
                 }
                 view.look(wanted.x(), wanted.y(), wanted.height(), wanted.tilt(), wanted.turn());

@@ -517,6 +517,11 @@ final class HubScreen extends ApplicationAdapter {
             rebuildLenses();
             return true;
         }
+        if (mapOpen && keycode == Input.Keys.J) {
+            map.reach(!map.reach());
+            rebuildLenses();
+            return true;
+        }
         for (HubArea area : HubArea.values()) {
             if (keycode == Input.Keys.NUM_0 + area.hotkey() || keycode == Input.Keys.NUMPAD_0 + area.hotkey()) {
                 choose(area);
@@ -720,6 +725,11 @@ final class HubScreen extends ApplicationAdapter {
         lensPanel.add(choiceRow(null, getText("HqHub.map.layer.hpg"), getText("HqHub.map.layer.hpgKey"),
               map.network(), () -> {
                   map.network(!map.network());
+                  rebuildLenses();
+              })).row();
+        lensPanel.add(choiceRow(null, getText("HqHub.map.layer.reach"), getText("HqHub.map.layer.reachKey"),
+              map.reach(), () -> {
+                  map.reach(!map.reach());
                   rebuildLenses();
               })).row();
     }
