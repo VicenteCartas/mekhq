@@ -50,12 +50,13 @@ final class StarMapShaders {
           uniform vec3 u_camera;
           uniform float u_pixels;
           uniform float u_time;
+          uniform float u_fade;
           out vec4 v_colour;
           void main() {
               float size = a_texCoord0.x;
               float phase = a_texCoord0.y;
               float twinkle = 0.9 + 0.1 * sin(u_time * (0.9 + fract(phase * 7.1)) + phase * 40.0);
-              v_colour = vec4(a_color.rgb * twinkle, a_color.a);
+              v_colour = vec4(a_color.rgb * twinkle * u_fade, a_color.a);
               gl_Position = u_projView * vec4(a_position, 1.0);
               gl_PointSize = clamp(size * u_pixels / max(length(u_camera - a_position), 0.1), 2.5 * size, 26.0);
           }
@@ -80,12 +81,13 @@ final class StarMapShaders {
     static final String RING_FRAGMENT = """
           #version 330 core
           in vec4 v_colour;
+          uniform float u_fade;
           out vec4 fragColor;
           void main() {
               float r = length(gl_PointCoord - 0.5) * 2.0;
               float ring = smoothstep(0.12, 0.0, abs(r - 0.78));
               float glow = exp(-pow((r - 0.78) * 6.0, 2.0)) * 0.35;
-              float light = (ring + glow) * v_colour.a;
+              float light = (ring + glow) * v_colour.a * u_fade;
               if (light < 0.004) {
                   discard;
               }
@@ -93,7 +95,7 @@ final class StarMapShaders {
           }
           """;
 
-    /** A line, fading out with its distance from u_focus beyond u_fade light years. */
+    /** A line, fading out with its distance from u_focus beyond u_reach light years, all of it dimmed by u_fade. */
     static final String LINE_VERTEX = """
           #version 330 core
           in vec3 a_position;
@@ -113,11 +115,12 @@ final class StarMapShaders {
           in vec4 v_colour;
           in vec3 v_world;
           uniform vec3 u_focus;
+          uniform float u_reach;
           uniform float u_fade;
           out vec4 fragColor;
           void main() {
-              float fade = 1.0 - smoothstep(u_fade * 0.5, u_fade, length(v_world.xz - u_focus.xz));
-              fragColor = vec4(v_colour.rgb * v_colour.a * fade, 1.0);
+              float reach = 1.0 - smoothstep(u_reach * 0.5, u_reach, length(v_world.xz - u_focus.xz));
+              fragColor = vec4(v_colour.rgb * v_colour.a * reach * u_fade, 1.0);
           }
           """;
 }

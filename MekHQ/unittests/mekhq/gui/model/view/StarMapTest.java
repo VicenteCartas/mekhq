@@ -98,10 +98,12 @@ class StarMapTest {
         assertEquals(TODAY, map.date());
         assertEquals(2, map.stars().size(), "a system without a position has no place on the map");
         StarMap.Star first = map.stars().get(0);
-        assertEquals(new StarMap.Star("tharkad", "Tharkad", -100, 300, 0x2060C0, "Lyran Commonwealth", true), first);
+        assertEquals(new StarMap.Star("tharkad", "Tharkad", -100, 300, 0x2060C0, "Lyran Commonwealth",
+              "Lyran Commonwealth", true), first);
         StarMap.Star shared = map.stars().get(1);
         assertEquals("Draconis Combine / Lyran Commonwealth", shared.owner(), "owners in name order");
         assertEquals(0xC02020, shared.rgb(), "the first owner's colour");
+        assertEquals("Draconis Combine", shared.faction(), "the owner whose colour it wears");
         assertEquals("tharkad", map.current());
         assertTrue(map.route().isEmpty());
     }
@@ -119,6 +121,7 @@ class StarMapTest {
         assertFalse(empty.settled());
         assertEquals("", empty.owner());
         assertEquals(StarMap.UNCLAIMED, empty.rgb());
+        assertEquals("", empty.faction());
     }
 
     @Test

@@ -37,6 +37,7 @@ import java.util.Map;
 
 import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.Input;
 import com.badlogic.gdx.InputAdapter;
 import com.badlogic.gdx.InputProcessor;
 import com.badlogic.gdx.graphics.GL20;
@@ -47,9 +48,13 @@ import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.VertexAttribute;
 import com.badlogic.gdx.graphics.VertexAttributes;
 import com.badlogic.gdx.graphics.glutils.ShaderProgram;
+import com.badlogic.gdx.math.Intersector;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Matrix4;
+import com.badlogic.gdx.math.Plane;
+import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
+import com.badlogic.gdx.math.collision.Ray;
 import com.badlogic.gdx.utils.FloatArray;
 import jakarta.annotation.Nullable;
 import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent.Star;
@@ -60,7 +65,9 @@ import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent.StarChart;
  * lights and the hologram's own light, and the hologram drawn additively over it (a disc of rings, a beam from the
  * emitter, and the systems as glowing points in their owners' colours, tinted towards the projector's cyan).
  *
- * <p>The camera starts at a fixed view; dragging turns it and the wheel moves it in or out ({@link #input}).</p>
+ * <p>The camera starts at a fixed view; dragging turns it, the wheel moves it in or out, and a click on the map's disc
+ * opens the star map ({@link #input}), for which the camera can dive down onto the disc ({@link #render(float, float)}).
+ * </p>
  */
 final class HoloTableView extends ApplicationAdapter {
     /** The projector's colour, linear. */
@@ -77,7 +84,11 @@ final class HoloTableView extends ApplicationAdapter {
     /** How thick the slab of stars is over the disc, in metres. */
     private static final float SLAB = 0.08f;
     private static final float TABLE_RADIUS = 0.8f;
-    private static final float FIELD_OF_VIEW = 42;
+    static final float FIELD_OF_VIEW = 42;
+    /** The hologram's stars are about ten light years across at its scale; diving, they shrink to the map's size. */
+    private static final float DIVED_STAR_SCALE = 0.15f;
+    /** How far a press may move, in pixels, and still be a click. */
+    private static final float CLICK_SLOP = 6;
     private static final int GL_PROGRAM_POINT_SIZE = 0x8642;
 
     private final Path glb;
@@ -93,18 +104,57 @@ final class HoloTableView extends ApplicationAdapter {
     private Mesh disc;
     private Mesh beam;
     private Mesh stars;
+    private Mesh veil;
+    private ShaderProgram veilShader;
     private Texture white;
     private Texture flat;
     private float time;
+    /** How far the map's disc has turned, in degrees; it stops while the camera dives. */
+    private float spin;
+    /** The disc's turn this frame, and how far the camera has dived. */
+    private float angle;
+    private float dive;
     private float yaw = 35;
     private float pitch = 24;
     private float distance = 3.3f;
+    /** Whether the cursor is over the map's disc, and how much it glows for that, 0 to 1. */
+    private boolean overMap;
+    private float hoverGlow;
+    private int pressX;
+    private int pressY;
+    private boolean dragged;
+    private final Runnable mapClicked;
     private final InputProcessor orbit = new InputAdapter() {
         @Override
+        public boolean touchDown(int screenX, int screenY, int pointer, int button) {
+            pressX = screenX;
+            pressY = screenY;
+            dragged = false;
+            return true;
+        }
+
+        @Override
         public boolean touchDragged(int screenX, int screenY, int pointer) {
+            if (Math.abs(screenX - pressX) + Math.abs(screenY - pressY) > CLICK_SLOP) {
+                dragged = true;
+            }
             yaw -= Gdx.input.getDeltaX() * 0.25f;
             pitch = MathUtils.clamp(pitch + Gdx.input.getDeltaY() * 0.2f, 4, 80);
             return true;
+        }
+
+        @Override
+        public boolean touchUp(int screenX, int screenY, int pointer, int button) {
+            if (!dragged && button == Input.Buttons.LEFT && overMap(screenX, screenY)) {
+                mapClicked.run();
+            }
+            return true;
+        }
+
+        @Override
+        public boolean mouseMoved(int screenX, int screenY) {
+            overMap = overMap(screenX, screenY);
+            return false;
         }
 
         @Override
@@ -114,10 +164,14 @@ final class HoloTableView extends ApplicationAdapter {
         }
     };
 
-    /** The table from the GLB file {@code glb}, with {@code chart} over it; none when null. */
-    HoloTableView(Path glb, @Nullable StarChart chart) {
+    /**
+     * The table from the GLB file {@code glb}, with {@code chart} over it; none when null. A click on the map's disc
+     * runs {@code mapClicked}.
+     */
+    HoloTableView(Path glb, @Nullable StarChart chart, Runnable mapClicked) {
         this.glb = glb;
         this.chart = chart;
+        this.mapClicked = mapClicked;
     }
 
     /** The camera's controls, for the screen showing the view to put behind its own. */
@@ -125,11 +179,28 @@ final class HoloTableView extends ApplicationAdapter {
         return orbit;
     }
 
+    /** Whether the cursor is over the map's disc, which a click opens. */
+    boolean hoveringMap() {
+        return overMap;
+    }
+
+    /**
+     * How high over the disc the camera ends its dive for the disc to show the map as the star map's camera does from
+     * {@code mapDistance} light years: the same field of view, at the hologram's scale.
+     */
+    static float diveHeight(float mapDistance) {
+        return mapDistance * DISC_RADIUS / MAP_RADIUS;
+    }
+
     @Override
     public void create() {
         propShader = compile(HoloShaders.PROP_VERTEX, HoloShaders.PROP_FRAGMENT);
         starShader = compile(HoloShaders.STAR_VERTEX, HoloShaders.STAR_FRAGMENT);
         holoShader = compile(HoloShaders.HOLO_VERTEX, HoloShaders.HOLO_FRAGMENT);
+        veilShader = compile(HoloShaders.VEIL_VERTEX, HoloShaders.VEIL_FRAGMENT);
+        veil = new Mesh(true, 3, 0, new VertexAttribute(VertexAttributes.Usage.Position, 2,
+              ShaderProgram.POSITION_ATTRIBUTE));
+        veil.setVertices(new float[] { -1, -1, 3, -1, -1, 3 });
         table = GlbProp.load(glb);
         anchor.set(table.anchor());
         if (anchor.isZero()) {
@@ -156,13 +227,37 @@ final class HoloTableView extends ApplicationAdapter {
 
     @Override
     public void render() {
-        time += Math.min(Gdx.graphics.getDeltaTime(), 0.1f);
-        Vector3 target = new Vector3(0, anchor.y * 0.9f, 0);
-        float cosPitch = MathUtils.cosDeg(pitch);
-        camera.position.set(MathUtils.sinDeg(yaw) * cosPitch, MathUtils.sinDeg(pitch), MathUtils.cosDeg(yaw) * cosPitch)
-              .scl(distance).add(target);
-        camera.up.set(Vector3.Y);
+        render(0, 0);
+    }
+
+    /**
+     * Draws the room with the camera {@code dive} of the way (0 to 1, eased) from its orbit to straight over the disc,
+     * the disc turned to face coreward away and its slab of stars flattened, and the hologram faded {@code fade} of
+     * the way out as the room fades into the star map's dark.
+     */
+    void render(float dive, float fade) {
+        float delta = Math.min(Gdx.graphics.getDeltaTime(), 0.1f);
+        time += delta;
+        if (dive == 0) {
+            spin = (spin + delta * 2.5f) % 360;
+        }
+        float facing = spin > 180 ? 360 : 0;
+        angle = MathUtils.lerp(spin, facing, dive);
+        hoverGlow = MathUtils.clamp(hoverGlow + (overMap && dive == 0 ? delta : -delta) * 5, 0, 1);
+        this.dive = dive;
+
+        Vector3 target = new Vector3(0, anchor.y * 0.9f, 0)
+              .lerp(new Vector3(anchor.x, anchor.y + DISC_LIFT, anchor.z), dive);
+        float turned = MathUtils.lerp(yaw, Math.round(yaw / 360) * 360f, dive);
+        float tilted = MathUtils.lerp(pitch, 90, dive);
+        float far = distance * (float) Math.pow(diveHeight(StarMapView.START_DISTANCE) / distance, dive);
+        float cosPitch = MathUtils.cosDeg(tilted);
+        camera.position.set(MathUtils.sinDeg(turned) * cosPitch, MathUtils.sinDeg(tilted),
+              MathUtils.cosDeg(turned) * cosPitch).scl(far).add(target);
+        // Up is the way the camera faces over the floor, which stays defined looking straight down
+        camera.up.set(-MathUtils.sinDeg(turned), 0, -MathUtils.cosDeg(turned));
         camera.lookAt(target);
+        camera.near = Math.min(0.05f, far * 0.2f);
         camera.update();
 
         Gdx.gl.glViewport(0, 0, Gdx.graphics.getBackBufferWidth(), Gdx.graphics.getBackBufferHeight());
@@ -178,7 +273,10 @@ final class HoloTableView extends ApplicationAdapter {
         float flicker = 1 + 0.04f * MathUtils.sin(time * 31) + 0.03f * MathUtils.sin(time * 7.3f)
               - (((time * 0.13f) % 1) < 0.012f ? 0.35f : 0);
         drawRoom(flicker);
-        drawHologram(flicker);
+        if (fade > 0) {
+            drawVeil(fade);
+        }
+        drawHologram(flicker * (1 + 0.6f * hoverGlow), 1 - fade);
 
         Gdx.gl.glDepthMask(true);
         Gdx.gl.glDisable(GL20.GL_BLEND);
@@ -218,7 +316,19 @@ final class HoloTableView extends ApplicationAdapter {
         floor.render(propShader, GL20.GL_TRIANGLES);
     }
 
-    private void drawHologram(float flicker) {
+    /** Fills the screen with the star map's dark, {@code alpha} of the way over the room. */
+    private void drawVeil(float alpha) {
+        Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
+        Gdx.gl.glEnable(GL20.GL_BLEND);
+        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+        Vector3 dark = StarMapView.BACKGROUND;
+        veilShader.bind();
+        veilShader.setUniformf("u_colour", display(dark.x), display(dark.y), display(dark.z), alpha);
+        veil.render(veilShader, GL20.GL_TRIANGLES);
+        Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
+    }
+
+    private void drawHologram(float flicker, float glow) {
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_ONE, GL20.GL_ONE);
         Gdx.gl.glDepthMask(false);
@@ -227,7 +337,8 @@ final class HoloTableView extends ApplicationAdapter {
         holoShader.setUniformMatrix("u_projView", camera.combined);
         holoShader.setUniformf("u_colour", CYAN);
         holoShader.setUniformf("u_time", time);
-        holoShader.setUniformf("u_intensity", flicker);
+        // The beam and the disc's rings give way to the map's own light as the camera nears
+        holoShader.setUniformf("u_intensity", flicker * glow * (1 - dive * 0.6f));
         holoShader.setUniformf("u_camera", camera.position);
         holoShader.setUniformMatrix("u_model", model.setToTranslation(anchor));
         holoShader.setUniformi("u_mode", 1);
@@ -240,25 +351,40 @@ final class HoloTableView extends ApplicationAdapter {
             Gdx.gl.glEnable(GL_PROGRAM_POINT_SIZE);
             starShader.bind();
             starShader.setUniformMatrix("u_projView", camera.combined);
-            starShader.setUniformMatrix("u_model", hologram());
+            // Diving, the slab flattens onto the disc as the map lies on its plane
+            starShader.setUniformMatrix("u_model", hologram().scl(1, 1 - dive, 1));
             starShader.setUniformf("u_camera", camera.position);
             starShader.setUniformf("u_time", time);
-            starShader.setUniformf("u_pixels",
-                  Gdx.graphics.getBackBufferHeight() / (2 * MathUtils.tanDeg(FIELD_OF_VIEW / 2)) * flicker);
+            starShader.setUniformf("u_intensity", glow);
+            starShader.setUniformf("u_pixels", Gdx.graphics.getBackBufferHeight()
+                  / (2 * MathUtils.tanDeg(FIELD_OF_VIEW / 2)) * flicker * MathUtils.lerp(1, DIVED_STAR_SCALE, dive));
             stars.render(starShader, GL20.GL_POINTS);
             Gdx.gl.glDisable(GL_PROGRAM_POINT_SIZE);
         }
     }
 
-    /** The map's frame: over the anchor, turning slowly. */
+    /** The map's frame: over the anchor, turned as far as the disc has. */
     private Matrix4 hologram() {
-        return model.setToTranslation(anchor.x, anchor.y + DISC_LIFT, anchor.z).rotate(Vector3.Y, time * 2.5f);
+        return model.setToTranslation(anchor.x, anchor.y + DISC_LIFT, anchor.z).rotate(Vector3.Y, angle);
+    }
+
+    /** Whether the input coordinates are over the map's disc. */
+    private boolean overMap(int screenX, int screenY) {
+        if (camera == null) {
+            return false;
+        }
+        Ray ray = camera.getPickRay(screenX, screenY);
+        Vector3 hit = new Vector3();
+        if (!Intersector.intersectRayPlane(ray, new Plane(Vector3.Y, -(anchor.y + DISC_LIFT)), hit)) {
+            return false;
+        }
+        return Vector2.dst(hit.x, hit.z, anchor.x, anchor.z) <= DISC_RADIUS;
     }
 
     @Override
     public void dispose() {
-        for (var resource : new com.badlogic.gdx.utils.Disposable[] { propShader, starShader, holoShader, table, floor,
-              disc, beam, stars, white, flat }) {
+        for (var resource : new com.badlogic.gdx.utils.Disposable[] { propShader, starShader, holoShader, veilShader,
+              table, floor, disc, beam, stars, veil, white, flat }) {
             if (resource != null) {
                 resource.dispose();
             }

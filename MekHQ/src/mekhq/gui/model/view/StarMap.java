@@ -76,13 +76,16 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
      * @param y       light years coreward of Terra
      * @param rgb     its owner's colour, 0xRRGGBB
      * @param owner   its owners' names today, or blank when no one holds it
+     * @param faction the name of the owner whose colour it wears, or blank
      * @param settled whether anyone but the abandoned holds it
      */
-    public record Star(String id, String name, double x, double y, int rgb, String owner, boolean settled) {
+    public record Star(String id, String name, double x, double y, int rgb, String owner, String faction,
+          boolean settled) {
         public Star {
             Objects.requireNonNull(id);
             Objects.requireNonNull(name);
             Objects.requireNonNull(owner);
+            Objects.requireNonNull(faction);
         }
     }
 
@@ -134,8 +137,9 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
             }
             List<Faction> owners = owners(system, date);
             boolean settled = owners.stream().anyMatch(faction -> !faction.is(FactionTag.ABANDONED));
+            String faction = owners.isEmpty() ? null : owners.get(0).getFullName(year);
             stars.add(new Star(system.getId(), name(system, date), system.getX(), system.getY(), colour(owners),
-                  ownerNames(owners, year), settled));
+                  ownerNames(owners, year), faction == null ? "" : faction, settled));
         }
         AbstractLocation location = campaign.getPlayerForce().getForceDetachment().getCurrentLocation();
         PlanetarySystem here = location == null ? null : location.getCurrentSystem();

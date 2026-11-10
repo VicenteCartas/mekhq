@@ -33,8 +33,10 @@
 package mekhq.gui.gdx.hub;
 
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import com.badlogic.gdx.Gdx;
@@ -61,7 +63,8 @@ import mekhq.gui.model.view.StarMap;
 
 /**
  * The campaign's star map, full screen: the systems laid out on the galactic plane (coreward away from the camera),
- * glowing in their owners' colours, seen from above at a tilt. The force's system wears a pulsing ring with its jump
+ * glowing in their owners' colours. It opens looking straight down with coreward up, as the holotable's dive ends,
+ * and can be tilted from there. The force's system wears a pulsing ring with its jump
  * range around it, its route is drawn star to star, and the system under the cursor or chosen is ringed too.
  *
  * <p>Dragging pans, the wheel zooms towards the cursor, the right button turns and tilts the view, Home flies back to
@@ -82,12 +85,15 @@ final class StarMapView {
         void label(StarMap.Star star, float x, float y, boolean marked);
     }
 
-    private static final float FIELD_OF_VIEW = 40;
+    /** The holotable's, so its dive ends on the very view the map opens with. */
+    private static final float FIELD_OF_VIEW = HoloTableView.FIELD_OF_VIEW;
     private static final float MIN_DISTANCE = 18;
     private static final float MAX_DISTANCE = 3200;
-    private static final float START_DISTANCE = 220;
+    /** How far over the plane the map opens, straight down, in light years. */
+    static final float START_DISTANCE = 650;
+    private static final float MIN_PITCH = 20;
     /** Systems are named once the camera is this near, in light years. */
-    private static final float LABEL_DISTANCE = 420;
+    private static final float LABEL_DISTANCE = 700;
     private static final int MAX_LABELS = 240;
     /** How far from a system, in pixels, the cursor may be to pick it. */
     static final float PICK_RADIUS = 14;
@@ -96,7 +102,8 @@ final class StarMapView {
     private static final float GRID_STEP = 50;
     private static final float GRID_EXTENT = 2500;
     private static final float WORLD_EDGE = 2400;
-    private static final Vector3 BACKGROUND = new Vector3(0.0028f, 0.0036f, 0.0062f);
+    /** The map's dark, linear; the holotable fades its room into it. */
+    static final Vector3 BACKGROUND = new Vector3(0.0028f, 0.0036f, 0.0062f);
     private static final Vector3 CYAN = new Vector3(0.25f, 0.75f, 1.0f);
     private static final Vector3 AMBER = new Vector3(1.0f, 0.62f, 0.18f);
     private static final int GL_PROGRAM_POINT_SIZE = 0x8642;
@@ -121,8 +128,13 @@ final class StarMapView {
     private float time;
     private float distance = START_DISTANCE;
     private float yaw;
-    private float pitch = 56;
+    private float pitch = 90;
+    /** Where the map opens: the holotable's focus, else the force's system. */
+    private final Vector3 start = new Vector3();
+    private boolean startSet;
     private boolean flying;
+    /** Whether the flight turns the camera back to the opening view too. */
+    private boolean posing;
     private @Nullable StarMap map;
     private @Nullable StarMap pending;
     /** Every system's position on screen last frame, x then y in input coordinates; NaN when behind the camera. */
@@ -156,9 +168,10 @@ final class StarMapView {
                 return true;
             }
             flying = false;
+            posing = false;
             if (pressButton == Input.Buttons.RIGHT) {
                 yaw -= Gdx.input.getDeltaX() * 0.25f;
-                pitch = MathUtils.clamp(pitch + Gdx.input.getDeltaY() * 0.2f, 20, 89);
+                pitch = MathUtils.clamp(pitch + Gdx.input.getDeltaY() * 0.2f, MIN_PITCH, 90);
                 aim();
             } else if (grabbed && ground(screenX, screenY, ground)) {
                 target.add(grab).sub(ground);
@@ -237,6 +250,61 @@ final class StarMapView {
         }
     }
 
+    /** Flies the camera to {@code star} and chooses it. */
+    void focus(StarMap.Star star) {
+        Integer at = index.get(star.id());
+        if (at != null) {
+            flyTo(star);
+            choose(at);
+        }
+    }
+
+    /** Opens the map over ({@code x}, {@code y}) light years, where the holotable centres its own. */
+    void startAt(double x, double y) {
+        world(x, y, start);
+        startSet = true;
+    }
+
+    /** Flies the camera back to the view the map opened with, for the holotable to take over from. */
+    void returnToStart() {
+        flight.set(start);
+        flying = true;
+        posing = true;
+    }
+
+    /** Puts the camera on the view the map opens with at once. */
+    void snapToStart() {
+        target.set(start);
+        distance = START_DISTANCE;
+        yaw = 0;
+        pitch = 90;
+        flying = false;
+        posing = false;
+        aim();
+    }
+
+    /** Whether the camera is still, not flying anywhere. */
+    boolean settled() {
+        return !flying;
+    }
+
+    /** Which way the camera faces over the plane, in degrees from coreward, anticlockwise. */
+    float yaw() {
+        return yaw;
+    }
+
+    /** The systems shown, in the map's order; empty before it loads. */
+    List<StarMap.Star> stars() {
+        StarMap shown = map;
+        return shown == null ? List.of() : shown.stars();
+    }
+
+    /** The factions with the most systems on screen, at most {@code limit} of them. */
+    List<Legend> legend(int limit) {
+        return legend(stars(), screen, camera == null ? 0 : camera.viewportWidth,
+              camera == null ? 0 : camera.viewportHeight, limit);
+    }
+
     void create() {
         starShader = HoloTableView.compile(StarMapShaders.STAR_VERTEX, HoloShaders.STAR_FRAGMENT);
         ringShader = HoloTableView.compile(StarMapShaders.RING_VERTEX, StarMapShaders.RING_FRAGMENT);
@@ -258,6 +326,14 @@ final class StarMapView {
     }
 
     void render() {
+        render(1, true);
+    }
+
+    /**
+     * Draws the map at {@code fade} of its brightness, 0 to 1; over what is already drawn unless {@code clear}, as the
+     * holotable's room fades into it.
+     */
+    void render(float fade, boolean clear) {
         float delta = Math.min(Gdx.graphics.getDeltaTime(), 0.1f);
         time += delta;
         if (pending != null) {
@@ -265,20 +341,16 @@ final class StarMapView {
             pending = null;
         }
         if (flying) {
-            float step = 1 - (float) Math.exp(-delta * 6);
-            target.lerp(flight, step);
-            if (target.dst2(flight) < 0.01f) {
-                target.set(flight);
-                flying = false;
-            }
-            aim();
+            fly(delta);
         }
         project();
 
         Gdx.gl.glViewport(0, 0, Gdx.graphics.getBackBufferWidth(), Gdx.graphics.getBackBufferHeight());
-        Gdx.gl.glClearColor(HoloTableView.display(BACKGROUND.x), HoloTableView.display(BACKGROUND.y),
-              HoloTableView.display(BACKGROUND.z), 1);
-        Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT | GL20.GL_DEPTH_BUFFER_BIT);
+        if (clear) {
+            Gdx.gl.glClearColor(HoloTableView.display(BACKGROUND.x), HoloTableView.display(BACKGROUND.y),
+                  HoloTableView.display(BACKGROUND.z), 1);
+            Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT | GL20.GL_DEPTH_BUFFER_BIT);
+        }
         Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
         Gdx.gl.glDisable(GL20.GL_CULL_FACE);
         Gdx.gl.glEnable(GL20.GL_BLEND);
@@ -287,10 +359,11 @@ final class StarMapView {
         lineShader.bind();
         lineShader.setUniformMatrix("u_projView", camera.combined);
         lineShader.setUniformf("u_focus", target);
-        lineShader.setUniformf("u_fade", Math.max(distance * 1.8f, 120));
+        lineShader.setUniformf("u_fade", fade);
+        lineShader.setUniformf("u_reach", Math.max(distance * 1.8f, 120));
         grid.render(lineShader, GL20.GL_LINES);
         if (lines != null) {
-            lineShader.setUniformf("u_fade", 1e6f);
+            lineShader.setUniformf("u_reach", 1e6f);
             lines.render(lineShader, GL20.GL_LINES);
         }
 
@@ -300,6 +373,7 @@ final class StarMapView {
             starShader.setUniformMatrix("u_projView", camera.combined);
             starShader.setUniformf("u_camera", camera.position);
             starShader.setUniformf("u_time", time);
+            starShader.setUniformf("u_fade", fade);
             starShader.setUniformf("u_pixels",
                   Gdx.graphics.getBackBufferHeight() / (2 * MathUtils.tanDeg(FIELD_OF_VIEW / 2)));
             stars.render(starShader, GL20.GL_POINTS);
@@ -309,6 +383,7 @@ final class StarMapView {
             ringShader.bind();
             ringShader.setUniformMatrix("u_projView", camera.combined);
             ringShader.setUniformf("u_time", time);
+            ringShader.setUniformf("u_fade", fade);
             rings.render(ringShader, GL20.GL_POINTS, 0, count);
         }
         Gdx.gl.glDisable(GL_PROGRAM_POINT_SIZE);
@@ -393,6 +468,53 @@ final class StarMapView {
         return out.set((float) x, 0, (float) -y);
     }
 
+    /** A faction in the legend: its name, colour (0xRRGGBB) and how many of its systems are on screen. */
+    record Legend(String name, int rgb, int systems) {
+    }
+
+    /**
+     * The systems in {@code all} whose names hold {@code query}, ignoring case, at most {@code limit}: those starting
+     * with it first, then the settled before the empty, then by name. None for a blank query.
+     */
+    static List<StarMap.Star> search(List<StarMap.Star> all, String query, int limit) {
+        String wanted = query.strip().toLowerCase(Locale.ROOT);
+        if (wanted.isEmpty() || limit <= 0) {
+            return List.of();
+        }
+        return all.stream()
+              .filter(star -> star.name().toLowerCase(Locale.ROOT).contains(wanted))
+              .sorted(Comparator.comparing((StarMap.Star star) -> !star.name().toLowerCase(Locale.ROOT)
+                          .startsWith(wanted))
+                    .thenComparing(star -> !star.settled())
+                    .thenComparing(StarMap.Star::name, String.CASE_INSENSITIVE_ORDER))
+              .limit(limit)
+              .toList();
+    }
+
+    /**
+     * The factions holding the most settled systems of {@code all} on a {@code width} by {@code height} screen, where
+     * {@code screen} holds each system's position (x then y, NaN when hidden); at most {@code limit}, the most systems
+     * first, then by name.
+     */
+    static List<Legend> legend(List<StarMap.Star> all, float[] screen, float width, float height, int limit) {
+        Map<String, int[]> counts = new HashMap<>();
+        for (int i = 0; i < all.size() && i * 2 + 1 < screen.length; i++) {
+            StarMap.Star star = all.get(i);
+            float x = screen[i * 2];
+            float y = screen[i * 2 + 1];
+            if (!star.settled() || star.faction().isBlank() || Float.isNaN(x) || x < 0 || y < 0 || x > width
+                  || y > height) {
+                continue;
+            }
+            counts.computeIfAbsent(star.faction(), name -> new int[] { star.rgb(), 0 })[1]++;
+        }
+        return counts.entrySet().stream()
+              .map(entry -> new Legend(entry.getKey(), entry.getValue()[0], entry.getValue()[1]))
+              .sorted(Comparator.comparingInt(Legend::systems).reversed().thenComparing(Legend::name))
+              .limit(Math.max(limit, 0))
+              .toList();
+    }
+
     private void load(StarMap changed) {
         StarMap.Star wasChosen = star(chosen);
         boolean first = map == null;
@@ -417,10 +539,10 @@ final class StarMapView {
         lines = lineMesh(changed);
         if (first) {
             StarMap.Star here = star(current);
-            if (here != null) {
-                world(here.x(), here.y(), target);
+            if (!startSet && here != null) {
+                world(here.x(), here.y(), start);
             }
-            aim();
+            snapToStart();
         }
     }
 
@@ -444,6 +566,31 @@ final class StarMapView {
     private void flyTo(StarMap.Star star) {
         world(star.x(), star.y(), flight);
         flying = true;
+        posing = false;
+    }
+
+    /** Moves the camera {@code delta} seconds further on its flight. */
+    private void fly(float delta) {
+        float step = 1 - (float) Math.exp(-delta * 6);
+        target.lerp(flight, step);
+        boolean there = target.dst2(flight) < 0.01f;
+        if (posing) {
+            float turn = ((yaw % 360) + 540) % 360 - 180;
+            yaw = turn + (0 - turn) * step;
+            pitch = MathUtils.lerp(pitch, 90, step);
+            distance = (float) Math.exp(MathUtils.lerp((float) Math.log(distance), (float) Math.log(START_DISTANCE),
+                  step));
+            there &= Math.abs(yaw) < 0.05f && 90 - pitch < 0.05f && Math.abs(distance - START_DISTANCE) < 0.5f;
+        }
+        if (there) {
+            if (posing) {
+                snapToStart();
+            } else {
+                target.set(flight);
+                flying = false;
+            }
+        }
+        aim();
     }
 
     private void zoom(float amount, int screenX, int screenY) {
@@ -472,7 +619,8 @@ final class StarMapView {
         float cosPitch = MathUtils.cosDeg(pitch);
         camera.position.set(MathUtils.sinDeg(yaw) * cosPitch, MathUtils.sinDeg(pitch), MathUtils.cosDeg(yaw) * cosPitch)
               .scl(distance).add(target);
-        camera.up.set(Vector3.Y);
+        // Up is the way the camera faces over the plane, which stays defined looking straight down
+        camera.up.set(-MathUtils.sinDeg(yaw), 0, -MathUtils.cosDeg(yaw));
         camera.lookAt(target);
         camera.near = Math.max(0.5f, distance * 0.02f);
         camera.update();

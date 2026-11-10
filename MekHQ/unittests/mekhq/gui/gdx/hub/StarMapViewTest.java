@@ -33,8 +33,12 @@
 package mekhq.gui.gdx.hub;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.List;
 
 import com.badlogic.gdx.math.Vector3;
+import mekhq.gui.model.view.StarMap;
 import org.junit.jupiter.api.Test;
 
 class StarMapViewTest {
@@ -59,5 +63,43 @@ class StarMapViewTest {
     void corewardLiesAwayFromTheCamera() {
         Vector3 out = StarMapView.world(12.5, 40, new Vector3());
         assertEquals(new Vector3(12.5f, 0, -40), out);
+    }
+
+    @Test
+    void searchPutsNamesStartingWithTheQueryFirstThenSettledSystems() {
+        List<StarMap.Star> all = List.of(star("New Avalon", true), star("Avalon", false), star("Avellar", true),
+              star("Tharkad", true), star("Avalon City", true));
+        List<String> found = StarMapView.search(all, " aval ", 10).stream().map(StarMap.Star::name).toList();
+        assertEquals(List.of("Avalon City", "Avalon", "New Avalon"), found);
+        assertEquals(List.of("Avalon City"),
+              StarMapView.search(all, "AVAL", 1).stream().map(StarMap.Star::name).toList());
+    }
+
+    @Test
+    void aBlankSearchFindsNothing() {
+        assertTrue(StarMapView.search(List.of(star("Tharkad", true)), "  ", 5).isEmpty());
+    }
+
+    @Test
+    void theLegendCountsTheSettledSystemsOnScreenByFaction() {
+        List<StarMap.Star> all = List.of(owned("A", "Lyran Commonwealth", 0x2060C0, true),
+              owned("B", "Lyran Commonwealth", 0x2060C0, true), owned("C", "Draconis Combine", 0xC02020, true),
+              owned("D", "Draconis Combine", 0xC02020, true), owned("E", "Draconis Combine", 0xC02020, false),
+              owned("F", "Free Worlds League", 0x8040A0, true), owned("G", "Capellan Confederation", 0x40A040, true),
+              owned("H", "", 0x8A9099, true));
+        float[] screen = { 10, 10, 20, 20, 30, 30, 900, 30, 40, 40, 50, 50, HIDDEN, HIDDEN, 60, 60 };
+        List<StarMapView.Legend> legend = StarMapView.legend(all, screen, 800, 600, 3);
+        assertEquals(List.of(new StarMapView.Legend("Lyran Commonwealth", 0x2060C0, 2),
+              new StarMapView.Legend("Draconis Combine", 0xC02020, 1),
+              new StarMapView.Legend("Free Worlds League", 0x8040A0, 1)), legend);
+    }
+
+    private static StarMap.Star star(String name, boolean settled) {
+        return new StarMap.Star(name.toLowerCase(), name, 0, 0, 0xFFFFFF, settled ? "Someone" : "", settled ? "Someone"
+              : "", settled);
+    }
+
+    private static StarMap.Star owned(String id, String faction, int rgb, boolean settled) {
+        return new StarMap.Star(id, id, 0, 0, rgb, faction, faction, settled);
     }
 }
