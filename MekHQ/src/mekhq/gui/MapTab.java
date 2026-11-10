@@ -34,12 +34,7 @@ package mekhq.gui;
 
 import static java.lang.Math.ceil;
 import static megamek.client.ui.WrapLayout.wordWrap;
-import static mekhq.MHQConstants.CONFIRMATION_BEGIN_TRANSIT;
-import static mekhq.campaign.enums.DailyReportType.GENERAL;
-import static mekhq.campaign.market.personnelMarket.enums.PersonnelMarketStyle.MEKHQ;
-import static mekhq.campaign.mission.contract.utilities.ContractAutomation.outOfContractMothballAutomation;
 import static mekhq.campaign.personnel.skills.SkillType.EXP_REGULAR;
-import static mekhq.campaign.randomEvents.prisoners.RecoverMIAPersonnel.abandonMissingPersonnel;
 
 import java.awt.*;
 import java.awt.event.ActionEvent;
@@ -60,12 +55,10 @@ import megamek.client.ui.util.UIUtil;
 import megamek.common.event.Subscribe;
 import megamek.common.ui.FastJScrollPane;
 import megamek.logging.MMLogger;
-import mekhq.MekHQ;
 import mekhq.campaign.AbstractLocation;
 import mekhq.campaign.JumpDriveProfile;
 import mekhq.campaign.JumpPath;
 import mekhq.campaign.NavigationRouteAnalysis.PathAssessment;
-import mekhq.campaign.NavigationRouteAnalysis.Severity;
 import mekhq.campaign.RouteAlternativesPlanner.Course;
 import mekhq.campaign.RouteAlternativesPlanner.PlanningResult;
 import mekhq.campaign.RouteAlternativesPlanner.PlanningStatus;
@@ -78,19 +71,15 @@ import mekhq.campaign.events.PlanetarySystemsChangedEvent;
 import mekhq.campaign.events.missions.MissionEvent;
 import mekhq.campaign.events.scenarios.ScenarioEvent;
 import mekhq.campaign.finances.Money;
-import mekhq.campaign.market.personnelMarket.markets.NewPersonnelMarket;
 import mekhq.campaign.mission.utilities.TransportCostCalculations;
-import mekhq.campaign.unit.Unit;
 import mekhq.campaign.universe.Planet;
 import mekhq.campaign.universe.PlanetarySystem;
-import mekhq.campaign.utilities.JumpBlockers;
 import mekhq.gui.RoutePlanningIntent.ChangeResult;
 import mekhq.gui.baseComponents.FramedCommandButton;
 import mekhq.gui.baseComponents.FramedCommandButtonStyle.ButtonColors;
 import mekhq.gui.baseComponents.FramedCommandButtonStyle.ButtonStateColors;
 import mekhq.gui.baseComponents.ImmersiveCheckBox;
 import mekhq.gui.baseComponents.ImmersiveScrollBarStyle;
-import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogConfirmation;
 import mekhq.gui.dialog.JumpCostsSummary;
 import mekhq.gui.enums.MHQTabType;
 import mekhq.gui.panels.TutorialHyperlinkPanel;
@@ -207,12 +196,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
 
                 static boolean canBeginTransit(JumpPath proposedPath, PlanetarySystem campaignCurrentSystem,
                         JumpPath activePath, PathAssessment routeAssessment) {
-          // A route without jumps is only a journey when it heads for a specific world in the current system
-          return (proposedPath != null) && !proposedPath.isEmpty()
-              && ((proposedPath.getJumps() > 0) || (proposedPath.getTargetPlanet() != null))
-              && Objects.equals(proposedPath.getFirstSystem(), campaignCurrentSystem)
-                            && ((activePath == null) || activePath.isEmpty()) && (routeAssessment != null)
-                            && (routeAssessment.severity() != Severity.BLOCKED);
+          return BeginTransit.allowed(proposedPath, campaignCurrentSystem, activePath, routeAssessment);
         }
 
                                         static boolean canQuickPlotRoute(PlanetarySystem selectedSystem, PlanetarySystem campaignCurrentSystem) {
@@ -1480,68 +1464,16 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
 
     private void beginTransit() {
         JumpPath jumpPath = routePlanningIntent.getJumpPath();
-        AbstractLocation currentLocation = getCampaign().getPlayerForce()
-                                                   .getForceDetachment()
-                                                   .getCurrentLocation();
-        if (currentLocation == null) {
-            return;
-        }
-        JumpPath activePath = currentLocation.getJumpPath();
-        PathAssessment routeAssessment = assessPlannedRoute(jumpPath);
-        if (!canBeginTransit(jumpPath, getCampaign().getCurrentSystem(), activePath, routeAssessment)) {
+        if (!BeginTransit.begin(getCampaign(), jumpPath, assessPlannedRoute(jumpPath))) {
             return;
         }
 
-        // An in-system course never jumps, so JumpShips unable to jump don't hold it up
-        if ((jumpPath.getJumps() > 0) && !JumpBlockers.areAllUnitsJumpCapable(getCampaign())) {
-            return;
-        }
-
-        if (!MekHQ.getMHQOptions().getNagDialogIgnore(CONFIRMATION_BEGIN_TRANSIT)) {
-            ImmersiveDialogConfirmation dialog = new ImmersiveDialogConfirmation(getCampaign(),
-                  CONFIRMATION_BEGIN_TRANSIT);
-            if (!dialog.wasConfirmed()) {
-                return;
-            }
-        }
-
-        // Mothballing
-        outOfContractMothballAutomation(getCampaign());
-
-        // Everything else
-        boolean isUseCommandCircuits = getCampaign().isUseCommandCircuit();
-        int duration = (int) ceil(jumpPath.getTotalTime(getCampaign().getLocalDate(),
-              currentLocation.getTransitTime(),
-              isUseCommandCircuits,
-              getCampaign().getJumpDriveProfile()));
-
-        TransportCostCalculations transportCostCalculations = getCampaign().getTransportCostCalculation(EXP_REGULAR);
-        Money journeyCost = transportCostCalculations.calculateCostForEntireJourney(duration, jumpPath);
-
-        String jumpReport = TransportCostCalculations.performJumpTransaction(getCampaign().getPlayerForce()
-                                                                                   .getFinances(), jumpPath,
-              getCampaign().getLocalDate(), journeyCost, getCampaign().getCurrentSystem());
-
-        if (!jumpReport.isBlank()) {
-            getCampaign().addReport(GENERAL, jumpReport);
-        }
-
-        currentLocation.setJumpPath(jumpPath);
         routeViewMode = RouteViewMode.ACTIVE;
         routePlanningIntent.clear(getCampaign().getCurrentSystem());
         panMap.setJumpPath(routePlanningIntent.getJumpPath());
         setRouteFieldSystem(suggestRouteOrigin, routePlanningIntent.getOrigin());
         setRouteFieldSystem(suggestRouteDestination, panMap.getSelectedSystem());
         refreshPlanetView();
-
-        getCampaign().getUnits().forEach(unit -> unit.setSite(Unit.SITE_FACILITY_BASIC));
-
-        abandonMissingPersonnel(getCampaign());
-
-        NewPersonnelMarket personnelMarket = getCampaign().getPlayerForce().getHumanResources().getNewPersonnelMarket();
-        if (personnelMarket.getAssociatedPersonnelMarketStyle() == MEKHQ) {
-            personnelMarket.clearCurrentApplicants();
-        }
     }
 
     private void refreshSystemView() {

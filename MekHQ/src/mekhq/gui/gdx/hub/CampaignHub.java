@@ -60,7 +60,9 @@ import mekhq.MHQConstants;
 import mekhq.MekHQ;
 import mekhq.campaign.AbstractLocation;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.JumpPath;
 import mekhq.campaign.universe.PlanetarySystem;
+import mekhq.gui.BeginTransit;
 import mekhq.gui.CampaignGUI;
 import mekhq.gui.StartStarChart;
 import mekhq.gui.enums.MHQTabType;
@@ -238,6 +240,21 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
             if (read != null) {
                 GpuHost.post(() -> screen.detail(read));
             }
+        });
+    }
+
+    @Override
+    public void travel(String id) {
+        session.dispatch(current -> {
+            if (leaving.get() || gui == null || dialogs.blocked()) {
+                return;
+            }
+            JumpPath path = StarMap.plot(current, id);
+            // The confirmation and any JumpShips unable to jump show over the hub
+            if (path != null) {
+                BeginTransit.begin(current, path, StarMap.assess(current, path));
+            }
+            system(id);
         });
     }
 

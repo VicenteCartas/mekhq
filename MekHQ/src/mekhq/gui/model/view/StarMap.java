@@ -45,11 +45,19 @@ import jakarta.annotation.Nullable;
 import megamek.common.universe.FactionTag;
 import mekhq.campaign.AbstractLocation;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.CurrentLocation;
+import mekhq.campaign.JumpDriveProfile;
 import mekhq.campaign.JumpPath;
+import mekhq.campaign.NavigationRouteAnalysis.PathAssessment;
+import mekhq.campaign.NavigationRouteAnalysis.Severity;
+import mekhq.campaign.RouteAlternativesPlanner.PlanningResult;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.events.LocationChangedEvent;
 import mekhq.campaign.events.NewDayEvent;
 import mekhq.campaign.events.PlanetarySystemsChangedEvent;
 import mekhq.campaign.events.TransitStatusChangedEvent;
+import mekhq.campaign.finances.Money;
+import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.PlanetarySystem;
 import mekhq.campaign.universe.enums.HPGRating;
@@ -62,8 +70,10 @@ import mekhq.campaign.universe.enums.HPGRating;
  * @param stars   every system with a position
  * @param current the id of the system the force is at, or travelling from; null when nowhere
  * @param route   the ids of the systems on the force's route, the current one first; empty when it isn't travelling
+ * @param voyage  how far the force is along its route; null when it isn't travelling
  */
-public record StarMap(LocalDate date, List<Star> stars, @Nullable String current, List<String> route) {
+public record StarMap(LocalDate date, List<Star> stars, @Nullable String current, List<String> route,
+      @Nullable Voyage voyage) {
     /** The colour of a system no one holds. */
     static final int UNCLAIMED = 0x8A9099;
 
@@ -101,17 +111,73 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
      * @param star      its primary star's spectral type, or blank when unknown
      * @param recharge  the hours a jump drive takes to recharge there
      * @param distance  the light years from the force's system; 0 when the force is nowhere
-     * @param jumps     the jumps from the force's system on the fastest route, or -1 when there is none
+     * @param jumps     the jumps from the force's system on the course there, or -1 when there is none
      * @param here      whether the force is there
+     * @param course    the course there from the force's system; null when the force is there, nowhere or has none
      */
     public record Detail(String id, String name, String owner, int rgb, long population, String hpg, String star,
-          double recharge, double distance, int jumps, boolean here) {
+          double recharge, double distance, int jumps, boolean here, @Nullable Course course) {
         public Detail {
             Objects.requireNonNull(id);
             Objects.requireNonNull(name);
             Objects.requireNonNull(owner);
             Objects.requireNonNull(hpg);
             Objects.requireNonNull(star);
+        }
+    }
+
+    /** Whether the force can set out on a course now. */
+    public enum Departure {
+        /** It can. */
+        READY,
+        /** It is already following a route. */
+        UNDERWAY,
+        /** The course runs where the force may not go. */
+        BLOCKED
+    }
+
+    /**
+     * A course from the force's system to a chosen one, plotted as the Navigation tab plots it.
+     *
+     * @param route    the ids of the systems on it, the force's first
+     * @param jumps    its jumps
+     * @param days     the days it takes, rounded up
+     * @param recharge the hours the drives spend recharging on the way
+     * @param cost     what the journey costs, or blank when the campaign doesn't pay for transport
+     * @param state    whether the force can set out on it now
+     */
+    public record Course(List<String> route, int jumps, int days, double recharge, String cost, Departure state) {
+        public Course {
+            route = List.copyOf(route);
+            Objects.requireNonNull(cost);
+            Objects.requireNonNull(state);
+        }
+    }
+
+    /** What the force is doing on its route. */
+    public enum Stage {
+        /** Flying out to the jump point, its drives charging as it goes. */
+        OUTBOUND,
+        /** At the jump point, charging its drives for the next jump. */
+        CHARGING,
+        /** In the last system, flying in to its destination. */
+        INBOUND
+    }
+
+    /**
+     * How far the force is along its route.
+     *
+     * @param destination the name of the system the route ends at
+     * @param jumps       the jumps still to make
+     * @param days        the days still to go, rounded up
+     * @param stage       what the force is doing
+     * @param leg         how ready it is, 0 to 1, for the next jump (both at the jump point and charged), or on the
+     *                    last leg how far in it has come
+     */
+    public record Voyage(String destination, int jumps, int days, Stage stage, double leg) {
+        public Voyage {
+            Objects.requireNonNull(destination);
+            Objects.requireNonNull(stage);
         }
     }
 
@@ -145,12 +211,14 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
         PlanetarySystem here = location == null ? null : location.getCurrentSystem();
         JumpPath path = location == null ? null : location.getJumpPath();
         List<String> route = new ArrayList<>();
+        Voyage voyage = null;
         if (path != null && !path.isEmpty()) {
             for (PlanetarySystem system : path.getSystems()) {
                 route.add(system.getId());
             }
+            voyage = voyage(campaign, location, path);
         }
-        return new StarMap(date, stars, here == null ? null : here.getId(), route);
+        return new StarMap(date, stars, here == null ? null : here.getId(), route, voyage);
     }
 
     /** Swing thread: the detail of the system {@code id}, or null when the campaign has no such system. */
@@ -165,19 +233,117 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
         PlanetarySystem here = location == null ? null : location.getCurrentSystem();
         double distance = 0;
         int jumps = -1;
+        Course course = null;
         boolean atSystem = here != null && Objects.equals(here.getId(), system.getId());
         if (atSystem) {
             jumps = 0;
         } else if (here != null) {
             distance = here.getDistanceTo(system);
-            JumpPath path = campaign.calculateJumpPath(here, system);
-            jumps = path == null || path.isEmpty() ? -1 : path.getJumps();
+            JumpPath path = plot(campaign, here, system);
+            if (path != null) {
+                course = course(campaign, location, path);
+                jumps = course.jumps();
+            }
         }
         HPGRating hpg = system.getHPG(date);
         return new Detail(system.getId(), name(system, date), ownerNames(owners, date.getYear()), colour(owners),
               system.getPopulation(date), hpg == null ? HPGRating.X.toString() : hpg.toString(),
               system.getStar() == null ? "" : system.getStar().toString(),
-              system.getRechargeTime(date, campaign.isUseCommandCircuit()), distance, jumps, atSystem);
+              system.getRechargeTime(date, campaign.isUseCommandCircuit()), distance, jumps, atSystem, course);
+    }
+
+    /**
+     * Swing thread: the course from the force's system to the system {@code id} that its {@link Detail} shows, for
+     * setting out on; null when the force is nowhere or already there, or there is no such system or course.
+     */
+    public static @Nullable JumpPath plot(Campaign campaign, String id) {
+        PlanetarySystem system = campaign.getSystemById(id);
+        AbstractLocation location = campaign.getPlayerForce().getForceDetachment().getCurrentLocation();
+        PlanetarySystem here = location == null ? null : location.getCurrentSystem();
+        if (system == null || here == null || Objects.equals(here.getId(), system.getId())) {
+            return null;
+        }
+        return plot(campaign, here, system);
+    }
+
+    /** Swing thread: how the force's course {@code path} fares by the Navigation tab's rules. */
+    public static PathAssessment assess(Campaign campaign, JumpPath path) {
+        boolean commandCircuit = campaign.isUseCommandCircuit();
+        return campaign.assessNavigationPath(path.getSystems(), List.of(path.getLastSystem()),
+              destination -> commandCircuit);
+    }
+
+    /** The Navigation tab's course from {@code from} to {@code to}, or null when there is none. */
+    private static @Nullable JumpPath plot(Campaign campaign, PlanetarySystem from, PlanetarySystem to) {
+        PlanningResult planned = campaign.calculateJumpPathForPlanning(from, to);
+        return planned == null || !planned.routeFound() ? null : planned.path();
+    }
+
+    private static Course course(Campaign campaign, AbstractLocation location, JumpPath path) {
+        LocalDate date = campaign.getLocalDate();
+        boolean commandCircuit = campaign.isUseCommandCircuit();
+        JumpDriveProfile profile = campaign.getJumpDriveProfile();
+        int days = (int) Math.ceil(path.getTotalTime(date, location.getTransitTime(), commandCircuit, profile));
+        String cost = "";
+        if (Boolean.TRUE.equals(campaign.getCampaignOptions().get(CampaignOption.PAY_FOR_TRANSPORT))) {
+            Money journey = campaign.getTransportCostCalculation(SkillType.EXP_REGULAR)
+                  .calculateCostForEntireJourney(days, path);
+            cost = journey.toAmountAndSymbolString();
+        }
+        JumpPath active = location.getJumpPath();
+        Departure state;
+        if (active != null && !active.isEmpty()) {
+            state = Departure.UNDERWAY;
+        } else {
+            PathAssessment assessment = assess(campaign, path);
+            state = assessment == null || assessment.severity() == Severity.BLOCKED ? Departure.BLOCKED
+                  : Departure.READY;
+        }
+        List<String> route = new ArrayList<>();
+        for (PlanetarySystem system : path.getSystems()) {
+            route.add(system.getId());
+        }
+        return new Course(route, path.getJumps(), days,
+              path.getTotalRechargeTime(date, commandCircuit, profile) * 24, cost, state);
+    }
+
+    /** How far the force at {@code location} is along {@code path}, or null when it can't tell. */
+    private static @Nullable Voyage voyage(Campaign campaign, AbstractLocation location, JumpPath path) {
+        PlanetarySystem here = location.getCurrentSystem();
+        PlanetarySystem end = path.getLastSystem();
+        if (here == null || end == null) {
+            return null;
+        }
+        LocalDate date = campaign.getLocalDate();
+        double transit = location.getTransitTime();
+        // On the last leg the time still to go is the flight in itself
+        double remaining = path.size() > 1 ? path.getTotalTime(date, transit, campaign.isUseCommandCircuit(),
+              campaign.getJumpDriveProfile()) : transit;
+        int days = (int) Math.ceil(remaining);
+        Stage stage;
+        double leg;
+        if (path.size() > 1) {
+            double toJumpPoint = here.getTimeToJumpPoint(1.0);
+            double outbound = toJumpPoint <= 0 ? 1 : transit / toJumpPoint;
+            stage = outbound < 1 ? Stage.OUTBOUND : Stage.CHARGING;
+            // It jumps once it is both at the jump point and charged
+            leg = Math.min(outbound, charged(campaign, location));
+        } else {
+            double approach = path.isInSystemTransfer() ? path.getInSystemTransferTime() : path.getEndTime();
+            stage = Stage.INBOUND;
+            leg = approach <= 0 ? 1 : 1 - transit / approach;
+        }
+        return new Voyage(name(end, date), path.getJumps(), Math.max(0, days), stage,
+              Math.max(0, Math.min(1, leg)));
+    }
+
+    /** How charged, 0 to 1, the force's drives are for their next jump. */
+    private static double charged(Campaign campaign, AbstractLocation location) {
+        if (!(location instanceof CurrentLocation travelling)) {
+            return 1;
+        }
+        double needed = travelling.getNeededRechargeTime(campaign);
+        return needed <= 0 ? 1 : travelling.getRechargeTime() / needed;
     }
 
     /** The system's owners today, settled ones first, each in name order. */

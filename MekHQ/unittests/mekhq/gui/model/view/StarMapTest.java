@@ -35,6 +35,7 @@ package mekhq.gui.model.view;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -51,13 +52,23 @@ import java.util.Set;
 import megamek.common.universe.FactionTag;
 import mekhq.campaign.AbstractLocation;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.CurrentLocation;
 import mekhq.campaign.JumpPath;
+import mekhq.campaign.NavigationRouteAnalysis.PathAssessment;
+import mekhq.campaign.NavigationRouteAnalysis.Severity;
+import mekhq.campaign.RouteAlternativesPlanner.PlanningResult;
+import mekhq.campaign.RouteAlternativesPlanner.PlanningStatus;
+import mekhq.campaign.campaignOptions.CampaignOption;
+import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.events.LocationChangedEvent;
 import mekhq.campaign.events.NewDayEvent;
 import mekhq.campaign.events.PlanetarySystemsChangedEvent;
 import mekhq.campaign.events.persons.PersonChangedEvent;
+import mekhq.campaign.finances.Money;
 import mekhq.campaign.force.Detachment;
 import mekhq.campaign.force.PlayerForce;
+import mekhq.campaign.mission.utilities.TransportCostCalculations;
+import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.PlanetarySystem;
 import mekhq.campaign.universe.enums.HPGRating;
@@ -68,6 +79,7 @@ class StarMapTest {
     private static final LocalDate TODAY = LocalDate.of(3025, 6, 1);
 
     private final Campaign campaign = mock(Campaign.class);
+    private final CampaignOptions campaignOptions = mock(CampaignOptions.class);
     private final AbstractLocation location = mock(AbstractLocation.class);
     private final ArrayList<PlanetarySystem> systems = new ArrayList<>();
     private final Faction lyrans = faction("LA", "Lyran Commonwealth", 0x2060C0, false);
@@ -85,6 +97,9 @@ class StarMapTest {
         when(force.getForceDetachment()).thenReturn(detachment);
         when(detachment.getCurrentLocation()).thenReturn(location);
         when(campaign.getSystems()).thenReturn(systems);
+        when(campaign.getCampaignOptions()).thenReturn(campaignOptions);
+        when(campaign.assessNavigationPath(any(), any(), any()))
+              .thenReturn(new PathAssessment(List.of(), Severity.CLEAR));
         tharkad = system("tharkad", "Tharkad", -100.0, 300.0, Set.of(lyrans));
         skye = system("skye", "Skye", -80.0, 200.0, Set.of(kurita, lyrans));
         when(location.getCurrentSystem()).thenReturn(tharkad);
@@ -151,12 +166,12 @@ class StarMapTest {
     }
 
     @Test
-    void theDetailOfAnotherSystemCountsTheJumpsThere() {
-        JumpPath path = new JumpPath();
-        path.addSystem(tharkad);
-        path.addSystem(skye);
-        when(campaign.calculateJumpPath(tharkad, skye)).thenReturn(path);
+    void theDetailOfAnotherSystemPreviewsTheCourseThere() {
+        JumpPath path = route(tharkad, skye);
+        when(campaign.calculateJumpPathForPlanning(tharkad, skye)).thenReturn(PlanningResult.found(path));
         when(tharkad.getDistanceTo(skye)).thenReturn(102.0);
+        when(tharkad.getTimeToJumpPoint(1.0)).thenReturn(3.0);
+        when(skye.getTimeToJumpPoint(1.0)).thenReturn(3.5);
         when(skye.getPopulation(TODAY)).thenReturn(8_000_000_000L);
         when(skye.getHPG(TODAY)).thenReturn(HPGRating.A);
         when(skye.getRechargeTime(TODAY, false)).thenReturn(141.0);
@@ -171,6 +186,57 @@ class StarMapTest {
         assertEquals(102.0, detail.distance());
         assertEquals(1, detail.jumps());
         assertFalse(detail.here());
+        assertEquals(new StarMap.Course(List.of("tharkad", "skye"), 1, 7, 0, "", StarMap.Departure.READY),
+              detail.course(), "out to the jump point and in again, rounded up; free without paying for transport");
+    }
+
+    @Test
+    void aCourseRechargesAtEveryStopOnTheWay() {
+        PlanetarySystem donegal = system("donegal", "Donegal", -90.0, 250.0, Set.of(lyrans));
+        when(donegal.getRechargeTime(TODAY, false)).thenReturn(150.0);
+        when(campaign.calculateJumpPathForPlanning(tharkad, skye))
+              .thenReturn(PlanningResult.found(route(tharkad, donegal, skye)));
+
+        StarMap.Course course = StarMap.detail(campaign, "skye").course();
+
+        assertEquals(List.of("tharkad", "donegal", "skye"), course.route());
+        assertEquals(2, course.jumps());
+        assertEquals(150.0, course.recharge(), 1e-9, "the hours charging at Donegal");
+        assertEquals(7, course.days(), "150 hours of charging round up to the seventh day");
+    }
+
+    @Test
+    void payingForTransportPricesTheCourse() {
+        JumpPath path = route(tharkad, skye);
+        when(campaign.calculateJumpPathForPlanning(tharkad, skye)).thenReturn(PlanningResult.found(path));
+        when(campaignOptions.get(CampaignOption.PAY_FOR_TRANSPORT)).thenReturn(true);
+        TransportCostCalculations transport = mock(TransportCostCalculations.class);
+        Money cost = mock(Money.class);
+        when(cost.toAmountAndSymbolString()).thenReturn("12,000 C-bills");
+        when(transport.calculateCostForEntireJourney(0, path)).thenReturn(cost);
+        when(campaign.getTransportCostCalculation(SkillType.EXP_REGULAR)).thenReturn(transport);
+
+        assertEquals("12,000 C-bills", StarMap.detail(campaign, "skye").course().cost());
+    }
+
+    @Test
+    void aCourseThroughForbiddenSpaceIsBlocked() {
+        when(campaign.calculateJumpPathForPlanning(tharkad, skye))
+              .thenReturn(PlanningResult.found(route(tharkad, skye)));
+        when(campaign.assessNavigationPath(any(), any(), any()))
+              .thenReturn(new PathAssessment(List.of(), Severity.BLOCKED));
+
+        assertEquals(StarMap.Departure.BLOCKED, StarMap.detail(campaign, "skye").course().state());
+    }
+
+    @Test
+    void aForceUnderwayCantSetOutAgain() {
+        PlanetarySystem donegal = system("donegal", "Donegal", -90.0, 250.0, Set.of(lyrans));
+        when(location.getJumpPath()).thenReturn(route(tharkad, donegal));
+        when(campaign.calculateJumpPathForPlanning(tharkad, skye))
+              .thenReturn(PlanningResult.found(route(tharkad, skye)));
+
+        assertEquals(StarMap.Departure.UNDERWAY, StarMap.detail(campaign, "skye").course().state());
     }
 
     @Test
@@ -178,14 +244,74 @@ class StarMapTest {
         StarMap.Detail detail = StarMap.detail(campaign, "tharkad");
         assertTrue(detail.here());
         assertEquals(0, detail.jumps());
-        verify(campaign, never()).calculateJumpPath(any(), any());
+        assertNull(detail.course());
+        assertNull(StarMap.plot(campaign, "tharkad"), "the force can't set out for where it is");
+        verify(campaign, never()).calculateJumpPathForPlanning(any(), any());
     }
 
     @Test
     void noRouteAndNoSystemAreToldApart() {
-        when(campaign.calculateJumpPath(tharkad, skye)).thenReturn(null);
-        assertEquals(-1, StarMap.detail(campaign, "skye").jumps());
+        when(campaign.calculateJumpPathForPlanning(tharkad, skye))
+              .thenReturn(PlanningResult.failed(PlanningStatus.ACCESS_DENIED));
+        StarMap.Detail detail = StarMap.detail(campaign, "skye");
+        assertEquals(-1, detail.jumps());
+        assertNull(detail.course());
+        assertNull(StarMap.plot(campaign, "skye"));
         assertNull(StarMap.detail(campaign, "nowhere"));
+    }
+
+    @Test
+    void theCourseSetOutOnIsTheOnePreviewed() {
+        JumpPath path = route(tharkad, skye);
+        when(campaign.calculateJumpPathForPlanning(tharkad, skye)).thenReturn(PlanningResult.found(path));
+        assertSame(path, StarMap.plot(campaign, "skye"));
+    }
+
+    @Test
+    void outboundTheForceIsAsReadyToJumpAsItIsFarOut() {
+        when(location.getJumpPath()).thenReturn(route(tharkad, skye));
+        when(location.getTransitTime()).thenReturn(1.5);
+        when(tharkad.getTimeToJumpPoint(1.0)).thenReturn(3.0);
+        when(skye.getTimeToJumpPoint(1.0)).thenReturn(4.0);
+
+        StarMap.Voyage voyage = StarMap.of(campaign).voyage();
+
+        assertEquals(new StarMap.Voyage("Skye", 1, 6, StarMap.Stage.OUTBOUND, 0.5), voyage);
+    }
+
+    @Test
+    void atTheJumpPointTheForceWaitsOnItsDrives() {
+        CurrentLocation charging = mock(CurrentLocation.class);
+        when(campaign.getPlayerForce().getForceDetachment().getCurrentLocation()).thenReturn(charging);
+        when(charging.getCurrentSystem()).thenReturn(tharkad);
+        when(charging.getJumpPath()).thenReturn(route(tharkad, skye));
+        when(charging.getTransitTime()).thenReturn(3.0);
+        when(charging.getRechargeTime()).thenReturn(40.0);
+        when(charging.getNeededRechargeTime(campaign)).thenReturn(160.0);
+        when(tharkad.getTimeToJumpPoint(1.0)).thenReturn(3.0);
+
+        StarMap.Voyage voyage = StarMap.of(campaign).voyage();
+
+        assertEquals(StarMap.Stage.CHARGING, voyage.stage());
+        assertEquals(0.25, voyage.leg(), 1e-9, "a quarter charged");
+    }
+
+    @Test
+    void onTheLastLegTheForceFliesIn() {
+        when(location.getCurrentSystem()).thenReturn(skye);
+        when(location.getJumpPath()).thenReturn(route(skye));
+        when(location.getTransitTime()).thenReturn(1.0);
+        when(skye.getTimeToJumpPoint(1.0)).thenReturn(4.0);
+
+        StarMap map = StarMap.of(campaign);
+
+        assertEquals(new StarMap.Voyage("Skye", 0, 1, StarMap.Stage.INBOUND, 0.75), map.voyage());
+        assertEquals(List.of("skye"), map.route());
+    }
+
+    @Test
+    void aForceAtRestHasNoVoyage() {
+        assertNull(StarMap.of(campaign).voyage());
     }
 
     @Test
@@ -195,6 +321,14 @@ class StarMapTest {
         assertTrue(model.isAffectedBy(mock(LocationChangedEvent.class)));
         assertTrue(model.isAffectedBy(new PlanetarySystemsChangedEvent(campaign)));
         assertFalse(model.isAffectedBy(mock(PersonChangedEvent.class)));
+    }
+
+    private static JumpPath route(PlanetarySystem... stops) {
+        JumpPath path = new JumpPath();
+        for (PlanetarySystem stop : stops) {
+            path.addSystem(stop);
+        }
+        return path;
     }
 
     private PlanetarySystem system(String id, String name, Double x, Double y, Set<Faction> owners) {

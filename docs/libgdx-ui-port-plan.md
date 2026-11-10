@@ -131,8 +131,24 @@ Each phase ships something playable and keeps everything else reachable through 
      - In `mekhq.gui.gdx.hub`: `StarMapView` (camera, meshes, picking, search, legend),
        `StarMapShaders` and `StarLabels` (the names, laid out so they don't overlap).
        `HoloTableView` dives and fades into the map; `HubScreen` runs the transition and chrome.
-  2. **Travel.** Preview a route to the chosen system (jumps, days, cost), then confirm it, without
-     Swing.
+  2. **Travel (done).** Choosing a system previews the course there, plotted as the Navigation tab
+     plots it: the route dashes star to star on the map, and the detail adds the days in transit,
+     the hours recharging on the way and, when the campaign pays for transport, the cost. Set
+     course confirms it from the detail. The Navigation tab's checks, confirmation, payment and
+     departure run as they do there, their dialogs over the hub. The button stays disabled, with
+     the reason, while the force is under way or the course is blocked. Under way, the route is
+     solid as far as the force has come, a marker shows where it is between its first two
+     systems, and the map's header says where it is bound, the jumps and days left and whether
+     it is making for the jump point, charging its drives or flying in. Navigation still opens
+     the Swing tab, for multi-stop routes and route options.
+     - `StarMap` adds `Detail.course` (`Course`: route, jumps, days, recharge, cost, `Departure`)
+       and `StarMap.voyage` (`Voyage`: destination, jumps and days left, `Stage`, progress on
+       the leg). `StarMap.plot` and `StarMap.assess` give the course to set out on.
+     - `mekhq.gui.BeginTransit` sets the force out for both the Navigation tab and the hub.
+       While the hub hosts the hidden campaign window, `ImmersiveDialogCore` still parents its
+       dialogs on it (`CampaignGUI.isHosted`), so they show over the hub.
+     - `StarMapView` draws routes with `StarMapShaders.ROUTE_*` and the force's marker;
+       `HubScreen` adds Set course and the voyage line; `CampaignHub.travel` runs the departure.
   3. **Borders by date.** Faction territory and a time scrubber.
   4. **Pins.** Contracts and markets on their systems.
 

@@ -391,14 +391,15 @@ public class ImmersiveDialogCore extends JDialog {
     /**
      * Picks the owner window for this dialog.
      *
-     * <p>When the campaign window is visible, the dialog is owned by it so it stays on top of it and shares its
-     * taskbar entry. Otherwise (for example during startup, before the campaign window exists), the dialog has no
+     * <p>When the campaign window is visible, or hidden behind a window that hosts it, the dialog is owned by it so
+     * it stays on top of it (or of its host) and shares its taskbar entry. Otherwise (for example during startup,
+     * before the campaign window exists), the dialog has no
      * owner. Without an explicit {@code null} owner, Swing would attach the dialog to a hidden shared frame, which
      * leaves it out of the Windows taskbar and Alt+Tab.</p>
      *
      * @param campaign the campaign the dialog belongs to; may be {@code null}
      *
-     * @return the visible campaign window, or {@code null} if there is none
+     * @return the visible or hosted campaign window, or {@code null} if there is none
      */
     private static @Nullable Window resolveOwner(@Nullable Campaign campaign) {
         if (campaign == null) {
@@ -409,7 +410,8 @@ public class ImmersiveDialogCore extends JDialog {
             return null;
         }
         JFrame frame = campaignGUI.getFrame();
-        return ((frame != null) && frame.isShowing()) ? frame : null;
+        // A hosted window stays hidden behind its host, which shows the dialogs it owns
+        return ((frame != null) && (frame.isShowing() || campaignGUI.isHosted())) ? frame : null;
     }
 
     /**
