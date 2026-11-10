@@ -381,10 +381,18 @@ public class MekHQ implements GameListener {
      * @param campaign the {@link Campaign} to be activated
      */
     public void activateCampaign(Campaign campaign) {
+        activateCampaign(campaign, true);
+    }
+
+    /**
+     * Activates a campaign as {@link #activateCampaign(Campaign)} does, with its window hidden unless {@code show}: the
+     * command post shows the window on one of its tabs when the player goes there.
+     */
+    public void activateCampaign(Campaign campaign, boolean show) {
         deactivateCampaign();
         campaignController = new CampaignController(this, campaign);
         campaignController.setHost(campaign.getId());
-        campaignGUI = new CampaignGUI(this);
+        campaignGUI = new CampaignGUI(this, show);
         campaign.setGUI(campaignGUI);
         campaignController.activate();
     }
