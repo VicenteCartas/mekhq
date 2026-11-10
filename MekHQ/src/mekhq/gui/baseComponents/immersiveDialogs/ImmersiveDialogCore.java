@@ -84,6 +84,7 @@ import mekhq.gui.CampaignGUI;
 import mekhq.gui.baseComponents.JScrollablePanel;
 import mekhq.gui.dialog.glossary.GlossaryConsole;
 import mekhq.gui.dialog.glossary.GuideViewer;
+import mekhq.gui.model.view.Transmission;
 import mekhq.gui.utilities.WrapLayout;
 
 /**
@@ -129,6 +130,7 @@ public class ImmersiveDialogCore extends JDialog {
     private MMComboBox<?> comboBox; // can be null
     private int comboBoxChoiceIndex;
     private FastJScrollPane messageScrollPane;
+    private @Nullable TransmissionRelay relay;
 
     private int dialogChoice = 0;
 
@@ -385,7 +387,97 @@ public class ImmersiveDialogCore extends JDialog {
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setModal(isModal);
         setLocationRelativeTo(locationReference); // Needs to be after pack
+        relay = TransmissionRelay.of(this, new TransmissionRelay.Content(centerMessage, buttons,
+              outOfCharacterMessage, CENTER_WIDTH, isVerticalLayout, supplementalPanel, imageIcon, signalQuality));
         setVisible(true);
+    }
+
+    /**
+     * Shows or hides the dialog. While a screen hosts the campaign, it shows the dialog as a transmission in place of
+     * this window, and a modal dialog waits here for the answer as it would for its window.
+     */
+    @Override
+    public void setVisible(boolean visible) {
+        TransmissionRelay transmission = relay;
+        if (transmission != null) {
+            if (!visible) {
+                transmission.withdraw();
+            } else if (!isVisible() && transmission.show()) {
+                return;
+            }
+        }
+        super.setVisible(visible);
+    }
+
+    @Override
+    public void dispose() {
+        TransmissionRelay transmission = relay;
+        if (transmission != null) {
+            transmission.withdraw();
+        }
+        super.dispose();
+    }
+
+    /** Shows this window, as when no screen takes the dialog as a transmission. */
+    void showWindow() {
+        super.setVisible(true);
+    }
+
+    /** Answers the dialog with response {@code choice}, as clicking its button does. */
+    void respond(int choice) {
+        responseActivationController.activate(() -> captureResponseState(choice));
+    }
+
+    @Nullable Person leftSpeaker() {
+        return leftSpeaker;
+    }
+
+    Campaign campaign() {
+        return campaign;
+    }
+
+    @Nullable Person rightSpeaker() {
+        return rightSpeaker;
+    }
+
+    /**
+     * The speaker as a screen hosting the campaign shows them in a transmission. Dialogs that build their own speaker
+     * panel override this to match it; if they don't, they show their window instead.
+     *
+     * @param speaker  the speaker
+     * @param campaign the dialog's campaign
+     * @param left     whether they speak at the left
+     *
+     * @return the speaker, or null to show the window instead
+     */
+    protected @Nullable Transmission.Speaker transmissionSpeaker(Person speaker, Campaign campaign, boolean left) {
+        if (overrides("buildLeftSpeakerPanel") || (!left && overrides("buildRightSpeakerPanel"))) {
+            return null;
+        }
+        String name = speaker.getFullTitle();
+        ImageIcon icon = getSpeakerIcon(campaign, speaker);
+        if (icon != null) {
+            icon = scaleImageIcon(icon, IMAGE_WIDTH, true);
+        }
+        return new Transmission.Speaker(getSourceLabel(speaker),
+              getSpeakerDescription(campaign, speaker, name).toString(), transmissionPicture(icon), true);
+    }
+
+    /** {@code icon} as a transmission shows it, or null when there is no icon or it has no size. */
+    protected static @Nullable Transmission.Picture transmissionPicture(@Nullable ImageIcon icon) {
+        return TransmissionRelay.picture(icon);
+    }
+
+    private boolean overrides(String method) {
+        for (Class<?> type = getClass(); type != ImmersiveDialogCore.class; type = type.getSuperclass()) {
+            try {
+                type.getDeclaredMethod(method, Person.class, Campaign.class);
+                return true;
+            } catch (NoSuchMethodException ignored) {
+                // Not declared here; look further up
+            }
+        }
+        return false;
     }
 
     /**
