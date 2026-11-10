@@ -164,7 +164,8 @@ final class TerritoryField implements Disposable {
         Pixmap colours = new Pixmap(Math.min(count, 256), (count + 255) / 256, Pixmap.Format.RGBA8888);
         colours.setBlending(Pixmap.Blending.None);
         for (int i = 0; i < realms.size(); i++) {
-            colours.drawPixel(i % 256, i / 256, (realms.get(i).rgb() << 8) | 0xFF);
+            Borders.Realm realm = realms.get(i);
+            colours.drawPixel(i % 256, i / 256, (realm.rgb() << 8) | ("IND".equals(realm.shortName()) ? 0x48 : 0xFF));
         }
         if (palette != null) {
             palette.dispose();

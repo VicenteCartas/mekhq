@@ -60,6 +60,7 @@ import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.scenes.scene2d.Touchable;
 import com.badlogic.gdx.scenes.scene2d.ui.Cell;
 import com.badlogic.gdx.scenes.scene2d.ui.Container;
+import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
 import com.badlogic.gdx.scenes.scene2d.ui.TextField;
@@ -118,6 +119,9 @@ final class HubScreen extends ApplicationAdapter {
     static final int LAST_YEAR = 3152;
     private static final float TIMELINE_WIDTH = 640;
     private static final float TIMELINE_MIN_WIDTH = 300;
+    /** The widest the scale bar runs, in stage units. */
+    private static final float SCALE_WIDTH = 110;
+    private static final int[] SCALE_STEPS = { 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000 };
 
     /** What the screen asks of the hub; any thread. */
     interface Hub {
@@ -186,6 +190,11 @@ final class HubScreen extends ApplicationAdapter {
     private List<StarMapView.Legend> legendShown = List.of();
     private float legendClock;
     private Container<UiKit.Icon> compass;
+    private Image scaleBar;
+    private Cell<Image> scaleCell;
+    private Label scaleText;
+    /** The light years the scale bar shows; 0 before it is first placed. */
+    private int scaleShown;
     private Table detailLayer;
     private Table detail;
     private Table hoverCard;
@@ -563,7 +572,11 @@ final class HubScreen extends ApplicationAdapter {
         mapVoyage = ui.label("", "hud-body", 14, UiTheme.tokenColor("text.primary"));
         mapVoyage.setVisible(false);
         title.add(mapVoyage);
-        panel.add(title).expandX().left();
+        panel.add(title).left();
+        Label controls = ui.caption(getText("HqHub.map.controls"), true);
+        controls.setAlignment(Align.right);
+        controls.setWrap(true);
+        panel.add(controls).growX().right().padLeft(space("xl")).minWidth(0);
         search = ui.search(getText("HqHub.map.search"), true);
         UiKit.onChange(search.field, this::refind);
         panel.add(search).width(SEARCH_WIDTH).padLeft(space("lg"));
@@ -793,11 +806,35 @@ final class HubScreen extends ApplicationAdapter {
         rose.add(compass).size(28).row();
         rose.add(ui.caption(getText("HqHub.map.coreward"), true)).padTop(space("xxs"));
         panel.add(rose).padRight(space("lg"));
-        Label controls = ui.caption(getText("HqHub.map.controls"), true);
-        controls.setAlignment(Align.right);
-        panel.add(controls);
+        Table scale = new Table();
+        scaleBar = ui.solid(UiTheme.tokenColor("accent.primary"));
+        scaleText = ui.label("", "hud-body", 13, UiTheme.tokenColor("text.secondary"));
+        scale.add(scaleText).right().row();
+        scaleCell = scale.add(scaleBar).height(2).width(SCALE_WIDTH).right().padTop(space("xxs"));
+        panel.add(scale).width(SCALE_WIDTH).bottom();
         compassLayer.add(panel);
         return compassLayer;
+    }
+
+    /** Sizes the scale bar to the roundest distance that fits it at the middle of the screen. */
+    private void placeScale() {
+        float pixels = map.pixelsPerLightYear() * stage.getWidth() / Math.max(1, Gdx.graphics.getWidth());
+        if (pixels <= 0) {
+            return;
+        }
+        int wanted = 1;
+        for (int step : SCALE_STEPS) {
+            if (step * pixels <= SCALE_WIDTH) {
+                wanted = step;
+            }
+        }
+        float width = Math.max(4, wanted * pixels);
+        if (wanted != scaleShown || Math.abs(scaleCell.getPrefWidth() - width) > 0.5f) {
+            scaleShown = wanted;
+            scaleText.setText(getFormattedText("HqHub.map.lightYears", wanted));
+            scaleCell.width(width);
+            scaleCell.getTable().invalidateHierarchy();
+        }
     }
 
     /** The chosen system's detail, at the right edge below the header. */
@@ -938,6 +975,7 @@ final class HubScreen extends ApplicationAdapter {
         }
         compass.setOrigin(compass.getWidth() / 2, compass.getHeight() / 2);
         compass.setRotation(-map.yaw());
+        placeScale();
         float below = headerPanel.getHeight() + space("xxl") + space("lg");
         if (detailLayer.getPadTop() != below) {
             detailLayer.padTop(below);

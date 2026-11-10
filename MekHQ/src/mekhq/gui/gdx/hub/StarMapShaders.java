@@ -54,13 +54,35 @@ final class StarMapShaders {
           uniform float u_time;
           uniform float u_fade;
           out vec4 v_colour;
+          out float v_point;
           void main() {
               float size = a_texCoord0.x;
               float phase = a_texCoord0.y;
               float twinkle = 0.9 + 0.1 * sin(u_time * (0.9 + fract(phase * 7.1)) + phase * 40.0);
               v_colour = vec4(a_color.rgb * twinkle * u_fade, a_color.a);
               gl_Position = u_projView * vec4(a_position, 1.0);
-              gl_PointSize = clamp(size * u_pixels / max(length(u_camera - a_position), 0.1), 2.5 * size, 26.0);
+              gl_PointSize = clamp(size * u_pixels / max(length(u_camera - a_position), 0.1), 4.5 * size, 26.0);
+              v_point = gl_PointSize;
+          }
+          """;
+
+    /** A system's light: a hot core, wider on the smallest sprites so distant systems stay visible, and a halo. */
+    static final String STAR_FRAGMENT = """
+          #version 330 core
+          in vec4 v_colour;
+          in float v_point;
+          out vec4 fragColor;
+          void main() {
+              float r = length(gl_PointCoord - 0.5) * 2.0;
+              float small = clamp(4.0 / v_point, 0.0, 1.0);
+              float core = smoothstep(0.32 + 0.38 * small, 0.0, r);
+              float hot = smoothstep(0.18, 0.0, r) * 0.6;
+              float halo = exp(-r * r * 5.0) * 0.45;
+              float light = (core + halo) * v_colour.a;
+              if (light < 0.004) {
+                  discard;
+              }
+              fragColor = vec4(v_colour.rgb * light + vec3(hot * v_colour.a), 1.0);
           }
           """;
 
@@ -184,7 +206,8 @@ final class StarMapShaders {
      * whose reach is greatest, and its distance from the border is where that realm's and the next one's reaches
      * meet. Ground fills faintly in its realm's colour and glows towards a crisp border drawn a pixel and a half each
      * side in each side's colour; unclaimed space glows faintly just outside. Disputed ground is hatched in the
-     * disputing realm's colour. u_palette holds each realm's colour, sRGB, 256 to a row, realm 1 first.
+     * disputing realm's colour. u_palette holds each realm's colour, sRGB, 256 to a row, realm 1 first, its
+     * alpha how strongly the realm shows: independents only faintly.
      */
     static final String TERRITORY_FRAGMENT = """
           #version 330 core
@@ -232,6 +255,10 @@ final class StarMapShaders {
           vec3 colour(int realm) {
               int id = realm - 1;
               return pow(texelFetch(u_palette, ivec2(id & 255, id >> 8), 0).rgb, vec3(2.2));
+          }
+          float strength(int realm) {
+              int id = realm - 1;
+              return texelFetch(u_palette, ivec2(id & 255, id >> 8), 0).a;
           }
           void main() {
               gather(u_landA, u_originA, u_texelA, u_sizeA, 1.0 - u_blend, 0);
@@ -292,7 +319,8 @@ final class StarMapShaders {
                   result = vec4(colour(b), exp(-depth / 5.0) * 0.08);
               }
               float line = 1.0 - smoothstep(0.6, 1.5, depth / lightYears);
-              result = mix(result, vec4(colour(edge) * 1.4 + 0.05, 0.9), line);
+              result.a *= strength(a > 0 ? a : b);
+              result = mix(result, vec4(colour(edge) * 1.4 + 0.05, 0.9 * strength(edge)), line);
               result.a *= u_alpha;
               if (result.a < 0.002) {
                   discard;

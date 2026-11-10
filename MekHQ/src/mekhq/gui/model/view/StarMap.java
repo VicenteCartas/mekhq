@@ -60,6 +60,7 @@ import mekhq.campaign.finances.Money;
 import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.PlanetarySystem;
+import mekhq.campaign.universe.enums.CapitalType;
 import mekhq.campaign.universe.enums.HPGRating;
 
 /**
@@ -88,14 +89,28 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
      * @param owner   its owners' names today, or blank when no one holds it
      * @param faction the name of the owner whose colour it wears, or blank
      * @param settled whether anyone but the abandoned holds it
+     * @param lenses  every {@link MapLens}'s level for it, as {@link MapLens#pack} packs them
+     * @param capital whose capital it is: 0 no one's, 1 a district's, 2 a region's, 3 a realm's
+     * @param people  how many live there
      */
     public record Star(String id, String name, double x, double y, int rgb, String owner, String faction,
-          boolean settled) {
+          boolean settled, long lenses, int capital, long people) {
         public Star {
             Objects.requireNonNull(id);
             Objects.requireNonNull(name);
             Objects.requireNonNull(owner);
             Objects.requireNonNull(faction);
+        }
+
+        /** A system with no lenses, capital or people. */
+        public Star(String id, String name, double x, double y, int rgb, String owner, String faction,
+              boolean settled) {
+            this(id, name, x, y, rgb, owner, faction, settled, 0, 0, 0);
+        }
+
+        /** {@code lens}'s level for it, 0 when the lens doesn't rate it. */
+        public int level(MapLens lens) {
+            return lens.level(lenses);
         }
     }
 
@@ -228,9 +243,22 @@ public record StarMap(LocalDate date, List<Star> stars, @Nullable String current
             }
             String faction = owners.isEmpty() ? null : owners.get(0).getFullName(year);
             stars.add(new Star(system.getId(), name(system, date), system.getX(), system.getY(), colour(owners),
-                  ownerNames(owners, year), faction == null ? "" : faction, settled));
+                  ownerNames(owners, year), faction == null ? "" : faction, settled,
+                  settled ? MapLens.pack(system, date) : 0, settled ? capital(system, date) : 0,
+                  settled ? system.getPopulation(date) : 0));
         }
         return stars;
+    }
+
+    /** Whose capital {@code system} is on {@code date}: 0 no one's, 1 a district's, 2 a region's, 3 a realm's. */
+    private static int capital(PlanetarySystem system, LocalDate date) {
+        CapitalType type = system.getCapitalType(date);
+        return type == null ? 0 : switch (type) {
+            case NATIONAL -> 3;
+            case REGION -> 2;
+            case DISTRICT -> 1;
+            case NONE -> 0;
+        };
     }
 
     /** Swing thread: the detail of the system {@code id}, or null when the campaign has no such system. */

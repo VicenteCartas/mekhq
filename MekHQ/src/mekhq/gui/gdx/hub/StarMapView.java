@@ -55,6 +55,7 @@ import com.badlogic.gdx.math.Intersector;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Matrix4;
 import com.badlogic.gdx.math.Plane;
+import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.math.collision.Ray;
 import com.badlogic.gdx.utils.Disposable;
@@ -87,7 +88,24 @@ final class StarMapView {
 
     /** Takes the names to write over the map, the most important first; x and y are input coordinates. */
     interface Labels {
-        void label(StarMap.Star star, float x, float y, boolean marked);
+        /**
+         * Writes {@code star}'s name at {@code alpha} of its strength, as prominent as {@code tier} (0 marked, then
+         * {@link #labelTier}); when {@code wanted}, takes its room if free and returns whether it did.
+         */
+        boolean label(StarMap.Star star, float x, float y, int tier, float alpha, boolean wanted);
+    }
+
+    /** Takes the realms' names to write large over their territory; x and y are input coordinates. */
+    interface RealmNames {
+        /**
+         * Writes {@code name} centred on (x, y) at {@code alpha} of its strength, in its realm's colour
+         * {@code rgb}; its territory spans about {@code span} pixels either side.
+         */
+        void realm(String name, int rgb, float x, float y, float span, float alpha);
+    }
+
+    /** A realm's name and where it goes: by its most central settled system, its territory {@code spread} wide. */
+    record RealmName(String name, int rgb, float x, float y, float spread) {
     }
 
     /** The holotable's, so its dive ends on the very view the map opens with. */
@@ -98,8 +116,19 @@ final class StarMapView {
     static final float START_DISTANCE = 650;
     private static final float MIN_PITCH = 20;
     /** Systems are named once the camera is this near, in light years. */
-    private static final float LABEL_DISTANCE = 700;
-    private static final int MAX_LABELS = 240;
+    /** How near the camera must be, in light years, for each {@link #labelTier} of name to show. */
+    private static final float[] LABEL_REACH = { Float.MAX_VALUE, Float.MAX_VALUE, 1500, 900, 330, 110 };
+    /** How fast names fade in and out, per second. */
+    private static final float LABEL_EASE = 7;
+    /** How far off screen, in pixels, a system may be and still keep its name fading. */
+    private static final float LABEL_MARGIN = 80;
+    /** Realms are named over their territory from this far out, in light years, fully by {@link #REALM_FAR}. */
+    private static final float REALM_NEAR = 420;
+    private static final float REALM_FAR = 800;
+    /** The fewest settled systems a realm needs for its name to be written over its territory. */
+    private static final int REALM_SYSTEMS = 12;
+    /** How widely, in light years, a realm's systems may scatter and still be named as one territory. */
+    private static final double REALM_SCATTERED = 260;
     /** How far from a system, in pixels, the cursor may be to pick it. */
     static final float PICK_RADIUS = 14;
     /** How far a press may move, in pixels, and still be a click. */
@@ -123,6 +152,7 @@ final class StarMapView {
     private final Vector3 grab = new Vector3();
     private final Vector3 ground = new Vector3();
     private final Vector3 flight = new Vector3();
+    private final Vector3 scratch = new Vector3();
     private PerspectiveCamera camera;
     private ShaderProgram starShader;
     private ShaderProgram ringShader;
@@ -167,6 +197,9 @@ final class StarMapView {
     private @Nullable StarMap pending;
     /** Every system's position on screen last frame, x then y in input coordinates; NaN when behind the camera. */
     private float[] screen = new float[0];
+    /** How strongly each system's name shows, 0 to 1, easing towards whether it has room. */
+    private float[] labelAlpha = new float[0];
+    private List<RealmName> realmNames = List.of();
     private final Map<String, Integer> index = new HashMap<>();
     private int current = -1;
     private int hovered = -1;
@@ -339,6 +372,20 @@ final class StarMapView {
         aim();
     }
 
+    /**
+     * Puts the camera over ({@code x}, {@code y}) light years at once, {@code height} light years away, tilted
+     * {@code tilt} degrees over the plane (90 straight down) and turned {@code turn} degrees from coreward.
+     */
+    void look(double x, double y, float height, float tilt, float turn) {
+        world(x, y, target);
+        distance = MathUtils.clamp(height, MIN_DISTANCE, MAX_DISTANCE);
+        pitch = MathUtils.clamp(tilt, MIN_PITCH, 90);
+        yaw = turn;
+        flying = false;
+        posing = false;
+        aim();
+    }
+
     /** Whether the camera is still, not flying anywhere. */
     boolean settled() {
         return !flying;
@@ -347,6 +394,19 @@ final class StarMapView {
     /** Which way the camera faces over the plane, in degrees from coreward, anticlockwise. */
     float yaw() {
         return yaw;
+    }
+
+    /** How many input pixels a light year spans across the middle of the screen; 0 before the view is made. */
+    float pixelsPerLightYear() {
+        if (camera == null) {
+            return 0;
+        }
+        Vector3 near = camera.project(scratch.set(target));
+        float x = near.x;
+        float y = near.y;
+        Vector3 side = scratch.set(camera.direction).crs(camera.up).nor().scl(10).add(target);
+        camera.project(side);
+        return Vector2.dst(x, y, side.x, side.y) / 10;
     }
 
     /** The systems shown, in the map's order, as the date shown had them; empty before it loads. */
@@ -361,7 +421,7 @@ final class StarMapView {
     }
 
     void create() {
-        starShader = HoloTableView.compile(StarMapShaders.STAR_VERTEX, HoloShaders.STAR_FRAGMENT);
+        starShader = HoloTableView.compile(StarMapShaders.STAR_VERTEX, StarMapShaders.STAR_FRAGMENT);
         ringShader = HoloTableView.compile(StarMapShaders.RING_VERTEX, StarMapShaders.RING_FRAGMENT);
         lineShader = HoloTableView.compile(StarMapShaders.LINE_VERTEX, StarMapShaders.LINE_FRAGMENT);
         routeShader = HoloTableView.compile(StarMapShaders.ROUTE_VERTEX, StarMapShaders.ROUTE_FRAGMENT);
@@ -471,31 +531,31 @@ final class StarMapView {
         Gdx.gl.glDisable(GL20.GL_BLEND);
     }
 
-    /** Hands {@code labels} the names to write this frame, the marked systems first, then the nearest the centre. */
+    /**
+     * Hands {@code labels} the names to write this frame, the most important first: the marked systems, then the
+     * realms' capitals, then the most populous worlds nearest the middle. Each name fades in and out as it comes and
+     * goes, and one already shown keeps its place ahead of one that would push it out.
+     */
     void labels(Labels labels) {
         StarMap today = map;
-        if (today == null) {
+        List<StarMap.Star> all = shown;
+        if (today == null || all.size() != labelAlpha.length) {
             return;
         }
-        List<StarMap.Star> all = shown;
-        boolean[] done = new boolean[all.size()];
-        for (int marked : new int[] { chosen, hovered, current }) {
-            if (marked >= 0 && !done[marked] && !Float.isNaN(screen[marked * 2])) {
-                done[marked] = true;
-                labels.label(all.get(marked), screen[marked * 2], screen[marked * 2 + 1], true);
+        float ease = Math.min(1, Math.min(Gdx.graphics.getDeltaTime(), 0.1f) * LABEL_EASE);
+        boolean[] marked = new boolean[all.size()];
+        for (int at : new int[] { chosen, hovered, current }) {
+            if (at >= 0) {
+                marked[at] = true;
             }
         }
         for (List<String> ids : List.of(today.route(), previewed)) {
             for (String id : ids) {
                 Integer at = index.get(id);
-                if (at != null && !done[at] && !Float.isNaN(screen[at * 2])) {
-                    done[at] = true;
-                    labels.label(all.get(at), screen[at * 2], screen[at * 2 + 1], true);
+                if (at != null) {
+                    marked[at] = true;
                 }
             }
-        }
-        if (distance > LABEL_DISTANCE) {
-            return;
         }
         float width = Gdx.graphics.getWidth();
         float height = Gdx.graphics.getHeight();
@@ -504,18 +564,111 @@ final class StarMapView {
         for (int i = 0; i < all.size(); i++) {
             float x = screen[i * 2];
             float y = screen[i * 2 + 1];
-            if (done[i] || Float.isNaN(x) || x < 0 || y < 0 || x > width || y > height || !all.get(i).settled()) {
+            if (Float.isNaN(x) || x < -LABEL_MARGIN || y < -LABEL_MARGIN || x > width + LABEL_MARGIN
+                  || y > height + LABEL_MARGIN) {
+                labelAlpha[i] = 0;
+                continue;
+            }
+            StarMap.Star star = all.get(i);
+            int tier = marked[i] ? 0 : labelTier(star);
+            boolean wanted = marked[i] || distance <= LABEL_REACH[tier];
+            if (!wanted && labelAlpha[i] <= 0) {
                 continue;
             }
             float dx = x - width / 2;
             float dy = y - height / 2;
-            order[count++] = ((long) (dx * dx + dy * dy) << 32) | i;
+            long near = Math.min((long) (dx * dx + dy * dy), Integer.MAX_VALUE);
+            long people = 15 - Math.min(15, (long) Math.log10(Math.max(1, star.people())));
+            long stay = labelAlpha[i] > 0.5f ? 0 : 1;
+            order[count++] = ((long) tier << 56) | (stay << 55) | (people << 51) | (near << 20) | i;
         }
         Arrays.sort(order, 0, count);
-        for (int n = 0; n < Math.min(count, MAX_LABELS); n++) {
-            int i = (int) order[n];
-            labels.label(all.get(i), screen[i * 2], screen[i * 2 + 1], false);
+        for (int n = 0; n < count; n++) {
+            int i = (int) (order[n] & 0xFFFFF);
+            int tier = (int) (order[n] >>> 56);
+            boolean wanted = tier == 0 || distance <= LABEL_REACH[tier];
+            float alpha = tier == 0 ? 1 : labelAlpha[i];
+            boolean placed = labels.label(all.get(i), screen[i * 2], screen[i * 2 + 1], tier, alpha, wanted);
+            labelAlpha[i] = tier == 0 ? 1 : alpha + ((placed ? 1 : 0) - alpha) * ease;
+            if (labelAlpha[i] < 0.01f && !placed) {
+                labelAlpha[i] = 0;
+            }
         }
+    }
+
+    /** Hands {@code names} the realms' names to write over their territory, fading in as the camera pulls out. */
+    void realmNames(RealmNames names) {
+        float alpha = MathUtils.clamp((distance - REALM_NEAR) / (REALM_FAR - REALM_NEAR), 0, 1);
+        if (alpha <= 0 || camera == null) {
+            return;
+        }
+        float pixels = pixelsPerLightYear();
+        for (RealmName realm : realmNames) {
+            Vector3 at = camera.project(world(realm.x(), realm.y(), scratch));
+            names.realm(realm.name(), realm.rgb(), at.x, camera.viewportHeight - at.y, realm.spread() * pixels,
+                  alpha * alpha * (3 - 2 * alpha));
+        }
+    }
+
+    /**
+     * The realms holding at least {@link #REALM_SYSTEMS} settled systems of {@code all}, each named by its most central
+     * settled system.
+     */
+    static List<RealmName> realmNames(List<StarMap.Star> all) {
+        Map<String, double[]> sums = new HashMap<>();
+        for (StarMap.Star star : all) {
+            if (star.settled() && !star.faction().isBlank()) {
+                double[] sum = sums.computeIfAbsent(star.faction(), name -> new double[5]);
+                sum[0] += star.x();
+                sum[1] += star.y();
+                sum[2] += star.x() * star.x() + star.y() * star.y();
+                sum[3]++;
+                sum[4] = star.rgb();
+            }
+        }
+        List<RealmName> names = new ArrayList<>();
+        for (Map.Entry<String, double[]> entry : sums.entrySet()) {
+            double[] sum = entry.getValue();
+            if (sum[3] < REALM_SYSTEMS) {
+                continue;
+            }
+            double cx = sum[0] / sum[3];
+            double cy = sum[1] / sum[3];
+            double spread = Math.sqrt(Math.max(0, sum[2] / sum[3] - cx * cx - cy * cy));
+            // Worlds scattered across the map, the independents', hold no one territory to name
+            if (spread > REALM_SCATTERED) {
+                continue;
+            }
+            StarMap.Star centre = null;
+            double best = Double.MAX_VALUE;
+            for (StarMap.Star star : all) {
+                if (star.settled() && entry.getKey().equals(star.faction())) {
+                    double d = (star.x() - cx) * (star.x() - cx) + (star.y() - cy) * (star.y() - cy);
+                    if (d < best) {
+                        best = d;
+                        centre = star;
+                    }
+                }
+            }
+            if (centre != null) {
+                names.add(new RealmName(entry.getKey(), (int) sum[4], (float) centre.x(), (float) centre.y(),
+                      (float) spread));
+            }
+        }
+        return List.copyOf(names);
+    }
+
+    /** How prominent a system's name is: 1 a realm's capital, 2 a region's, 3 a district's, 4 settled, 5 empty. */
+    static int labelTier(StarMap.Star star) {
+        if (!star.settled()) {
+            return 5;
+        }
+        return switch (star.capital()) {
+            case 3 -> 1;
+            case 2 -> 2;
+            case 1 -> 3;
+            default -> 4;
+        };
     }
 
     void dispose() {
@@ -608,6 +761,7 @@ final class StarMapView {
             index.put(all.get(i).id(), i);
         }
         screen = new float[all.size() * 2];
+        labelAlpha = new float[all.size()];
         Arrays.fill(screen, Float.NaN);
         current = changed.current() == null ? -1 : index.getOrDefault(changed.current(), -1);
         chosen = wasChosen == null ? -1 : index.getOrDefault(wasChosen.id(), -1);
@@ -688,6 +842,7 @@ final class StarMapView {
             stars.dispose();
         }
         stars = starMesh(shown);
+        realmNames = realmNames(shown);
     }
 
     private void hover(int at) {

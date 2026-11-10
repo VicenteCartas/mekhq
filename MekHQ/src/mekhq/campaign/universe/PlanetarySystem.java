@@ -974,21 +974,21 @@ public class PlanetarySystem {
      * @return A list of filtered academies based on the campaign.
      */
     public List<Academy> getFilteredAcademies(Campaign campaign) {
-        final LocalDate currentDate = campaign.getLocalDate();
+        return getFilteredAcademies(campaign.getLocalDate(),
+              campaign.getCampaignOptions().get(CampaignOption.ENABLE_PRESTIGIOUS_ACADEMIES));
+    }
+
+    /**
+     * Retrieves the academies open here on {@code when}, leaving out local academies and unit education, and the
+     * prestigious academies unless {@code prestigious}.
+     */
+    public List<Academy> getFilteredAcademies(LocalDate when, boolean prestigious) {
         AcademyFactory academyFactory = AcademyFactory.getInstance();
-
         List<String> excludedSets = List.of("Local Academies", "Unit Education");
-
         return academyFactory.getAllSetNames().stream()
-                     .filter(setName -> !excludedSets.contains(setName) // Excluding certain setNames
-                                              && (!setName.equalsIgnoreCase("Prestigious Academies")
-                                                        ||
-                                                        campaign.getCampaignOptions()
-                                                              .get(CampaignOption.ENABLE_PRESTIGIOUS_ACADEMIES))) // Additional
-                     // condition for
-                     // "Prestigious
-                     // Academies"
-                     .flatMap(setName -> getFilteredAcademiesForSet(currentDate, setName).stream())
+                     .filter(setName -> !excludedSets.contains(setName)
+                                              && (prestigious || !setName.equalsIgnoreCase("Prestigious Academies")))
+                     .flatMap(setName -> getFilteredAcademiesForSet(when, setName).stream())
                      .toList();
     }
 
