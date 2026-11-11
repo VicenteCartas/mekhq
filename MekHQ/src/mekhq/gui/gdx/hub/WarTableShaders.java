@@ -203,25 +203,35 @@ final class WarTableShaders {
           }
           """;
 
-    /** The ground: the sector's relief (see WarTableGround), a hex's column and row in a_hex.xy, its skirt in z. */
+    /**
+     * The ground: the sector's relief (see WarTableGround), a hex's column and row in a_hex.xy, its skirt in z, the
+     * light reaching it, shadowed and occluded, in w.
+     */
     static final String TERRAIN_VERTEX = """
           #version 330 core
           in vec3 a_position;
           in vec3 a_normal;
-          in vec3 a_hex;
+          in vec4 a_hex;
           uniform mat4 u_projView;
           uniform float u_flatten;
           uniform float u_base;
           out vec3 v_world;
           out vec3 v_normal;
+          out vec3 v_relief;
+          out float v_height;
+          out float v_light;
           flat out vec3 v_hex;
           void main() {
               vec3 position = a_position;
+              // The relief as it is, flattened or not, for the contours, the hill shade and the hologram
+              v_relief = a_normal;
+              v_height = a_position.y;
               // The plotted map lies flat on the table; the skirt's foot stays where it is
               position.y = mix(position.y, max(u_base, min(position.y, u_base + 0.0005)), u_flatten);
               v_world = position;
               v_normal = normalize(mix(a_normal, vec3(0.0, 1.0, 0.0), u_flatten * (1.0 - a_hex.z)));
-              v_hex = a_hex;
+              v_hex = a_hex.xyz;
+              v_light = a_hex.w;
               gl_Position = u_projView * vec4(position, 1.0);
           }
           """;
@@ -238,6 +248,9 @@ final class WarTableShaders {
           #version 330 core
           in vec3 v_world;
           in vec3 v_normal;
+          in vec3 v_relief;
+          in float v_height;
+          in float v_light;
           flat in vec3 v_hex;
           uniform sampler2DArray u_albedo;
           uniform sampler2DArray u_normals;
@@ -324,7 +337,8 @@ final class WarTableShaders {
               vec4 here = cell(at);
               vec3 n = normalize(v_normal);
               vec3 toCamera = normalize(u_camera - v_world);
-              float height = (v_world.y - u_tableTop) / u_grid.z;
+              vec3 relief = normalize(v_relief);
+              float height = (v_height - u_tableTop) / u_grid.z;
               vec2 local = (v_world.xz - centreOf(at)) / u_grid.z;
               float pixel = clamp(length(fwidth(v_world.xz)) / u_grid.z / 0.8660254, 1e-4, 0.2);
               float inset[6];
@@ -346,6 +360,18 @@ final class WarTableShaders {
                   clear = 1.0 - smoothstep(reach - 0.07, reach, ragged);
                   ember = exp(-pow((ragged - reach) * 12.0, 2.0)) * (1.0 - smoothstep(0.75, 1.0, seen));
               }
+              // Toward the unscouted ground the scouting fades out over the last stretch of the hex, ragged, meeting
+              // the hologram halfway across the side, so the edge of what's known dissolves rather than cuts
+              float field = clear;
+              for (int k = 0; k < 6; k++) {
+                  vec4 there = cell(across(at, k));
+                  if (there.z > 0.5) {
+                      field += (seenBy(there.x) - clear) * 0.5 * (1.0 - smoothstep(0.0, 0.55, inset[k]));
+                  }
+              }
+              float tatter = field + (fbm(v_world.xz / u_grid.z * 3.4) - 0.5) * 0.55;
+              clear = smoothstep(0.38, 0.62, tatter);
+              float fringe = exp(-pow((tatter - 0.5) / 0.07, 2.0)) * step(0.001, field) * step(field, 0.999);
               float scan = painted(v_world.x);
               clear *= scan;
 
@@ -355,7 +381,7 @@ final class WarTableShaders {
               float fade = 1.0 - smoothstep(0.25, 0.6, fwidth(contourStep));
               float contour = hairline(contourStep, 0.2) * fade;
               float major = hairline(contourStep / 5.0, 0.4) * fade;
-              float fresnel = pow(1.0 - max(dot(n, toCamera), 0.0), 3.0);
+              float fresnel = pow(1.0 - max(dot(relief, toCamera), 0.0), 3.0);
               vec3 holo = vec3(0.002, 0.012, 0.008) + GREEN * 0.02 * clamp(height * 2.0 + 0.4, 0.0, 1.0);
               holo += GREEN * (wires(v_world.xz) * 0.045 + contour * 0.16 + major * 0.16 + fresnel * 0.12
                     + hexLine * 0.16);
@@ -429,6 +455,8 @@ final class WarTableShaders {
               vec3 bitangent = cross(tangent, n);
               vec3 lit = normalize(tangent * b.x * 0.8 + bitangent * b.y * 0.8 + n * max(b.z, 0.2));
               vec3 colour = light(albedo, lit, v_world, 0.03);
+              // The heights' shadows and the hollows' shade, baked into the relief
+              colour *= mix(0.3, 1.0, v_light);
 
               // Open water: dark, deeper further from shore, long low swells rolling the light over it rather than
               // sparkling, a pale line of surf along the shore
@@ -464,10 +492,10 @@ final class WarTableShaders {
               colour = mix(colour, colour * 0.45 + vec3(0.004, 0.008, 0.006), hexLine * 0.75);
 
               // The plotted map: flat colours, a little hill shade, contours and roads printed over
-              float shade = 0.82 + 0.3 * max(dot(n, normalize(vec3(-0.5, 0.8, -0.35))), 0.0);
+              float shade = 0.78 + 0.4 * max(dot(relief, normalize(vec3(-0.6, 0.7, -0.35))), 0.0);
               vec3 print = mix(plot, PLOT[7], wet) * shade;
               // Printed on paper: a faint grain, and the symbols for each kind of ground, fading as they'd blur
-              print *= 0.95 + 0.05 * noise(v_world.xz / u_grid.z * 60.0);
+              print *= (0.95 + 0.05 * noise(v_world.xz / u_grid.z * 60.0)) * mix(0.8, 1.0, v_light);
               ink = mix(ink, symbols(7.0, sym, pixel), wet);
               print *= 1.0 - ink * (1.0 - smoothstep(0.02, 0.05, pixel));
               print *= 1.0 - (contour * 0.15 + major * 0.25) * (1.0 - wet);
@@ -476,18 +504,8 @@ final class WarTableShaders {
               colour = mix(colour, pow(print, vec3(2.2)) * 0.7, u_plot);
 
               colour = mix(holo, colour, clear);
-              // The edge of what's known: a thin line along the sides that face the hologram
-              float frontier = 0.0;
-              for (int k = 0; k < 6 && seen > 0.0; k++) {
-                  vec4 there = cell(across(at, k));
-                  float facing = seen * (1.0 - seenBy(there.x)) * step(0.5, there.z);
-                  if (facing > 0.0) {
-                      float core = 1.0 - smoothstep(width - pixel, width + pixel, inset[k]);
-                      float halo = 1.0 - smoothstep(0.0, 0.12, inset[k]);
-                      frontier = max(frontier, (core + halo * 0.25) * facing);
-                  }
-              }
-              colour += GREEN * (frontier * 0.35 + ember * 0.8) * scan;
+              // The edge of what's known: a faint glow where the ground dissolves into the hologram
+              colour += GREEN * (fringe * 0.12 + ember * 0.8) * scan;
               float rim = 1.0 - smoothstep(0.0, 0.1 + pixel, edge);
               if (at == u_hover) {
                   colour += CYAN * (0.03 + rim * 0.5);

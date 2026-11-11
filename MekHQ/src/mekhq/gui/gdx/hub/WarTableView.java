@@ -145,6 +145,20 @@ final class WarTableView implements Disposable {
      * A standee's hex base, across and tall, and the rod it stands on, as shares of its size; a facility's plate,
      * across and tall, in hexes' radii.
      */
+    /**
+     * The sun on the things standing on the ground: higher than the ground's ({@link WarTableGround#SUN}) and from the
+     * front, so their faces turned to the camera don't go dark.
+     */
+    private static final Vector3 PROP_SUN = new Vector3(-0.35f, -1f, -0.45f).nor();
+    /** The most forces fanned out on a hex; more stand as one standee on a stack of bases. */
+    private static final int MOST_FANNED = 3;
+    /** The most bases drawn in a stack. */
+    private static final int MOST_LAYERS = 6;
+    /** How far forward of a facility's hex's middle its forces stand, and how far back the facility then steps. */
+    private static final float HELD_FRONT = 0.42f;
+    private static final float HELD_BACK = 0.2f;
+    /** How far apart the bases in a stack are, in bases' heights. */
+    private static final float LAYER_STEP = 1.65f;
     private static final float BASE_ACROSS = 0.3f;
     private static final float BASE_TALL = 0.05f;
     private static final float ROD_ACROSS = 0.022f;
@@ -208,8 +222,11 @@ final class WarTableView implements Disposable {
           float depth) {
     }
 
-    /** Where force {@code force}'s standee stands: the middle of its foot and how large it shows. */
-    private record Figure(Standee standee, int force, float x, float y, float z, float scale) {
+    /**
+     * Where force {@code force}'s standee stands: the middle of its foot and how large it shows; {@code stack} the
+     * stack it's in when its hex holds too many to fan out, -1 for none.
+     */
+    private record Figure(Standee standee, int force, float x, float y, float z, float scale, int stack) {
     }
 
     private final Consumer<Hex> picked;
@@ -737,11 +754,11 @@ final class WarTableView implements Disposable {
         float nearest = Float.MAX_VALUE;
         for (Figure figure : figures) {
             if (gone.contains(figure.force()) || lifting.containsKey(figure.force())
-                  || landing.containsKey(figure.force())) {
+                  || landing.containsKey(figure.force()) || !leads(figure)) {
                 continue;
             }
             Standee standee = figure.standee();
-            upright(standee, figure.x(), figure.y(), figure.z(), figure.scale());
+            upright(standee, figure.x(), standY(figure) + lift(figure, layers(figure)), figure.z(), figure.scale());
             float left = Float.MAX_VALUE;
             float right = -Float.MAX_VALUE;
             float bottom = Float.MAX_VALUE;
@@ -772,7 +789,7 @@ final class WarTableView implements Disposable {
             return null;
         }
         Standee standee = figure.standee();
-        upright(standee, figure.x(), figure.y(), figure.z(), figure.scale());
+        upright(standee, figure.x(), standY(figure) + lift(figure, layers(figure)), figure.z(), figure.scale());
         corner3.set(0, 0, standee.depth()).mul(placed);
         camera.project(corner3);
         return new Vector2(corner3.x, Gdx.graphics.getHeight() - corner3.y);
@@ -785,6 +802,49 @@ final class WarTableView implements Disposable {
             }
         }
         return null;
+    }
+
+    /** Whether {@code figure} is still on the map: not taken off it nor being carried. */
+    private boolean present(Figure figure) {
+        return !gone.contains(figure.force()) && figure.force() != carriedForce;
+    }
+
+    /** Whether {@code figure} shows: alone, or the first in its stack still on the map. */
+    private boolean leads(Figure figure) {
+        if (figure.stack() < 0) {
+            return true;
+        }
+        for (Figure other : figures) {
+            if (other.stack() == figure.stack() && present(other)) {
+                return other == figure;
+            }
+        }
+        return false;
+    }
+
+    /** How many bases {@code figure} stands on: one, or one for each force in its stack still on the map. */
+    private int layers(Figure figure) {
+        if (figure.stack() < 0) {
+            return 1;
+        }
+        int count = 0;
+        for (Figure other : figures) {
+            if (other.stack() == figure.stack() && present(other)) {
+                count++;
+            }
+        }
+        return MathUtils.clamp(count, 1, MOST_LAYERS);
+    }
+
+    /** How far {@code layers} bases lift {@code figure}'s standee over one. */
+    private float lift(Figure figure, int layers) {
+        return (layers - 1) * figure.scale() * Math.max(figure.standee().width(), figure.standee().height()) * BASE_TALL
+              * LAYER_STEP;
+    }
+
+    /** How high {@code figure}'s foot shows, coming down to the table as the map's plotted. */
+    private float standY(Figure figure) {
+        return MathUtils.lerp(figure.y(), TABLE_TOP, flatten());
     }
 
     /** Clears the map, leaving the display with no sector on it. */
@@ -959,7 +1019,7 @@ final class WarTableView implements Disposable {
         Gdx.gl.glActiveTexture(GL20.GL_TEXTURE2);
         Gdx.gl.glBindTexture(GL30.GL_TEXTURE_2D_ARRAY, surfaces[1]);
         terrainShader.bind();
-        lights(terrainShader);
+        lights(terrainShader, WarTableGround.SUN, 1.75f);
         hexUniforms(terrainShader);
         set(terrainShader, "u_albedo", 1);
         set(terrainShader, "u_normals", 2);
@@ -1031,7 +1091,7 @@ final class WarTableView implements Disposable {
             return;
         }
         propShader.bind();
-        lights(propShader);
+        lights(propShader, PROP_SUN, 1.35f);
         hexUniforms(propShader);
         propShader.setUniformMatrix("u_model", identity);
         propShader.setUniformf("u_drop", 0f);
@@ -1067,10 +1127,11 @@ final class WarTableView implements Disposable {
         propShader.setUniformi("u_base", 0);
         for (Figure figure : figures) {
             int force = figure.force();
-            if (gone.contains(force) || force == carriedForce) {
+            if (gone.contains(force) || force == carriedForce || !leads(figure)) {
                 continue;
             }
-            float y = figure.y();
+            int layers = layers(figure);
+            float y = standY(figure);
             Float landed = landing.get(force);
             Float leaving = lifting.get(force);
             if (landed != null) {
@@ -1078,8 +1139,8 @@ final class WarTableView implements Disposable {
             } else if (leaving != null) {
                 y += radius * STANDEE_TRAVEL * Interpolation.pow2In.apply(Math.min(1, leaving / LIFT_SECONDS));
             }
-            drawPedestal(figure.standee(), figure.x(), y, figure.z(), figure.scale(), 1);
-            upright(figure.standee(), figure.x(), y, figure.z(), figure.scale());
+            drawPedestal(figure.standee(), figure.x(), y, figure.z(), figure.scale(), 1, layers);
+            upright(figure.standee(), figure.x(), y + lift(figure, layers), figure.z(), figure.scale());
             drawStandee(figure.standee(), 1, 1, 1);
         }
         set(propShader, "u_front", Float.MAX_VALUE);
@@ -1096,7 +1157,7 @@ final class WarTableView implements Disposable {
         Hex hex = sector.hexes().get(over);
         float scale = standeeScale(carried, 1);
         float y = topAt(over) + radius * (0.3f + 0.03f * MathUtils.sin(time * 2.2f));
-        drawPedestal(carried, centreX(hex.x()), y, centreZ(hex.x(), hex.y()), scale, 0.8f);
+        drawPedestal(carried, centreX(hex.x()), y, centreZ(hex.x(), hex.y()), scale, 0.8f, 1);
         upright(carried, centreX(hex.x()), y, centreZ(hex.x(), hex.y()), scale);
         if (carriedForce >= 0) {
             drawStandee(carried, 0.7f, 0.78f, 0.95f);
@@ -1119,13 +1180,19 @@ final class WarTableView implements Disposable {
 
     /**
      * Draws the hex base on the player's side's colour and the rod that {@code standee}, {@code scale} large, stands on
-     * at ({@code x}, {@code y}, {@code z}), {@code bright} as bright as it is.
+     * at ({@code x}, {@code y}, {@code z}), {@code bright} as bright as it is; {@code layers} bases stacked, one for
+     * each force in a stack.
      */
-    private void drawPedestal(Standee standee, float x, float y, float z, float scale, float bright) {
+    private void drawPedestal(Standee standee, float x, float y, float z, float scale, float bright, int layers) {
         float size = scale * Math.max(standee.width(), standee.height());
         prepareFlat();
-        drawBase(x, y - size * BASE_TALL * 0.4f, z, size * BASE_ACROSS, size * BASE_TALL * 1.4f, ALLIED, bright);
-        drawPrism(x, y + size * BASE_TALL * 0.9f, z, size * ROD_ACROSS, size * ROD_TALL, 0.12f, 0.13f, 0.14f, 0, 0, 0);
+        for (int layer = 0; layer < layers; layer++) {
+            drawBase(x, y - size * BASE_TALL * 0.4f + layer * size * BASE_TALL * LAYER_STEP, z,
+                  size * BASE_ACROSS * (1 - layer * 0.04f), size * BASE_TALL * 1.4f, ALLIED, bright);
+        }
+        float lifted = y + (layers - 1) * size * BASE_TALL * LAYER_STEP;
+        drawPrism(x, lifted + size * BASE_TALL * 0.9f, z, size * ROD_ACROSS, size * ROD_TALL, 0.12f, 0.13f, 0.14f, 0, 0,
+              0);
         propShader.setUniformf("u_emissive", 0, 0, 0);
         propShader.setUniformf("u_metallic", 0f);
         propShader.setUniformf("u_roughness", 0.6f);
@@ -1310,12 +1377,15 @@ final class WarTableView implements Disposable {
         effects.render(holoShader, GL20.GL_TRIANGLES, 0, count);
     }
 
-    /** The sun over the map, with a cool fill from the sky; no fog. */
-    private void lights(ShaderProgram shader) {
+    /**
+     * The sun over the map, {@code sun} the way its light travels, {@code strength} as strong, with a cool fill from the
+     * sky; no fog.
+     */
+    private void lights(ShaderProgram shader, Vector3 sun, float strength) {
         shader.setUniformMatrix("u_projView", camera.combined);
         shader.setUniformf("u_camera", camera.position);
-        shader.setUniformf("u_keyDir", new Vector3(-0.35f, -1f, -0.45f).nor());
-        shader.setUniformf("u_keyColor", 1.35f, 1.3f, 1.2f);
+        shader.setUniformf("u_keyDir", sun);
+        shader.setUniformf("u_keyColor", strength, strength * 0.963f, strength * 0.889f);
         shader.setUniformf("u_rimDir", new Vector3(0.5f, -0.6f, 0.6f).nor());
         shader.setUniformf("u_rimColor", 0.22f, 0.25f, 0.32f);
         shader.setUniformf("u_lamp", 0, TABLE_TOP + 100, 0);
@@ -1456,7 +1526,7 @@ final class WarTableView implements Disposable {
     private void facilities(Sector shown) {
         Map<String, List<Matrix4>> placements = new LinkedHashMap<>();
         for (Site site : shown.sites()) {
-            facility(placements, site);
+            facility(placements, site, occupied(shown, site.x(), site.y()));
         }
         int vertexCount = 0;
         for (Map.Entry<String, List<Matrix4>> entry : placements.entrySet()) {
@@ -1472,24 +1542,26 @@ final class WarTableView implements Disposable {
     }
 
     /** A facility's main model in the middle of its hex and its outbuildings round it. */
-    private void facility(Map<String, List<Matrix4>> placements, Site site) {
+    private void facility(Map<String, List<Matrix4>> placements, Site site, boolean held) {
         Kit kit = WarTableAssets.facility(site.type());
         int tier = site.tier() == null ? 1 : site.tier().ordinal() + 1;
         float r = radius;
         float cx = centreX(site.x());
-        float cz = centreZ(site.x(), site.y());
         float ground = topOf(site.x(), site.y());
-        plates.add(new Plate(cx, ground, cz, site.allied() ? ALLIED : HOSTILE));
+        plates.add(new Plate(cx, ground, centreZ(site.x(), site.y()), site.allied() ? ALLIED : HOSTILE));
+        // With forces at the front of the plate, the facility steps back and shrinks to make room
+        float cz = centreZ(site.x(), site.y()) - (held ? r * HELD_BACK : 0);
+        float room = held ? 0.72f : 1;
         float floor = ground + r * PLATE_TALL;
         float turn = HoloTableView.hash(site.x() * 2.1, site.y() * 1.1) * 360;
         GlbProp main = assets.prop(kit.main());
         if (main != null) {
-            float footprint = r * FACILITY_SIZE * (tier == 3 ? 0.78f : tier == 2 ? 0.7f : 0.62f);
+            float footprint = r * FACILITY_SIZE * room * (tier == 3 ? 0.78f : tier == 2 ? 0.7f : 0.62f);
             float scale = Math.min(footprint / Math.max(width(main), 1e-4f), r * 0.5f / height(main));
             placements.computeIfAbsent(kit.main(), ignored -> new ArrayList<>())
                   .add(place(main, cx, floor, cz, turn, scale));
         }
-        for (int j = 0; j < Math.min(tier, kit.extras().size()); j++) {
+        for (int j = 0; j < (held ? 0 : Math.min(tier, kit.extras().size())); j++) {
             String model = kit.extras().get(j);
             GlbProp prop = assets.prop(model);
             if (prop == null) {
@@ -1578,39 +1650,64 @@ final class WarTableView implements Disposable {
         return Math.max(prop.max().y - prop.min().y, 1e-4f);
     }
 
-    /** Lays the player's forces on the map, each as its force's icon as a standee; one with no icon shows none. */
+    /**
+     * Lays the player's forces on the map, each as its force's icon as a standee; one with no icon shows none. Forces
+     * sharing a hex fan out round it, spaced so their bases don't touch; on a facility's hex they stand at the front of
+     * its plate; too many to fan out stand as one standee on a stack of bases, one for each.
+     */
     private void stand(Sector shown) {
         Map<BufferedImage, Standee> made = new IdentityHashMap<>();
-        int[] sharing = new int[shown.hexes().size()];
+        Map<Long, List<Token>> byHex = new LinkedHashMap<>();
         for (Token token : shown.tokens()) {
-            int index = indexOf(token.x(), token.y());
-            if (index >= 0 && token.icon() != null) {
-                sharing[index]++;
+            if (token.icon() != null) {
+                byHex.computeIfAbsent(key(token.x(), token.y()), ignored -> new ArrayList<>()).add(token);
             }
         }
-        int[] stacked = new int[sharing.length];
-        for (Token token : shown.tokens()) {
-            int index = indexOf(token.x(), token.y());
-            if (token.icon() == null) {
-                continue;
+        int stacks = 0;
+        for (List<Token> group : byHex.values()) {
+            Token first = group.get(0);
+            boolean held = garrisoned(shown, first.x(), first.y());
+            boolean stacked = group.size() > (held ? MOST_FANNED - 1 : MOST_FANNED);
+            int stack = stacked ? stacks++ : -1;
+            for (int nth = 0; nth < group.size(); nth++) {
+                Token token = group.get(nth);
+                Standee standee = made.computeIfAbsent(token.icon(), icon -> standee(icon, true));
+                if (standee == null) {
+                    continue;
+                }
+                float[] spot = spot(token, stacked ? 0 : nth, stacked ? 1 : group.size(), held);
+                float x = spot[0];
+                float z = spot[1];
+                float y = held ? topOf(token.x(), token.y()) + radius * PLATE_TALL * 1.25f
+                      : ground == null ? topOf(token.x(), token.y()) : ground.height(x, z);
+                figures.add(new Figure(standee, token.force(), x, y, z, standeeScale(standee, spot[2]), stack));
             }
-            int nth = index < 0 ? 0 : stacked[index]++;
-            Standee standee = made.computeIfAbsent(token.icon(), icon -> standee(icon, true));
-            if (standee == null) {
-                continue;
-            }
-            boolean shared = index >= 0 && sharing[index] > 1;
-            float[] spot = spot(token, nth, shared);
-            float x = spot[0];
-            float z = spot[1];
-            figures.add(new Figure(standee, token.force(), x, ground == null ? topOf(token.x(), token.y())
-                  : ground.height(x, z), z, standeeScale(standee, shared ? 0.62f : 1)));
         }
         for (Figure figure : figures) {
             if (expected.remove(figure.force())) {
                 landing.put(figure.force(), 0f);
             }
         }
+    }
+
+    /** Whether a facility stands on the hex at ({@code x}, {@code y}). */
+    private static boolean garrisoned(Sector shown, int x, int y) {
+        for (Site site : shown.sites()) {
+            if (site.x() == x && site.y() == y) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether any of the player's forces stand on the hex at ({@code x}, {@code y}). */
+    private static boolean occupied(Sector shown, int x, int y) {
+        for (Token token : shown.tokens()) {
+            if (token.icon() != null && token.x() == x && token.y() == y) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** {@code icon}'s standee, null if it has no shape; kept ones go with the sector's meshes. */
@@ -1645,12 +1742,31 @@ final class WarTableView implements Disposable {
         return mesh;
     }
 
-    /** Where the {@code nth} force on a hex lies: alone, at its centre; {@code shared}, spread round it. */
-    private float[] spot(Token token, int nth, boolean shared) {
-        float angle = nth * 120 + 210;
-        float offset = shared ? radius * 0.36f : 0;
-        return new float[] { centreX(token.x()) + MathUtils.cosDeg(angle) * offset,
-              centreZ(token.x(), token.y()) + MathUtils.sinDeg(angle) * offset };
+    /**
+     * Where the {@code nth} of {@code count} forces on a hex stands and how large, as a share of a lone one: alone, at
+     * the middle; two or three, round it, far enough apart that their bases don't touch; on a facility's hex ({@code
+     * held}), in a row at the front of its plate, the facility drawn back behind them.
+     */
+    private float[] spot(Token token, int nth, int count, boolean held) {
+        float x;
+        float z;
+        float share;
+        if (held) {
+            share = count > 1 ? 0.5f : 0.6f;
+            x = count > 1 ? (nth == 0 ? -0.26f : 0.26f) : 0;
+            z = HELD_FRONT;
+        } else if (count == 1) {
+            share = 1;
+            x = 0;
+            z = 0;
+        } else {
+            share = 0.62f;
+            float angle = count == 2 ? nth * 180 : nth * 120 + 210;
+            float offset = count == 2 ? 0.32f : 0.36f;
+            x = MathUtils.cosDeg(angle) * offset;
+            z = MathUtils.sinDeg(angle) * offset;
+        }
+        return new float[] { centreX(token.x()) + x * radius, centreZ(token.x(), token.y()) + z * radius, share };
     }
 
     /**

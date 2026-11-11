@@ -369,9 +369,11 @@ public final class WarTableDemo {
         List<StratConCoords> west = land.subList(0, Math.max(1, land.size() / 3));
         List<StratConCoords> east = land.subList(land.size() * 2 / 3, land.size());
         Set<StratConCoords> taken = new HashSet<>();
+        StratConCoords garrison = null;
         for (int i = 0; i < 2; i++) {
-            place(track, StratConFacilityFactory.getRandomAlliedFacility(), pick(west, random, taken), false,
-                  random);
+            StratConCoords at = pick(west, random, taken);
+            garrison = garrison == null ? at : garrison;
+            place(track, StratConFacilityFactory.getRandomAlliedFacility(), at, false, random);
         }
         for (int i = 0; i < 3; i++) {
             place(track, StratConFacilityFactory.getRandomHostileFacility(), pick(east, random, taken), i == 0,
@@ -397,6 +399,12 @@ public final class WarTableDemo {
             StratConCoords at = pick(land.subList(0, Math.max(1, land.size() / 2)), random, taken);
             forces.computeIfAbsent(at, coords -> new HashSet<>()).add(i);
         }
+        // A crowded hex, its forces stacked, and a force holding one of the player's facilities
+        StratConCoords crowded = pick(land.subList(0, Math.max(1, land.size() / 2)), random, taken);
+        for (int i = 0; i < 4; i++) {
+            forces.computeIfAbsent(crowded, coords -> new HashSet<>()).add(forceCount + i);
+        }
+        forces.computeIfAbsent(garrison, coords -> new HashSet<>()).add(forceCount + 4);
         track.setAssignedCoordForces(forces);
 
         Sector sector = WarTableSnapshot.of(track, TODAY, id -> FORCES[id % FORCES.length],

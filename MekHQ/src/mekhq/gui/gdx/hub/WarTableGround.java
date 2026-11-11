@@ -40,6 +40,7 @@ import com.badlogic.gdx.graphics.Mesh;
 import com.badlogic.gdx.graphics.VertexAttribute;
 import com.badlogic.gdx.graphics.VertexAttributes;
 import com.badlogic.gdx.math.MathUtils;
+import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.FloatArray;
 import com.badlogic.gdx.utils.ShortArray;
 import mekhq.gui.gdx.hub.WarTableSnapshot.Hex;
@@ -48,7 +49,7 @@ import mekhq.gui.gdx.hub.WarTableSnapshot.Site;
 
 /**
  * The relief of the war table's map, as an operations map's is: gentle, the sector's hexes' heights blended smoothly
- * into each other (water a little below the plains, hills a little above, a mountain a third of a hex high at most),
+ * into each other (water a little below the plains, hills a third of a hex above them, a mountain a hex high at most),
  * roughened by a little noise the more the higher the ground, and flat under the facilities. Its mesh is each hex cut
  * into small triangles following that relief, and a skirt down to the table round the sector's edge.
  *
@@ -57,8 +58,16 @@ import mekhq.gui.gdx.hub.WarTableSnapshot.Site;
  */
 final class WarTableGround {
     private static final float SQRT3 = (float) Math.sqrt(3);
-    /** Floats per vertex: position, normal and the hex's column, row and whether it's the skirt. */
-    static final int STRIDE = 9;
+    /** Floats per vertex: position, normal, the hex's column, row and whether it's the skirt, and its light. */
+    static final int STRIDE = 10;
+    /**
+     * The way the sun's light travels over the ground: low and from the left, as a relief map's shading is, so the
+     * slopes model the hills and the heights cast shadows.
+     */
+    static final Vector3 SUN = new Vector3(0.75f, -0.6f, -0.25f).nor();
+    /** How far a shadow is looked for toward the sun, in hexes' radii, and in how many steps. */
+    private static final float SHADOW_REACH = 3f;
+    private static final int SHADOW_STEPS = 14;
     /** How finely a hex is cut: each of its six triangles into this many rows. */
     private static final int RINGS = 6;
     /** How far a hex's height reaches into its neighbours', in hexes' radii. */
@@ -92,6 +101,8 @@ final class WarTableGround {
     /** Each hex's height and roughness, in hexes' radii. */
     private final float[] levels;
     private final float[] roughness;
+    /** How far the land's long, low swell lifts and sinks each hex, in hexes' radii. */
+    private final float[] swells;
     /** The facilities' pads: where they lie and how high. */
     private final float[] padX;
     private final float[] padZ;
@@ -125,11 +136,13 @@ final class WarTableGround {
         Arrays.fill(grid, -1);
         levels = new float[hexes.size()];
         roughness = new float[hexes.size()];
+        swells = new float[hexes.size()];
         for (int i = 0; i < hexes.size(); i++) {
             Hex hex = hexes.get(i);
             grid[(hex.y() - minY) * columns + hex.x() - minX] = i;
             levels[i] = level(hex);
             roughness[i] = roughness(hex);
+            swells[i] = swell(hex);
         }
         List<Site> sites = sector.sites();
         padX = new float[sites.size()];
@@ -152,14 +165,14 @@ final class WarTableGround {
     static float level(Hex hex) {
         float vary = HoloTableView.hash(hex.x() * 1.31, hex.y() * 2.17);
         if (WarTableAssets.water(hex)) {
-            return -0.1f;
+            return -0.13f;
         }
         return switch (hex.relief()) {
-            case WATER -> -0.1f;
-            case LOW -> -0.02f + vary * 0.02f;
-            case FLAT -> vary * 0.03f;
-            case RAISED -> 0.16f + vary * 0.08f;
-            case HIGH -> 0.42f + vary * 0.16f;
+            case WATER -> -0.13f;
+            case LOW -> -0.04f + vary * 0.02f;
+            case FLAT -> vary * 0.04f;
+            case RAISED -> 0.3f + vary * 0.14f;
+            case HIGH -> 0.8f + vary * 0.3f;
         };
     }
 
@@ -173,10 +186,27 @@ final class WarTableGround {
         }
         return switch (hex.relief()) {
             case WATER -> 0;
-            case LOW -> 0.012f;
-            case FLAT -> 0.018f;
-            case RAISED -> 0.05f;
-            case HIGH -> 0.14f;
+            case LOW -> 0.015f;
+            case FLAT -> 0.024f;
+            case RAISED -> 0.08f;
+            case HIGH -> 0.22f;
+        };
+    }
+
+    /** How far the land's long, low swell lifts and sinks {@code hex}, in hexes' radii: plains roll, water lies still. */
+    private static float swell(Hex hex) {
+        if (WarTableAssets.water(hex)) {
+            return 0;
+        }
+        if (WarTableAssets.ground(hex).plot() == WarTableAssets.PLOT_BUILT) {
+            return 0.03f;
+        }
+        return switch (hex.relief()) {
+            case WATER -> 0;
+            case LOW -> 0.08f;
+            case FLAT -> 0.15f;
+            case RAISED -> 0.18f;
+            case HIGH -> 0.24f;
         };
     }
 
@@ -205,6 +235,7 @@ final class WarTableGround {
         int column = Math.round(qx / 1.5f);
         float sum = 0;
         float bumps = 0;
+        float swelling = 0;
         float weights = 0;
         float reach = REACH * REACH;
         for (int c = column - 2; c <= column + 2; c++) {
@@ -231,6 +262,7 @@ final class WarTableGround {
                 w = w * w * w;
                 sum += w * levels[index];
                 bumps += w * roughness[index];
+                swelling += w * swells[index];
                 weights += w;
             }
         }
@@ -238,6 +270,9 @@ final class WarTableGround {
             return 0;
         }
         float h = sum / weights;
+        // The land's swell: long and low, a few hexes from crest to crest
+        float rolling = (noise(qx * 0.32f, qz * 0.32f) - 0.5f) * 2 + (noise(qx * 0.85f + 9, qz * 0.85f) - 0.5f) * 0.7f;
+        h += swelling / weights * rolling;
         if (rough) {
             h += bumps / weights * (ridged(qx * 1.3f, qz * 1.3f) - 0.45f) * 2;
         }
@@ -335,7 +370,35 @@ final class WarTableGround {
         float dx = (height(x + e, z) - height(x - e, z)) / (2 * e);
         float dz = (height(x, z + e) - height(x, z - e)) / (2 * e);
         float length = (float) Math.sqrt(dx * dx + 1 + dz * dz);
-        vertices.addAll(x, height(x, z), z, -dx / length, 1 / length, -dz / length, hex.x(), hex.y(), 0);
+        float y = height(x, z);
+        vertices.addAll(x, y, z, -dx / length, 1 / length, -dz / length, hex.x(), hex.y(), 0, light(x, y, z));
+    }
+
+    /**
+     * How much light reaches the ground at ({@code x}, {@code y}, {@code z}), 0 to 1: the sun, less where the heights
+     * between it and the sun shade it, softly the nearer they come to the line toward it; and the sky, less down in a
+     * hollow than up on a crest.
+     */
+    private float light(float x, float y, float z) {
+        float flat = (float) Math.hypot(SUN.x, SUN.z);
+        float toSunX = -SUN.x / flat;
+        float toSunZ = -SUN.z / flat;
+        float rise = -SUN.y / flat;
+        float sun = 1;
+        for (int step = 1; step <= SHADOW_STEPS; step++) {
+            float s = radius * SHADOW_REACH * step / SHADOW_STEPS;
+            float above = height(x + toSunX * s, z + toSunZ * s) - (y + s * rise);
+            sun = Math.min(sun, MathUtils.clamp(1 - above / (radius * 0.03f + s * 0.12f), 0, 1));
+        }
+        float hollow = 0;
+        for (int k = 0; k < 8; k++) {
+            float cos = MathUtils.cosDeg(45 * k);
+            float sin = MathUtils.sinDeg(45 * k);
+            hollow += Math.max(0, height(x + cos * radius * 0.45f, z + sin * radius * 0.45f) - y);
+            hollow += Math.max(0, height(x + cos * radius * 1.1f, z + sin * radius * 1.1f) - y) * 0.5f;
+        }
+        float sky = 1 - MathUtils.clamp(hollow / 12 / (radius * 0.12f), 0, 1) * 0.6f;
+        return sun * sun * (3 - 2 * sun) * 0.75f + sky * 0.25f;
     }
 
     /** The skirt under side {@code k} of {@code hex}, from corner a to corner b, down to below the table's top. */
@@ -346,8 +409,8 @@ final class WarTableGround {
         for (int s = 0; s <= RINGS; s++) {
             float x = MathUtils.lerp(ax, bx, s / (float) RINGS);
             float z = MathUtils.lerp(az, bz, s / (float) RINGS);
-            vertices.addAll(x, height(x, z), z, SIDE_X[k], 0, SIDE_Z[k], hex.x(), hex.y(), 1);
-            vertices.addAll(x, bottom, z, SIDE_X[k], 0, SIDE_Z[k], hex.x(), hex.y(), 1);
+            vertices.addAll(x, height(x, z), z, SIDE_X[k], 0, SIDE_Z[k], hex.x(), hex.y(), 1, 1);
+            vertices.addAll(x, bottom, z, SIDE_X[k], 0, SIDE_Z[k], hex.x(), hex.y(), 1, 1);
         }
         for (int s = 0; s < RINGS; s++) {
             triangle(indices, first, 2 * s, 2 * s + 1, 2 * s + 2);
@@ -364,7 +427,7 @@ final class WarTableGround {
     private static Mesh mesh(FloatArray vertices, ShortArray indices) {
         Mesh mesh = new Mesh(true, vertices.size / STRIDE, indices.size, new VertexAttributes(
               VertexAttribute.Position(), VertexAttribute.Normal(),
-              new VertexAttribute(VertexAttributes.Usage.Generic, 3, "a_hex")));
+              new VertexAttribute(VertexAttributes.Usage.Generic, 4, "a_hex")));
         mesh.setVertices(vertices.items, 0, vertices.size);
         mesh.setIndices(indices.items, 0, indices.size);
         return mesh;
