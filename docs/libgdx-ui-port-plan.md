@@ -283,24 +283,36 @@ MegaMek's board renderer is only used to dive into a scenario.
 - **The map.** One sector at a time. `WarTableGround` gives the sector gentle relief, at most a
   third of a hex: water sits low, hills and mountains rise, and heights blend smoothly between
   hexes, with each hex's own height kept at its middle. Scouted hexes show the ground as it is:
-  the biome's surface textures from mm-data (`WarTableAssets`), blended across ragged hex edges,
-  with water, roads, city blocks, contour lines and a hairline hex grid. Unscouted hexes are a
+  the biome's surface textures from mm-data (`WarTableAssets`), each covering about a hex and
+  sampled at two scales so the repeats don't show, blended across ragged hex edges, with water
+  (dark and calm, with long low swells and a line of surf at the shore), roads, city blocks,
+  contour lines and a hairline hex grid. Unscouted hexes are a
   green holographic wireframe of the same relief, so the table shows what intel there is and
   where it runs out. A cyan frontier runs along the edge of the scouted ground, and the hover and
   selection rims sit on the hexes. The sector opens with a scan sweeping across it that paints the
-  scouted ground in.
+  scouted ground in. F (left out of the hint) previews the fog of war on a campaign that's scouted
+  everything: hexes more than two from the player's forces, own facilities and scenarios turn
+  back into hologram, and F again burns the fog off them.
 - **Plot mode.** The Plot button (or P) flattens the map into a printed operations map: flat
-  colours per terrain, roads and the grid, without the props. P again lifts it back.
+  colours per terrain overprinted with map symbols (tree rings for woods, stipple for arid ground,
+  hachures for peaks, dashes for snow, a street grid for built-up areas, wave lines for water) on a
+  faint paper grain, plus roads and the grid, without the props. P again lifts it back.
 - **On the map.** Scenery is kept small: a few trees or rocks per scouted hex, from the biome's
-  density, with one major feature per hex at most. Facilities are scenery and building models
+  density, with one major feature per hex at most. Bare rocks take the texture of the biome's
+  cliffs. Facilities are scenery and building models
   (a barracks, a hangar, a radar) from mm-data, sized by the facility's tier but kept within their
-  hex. Unscouted facilities show as holographic ghosts. Scenarios are beacons with a ring that
+  hex, standing on a dark hex plate rimmed in their side's colour (blue for the player's, red for
+  the enemy's). Unscouted facilities show as holographic ghosts. Scenarios are beacons with a ring that
   empties as the deadline nears and a low marker of light.
 - **Forces are standees.** Each force stands on its hex as its TO&E icon cut out and given
   thickness (MegaMek's `GpuStandee` builds the geometry), turned to the camera and leaned back a
-  little so it reads from above.
+  little so it reads from above. It stands on a thin rod in a hex base like the facilities'
+  plates, rimmed in the player's blue.
 - **Labels.** Names sit on near-opaque plates with an edge bar in the side's or status's colour, so
-  they read over any terrain; a scenario's deadline follows its name in the status's colour.
+  they read over any terrain; a scenario's deadline follows its name in the status's colour. As on
+  a strategy game's map, the map's own look should tell what's where, so the Labels button (or L)
+  cycles through key labels (the default: scenarios only), all labels and none. Whatever the
+  setting, the hex hovered or picked always shows its labels.
 - **Supply and intel.** Supply runs as light flowing along the network's links, cut roads break
   it, and points of interest show as markers. A hover card says what a hex holds, as
   `StratConPanel`'s info pane does.

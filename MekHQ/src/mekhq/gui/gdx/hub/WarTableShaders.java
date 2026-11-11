@@ -266,6 +266,59 @@ final class WarTableShaders {
               return PLOT[int(clamp(c.z - 1.0, 0.0, 8.0) + 0.5)];
           }
 
+          // A surface's colour at uv: two scales at a turn to each other, so the picture's repeats don't line up, calmed
+          // a little toward its average colour as it's seen from high above
+          vec3 surface(float layer, vec2 uv, vec2 dx, vec2 dy) {
+              const mat2 TURN = mat2(0.8, -0.6, 0.6, 0.8);
+              vec3 near = textureGrad(u_albedo, vec3(uv, layer), dx, dy).rgb;
+              vec3 far = textureGrad(u_albedo, vec3(TURN * uv * 0.43 + 0.37, layer), TURN * dx * 0.43,
+                    TURN * dy * 0.43).rgb;
+              return mix(mix(near, far, 0.4), textureLod(u_albedo, vec3(uv, layer), 9.0).rgb, 0.25);
+          }
+
+          // How much ink a printed map's symbol for a kind of ground puts at p, in hexes' radii
+          float symbols(float kind, vec2 p, float pixel) {
+              int k = int(clamp(kind, 0.0, 8.0) + 0.5);
+              float aa = pixel * 1.2;
+              if (k == 0 || k == 1 || k == 4 || k == 8) {
+                  // Open ground's tufts, woods' round trees, arid stipple, barren speckle
+                  float size = k == 1 ? 0.16 : k == 0 ? 0.13 : k == 4 ? 0.09 : 0.07;
+                  float spot = k == 1 ? 0.036 : k == 0 ? 0.009 : k == 4 ? 0.011 : 0.007;
+                  float odds = k == 1 ? 0.8 : k == 0 ? 0.3 : 0.55;
+                  float ink = k == 1 ? 0.5 : k == 0 ? 0.3 : 0.45;
+                  vec2 q = p / size;
+                  vec2 id = floor(q);
+                  vec2 f = fract(q) - 0.5 + (vec2(hash(id), hash(id + 7.0)) - 0.5) * 0.5;
+                  float d = length(f) * size;
+                  float mark = 1.0 - smoothstep(spot - aa, spot + aa, d);
+                  if (k == 1) {
+                      // A tree's crown printed as a ring round a paler middle
+                      mark = mark * mix(1.0, 0.45, 1.0 - smoothstep(spot * 0.55 - aa, spot * 0.55 + aa, d));
+                  }
+                  return mark * ink * step(1.0 - odds, hash(id + 3.0));
+              }
+              if (k == 3) {
+                  // Peaks: hachures in patches
+                  return hairline(dot(p, vec2(0.7071, 0.7071)) * 14.0, 0.5) * smoothstep(0.45, 0.6, noise(p * 3.0))
+                        * 0.45;
+              }
+              if (k == 5) {
+                  // Snow and ice: short dashes
+                  return hairline(p.y * 12.0, 0.4) * step(0.62, noise(vec2(p.x * 10.0, floor(p.y * 12.0 + 0.5))))
+                        * 0.3;
+              }
+              if (k == 6) {
+                  // Built-up: the street grid
+                  return max(hairline(p.x / 0.19, 0.4), hairline(p.y / 0.19, 0.4)) * 0.3;
+              }
+              if (k == 7) {
+                  // Water: broken wave lines
+                  return hairline(p.y * 6.0 + sin(p.x * 10.0) * 0.12, 0.35) * step(0.5, noise(p * vec2(4.0, 1.5)))
+                        * 0.35;
+              }
+              return 0.0;
+          }
+
           void main() {
               vec2 at = v_hex.xy;
               vec4 here = cell(at);
@@ -322,12 +375,11 @@ final class WarTableShaders {
               float ragged = (fbm(v_world.xz / u_grid.z * 2.6) - 0.5) * 0.36;
               vec2 uvX = dFdx(uv);
               vec2 uvY = dFdy(uv);
-              // Seen from high above: a surface's detail calmed toward its average colour
-              const float CALM = 0.45;
-              vec3 albedo = mix(textureGrad(u_albedo, vec3(uv, here.w), uvX, uvY).rgb,
-                    textureLod(u_albedo, vec3(uv, here.w), 9.0).rgb, CALM);
+              vec3 albedo = surface(here.w, uv, uvX, uvY);
               vec3 bump = textureGrad(u_normals, vec3(uv, here.w), uvX, uvY).rgb;
               vec3 plot = plotted(here);
+              vec2 sym = v_world.xz / u_grid.z;
+              float ink = symbols(here.z - 1.0, sym, pixel);
               float water = flag(here, 1.0) ? 1.0 : 0.0;
               float total = 1.0;
               bool road = flag(here, 2.0);
@@ -351,16 +403,17 @@ final class WarTableShaders {
                       continue;
                   }
                   float odds = share / max(1.0 - share, 0.02);
-                  albedo += mix(textureGrad(u_albedo, vec3(uv, there.w), uvX, uvY).rgb,
-                        textureLod(u_albedo, vec3(uv, there.w), 9.0).rgb, CALM) * odds;
+                  albedo += surface(there.w, uv, uvX, uvY) * odds;
                   bump += textureGrad(u_normals, vec3(uv, there.w), uvX, uvY).rgb * odds;
                   plot += plotted(there) * odds;
+                  ink += symbols(there.z - 1.0, sym, pixel) * odds;
                   water += (flag(there, 1.0) ? 1.0 : 0.0) * odds;
                   total += odds;
               }
               albedo = pow(albedo / total, vec3(2.2));
               albedo *= mix(0.8, 1.15, fbm(v_world.xz / u_grid.z * 0.55));
               plot /= total;
+              ink /= total;
               water /= total;
               if (flag(here, 4.0)) {
                   // A city's blocks: roofs of varied greys between darker streets
@@ -377,19 +430,31 @@ final class WarTableShaders {
               vec3 lit = normalize(tangent * b.x * 0.8 + bitangent * b.y * 0.8 + n * max(b.z, 0.2));
               vec3 colour = light(albedo, lit, v_world, 0.03);
 
-              // Open water: dark, deeper further from shore, a slow swell catching the sun
-              float wet = smoothstep(0.4, 0.6, water + (fbm(v_world.xz / u_grid.z * 4.0) - 0.5) * 0.25);
+              // Open water: dark, deeper further from shore, long low swells rolling the light over it rather than
+              // sparkling, a pale line of surf along the shore
+              float shoreline = water + (fbm(v_world.xz / u_grid.z * 4.0) - 0.5) * 0.25;
+              float wet = smoothstep(0.4, 0.6, shoreline);
               if (wet > 0.0) {
-                  vec2 swell = v_world.xz / u_grid.z * 6.0;
-                  vec3 wn = normalize(vec3(noise(swell + u_time * 0.3) - 0.5, 2.2,
-                        noise(swell * 1.3 - u_time * 0.25 + 9.0) - 0.5));
+                  vec2 p = v_world.xz / u_grid.z;
+                  float warp = fbm(p * 0.8) * 3.0;
+                  vec2 slope = vec2(0.0);
+                  const vec3 WAVES[3] = vec3[](vec3(0.9, 0.436, 3.1), vec3(-0.5, 0.866, 4.7), vec3(0.2, -0.98, 7.3));
+                  for (int i = 0; i < 3; i++) {
+                      vec2 d = WAVES[i].xy;
+                      slope += d * cos(dot(p, d) * WAVES[i].z + u_time * (0.5 + 0.15 * float(i)) + warp)
+                            * (0.04 / (1.0 + float(i)));
+                  }
+                  vec3 wn = normalize(vec3(-slope.x, 1.0, -slope.y));
                   float deep = clamp(-height / 0.09, 0.0, 1.0);
-                  vec3 sea = mix(vec3(0.03, 0.09, 0.1), vec3(0.008, 0.035, 0.05), deep);
-                  vec3 sun = reflect(u_keyDir, wn);
-                  float glint = pow(max(dot(sun, toCamera), 0.0), 90.0) * 1.2;
-                  float sky = pow(1.0 - max(dot(wn, toCamera), 0.0), 4.0);
-                  vec3 surface = sea * (0.6 + 0.4 * u_keyColor.g) + vec3(0.06, 0.09, 0.11) * sky + u_keyColor * glint;
-                  colour = mix(colour, surface, wet);
+                  vec3 sea = mix(vec3(0.035, 0.1, 0.11), vec3(0.01, 0.04, 0.06), deep) * (0.6 + 0.4 * u_keyColor.g);
+                  float fres = 0.02 + 0.98 * pow(1.0 - max(dot(wn, toCamera), 0.0), 5.0);
+                  vec3 sky = mix(vec3(0.05, 0.075, 0.095), vec3(0.11, 0.15, 0.19),
+                        clamp(reflect(-toCamera, wn).y, 0.0, 1.0));
+                  float sheen = pow(max(dot(wn, normalize(toCamera - u_keyDir)), 0.0), 60.0) * 0.3;
+                  vec3 surf = mix(sea, sky, fres) + u_keyColor * sheen;
+                  float foam = exp(-pow((shoreline - 0.47) / 0.035, 2.0)) * (0.7 + 0.3 * sin(u_time * 0.8 + p.x * 5.0));
+                  surf = mix(surf, vec3(0.22, 0.25, 0.25), foam * 0.45);
+                  colour = mix(colour, surf, wet);
               }
               // Roads: a pale dirt shoulder, a dark metalled core
               colour = mix(colour, light(vec3(0.3, 0.27, 0.22), n, v_world, 0.0), shoulder * (1.0 - wet));
@@ -401,6 +466,10 @@ final class WarTableShaders {
               // The plotted map: flat colours, a little hill shade, contours and roads printed over
               float shade = 0.82 + 0.3 * max(dot(n, normalize(vec3(-0.5, 0.8, -0.35))), 0.0);
               vec3 print = mix(plot, PLOT[7], wet) * shade;
+              // Printed on paper: a faint grain, and the symbols for each kind of ground, fading as they'd blur
+              print *= 0.95 + 0.05 * noise(v_world.xz / u_grid.z * 60.0);
+              ink = mix(ink, symbols(7.0, sym, pixel), wet);
+              print *= 1.0 - ink * (1.0 - smoothstep(0.02, 0.05, pixel));
               print *= 1.0 - (contour * 0.15 + major * 0.25) * (1.0 - wet);
               print = mix(print, vec3(0.42, 0.14, 0.08), max(paved, shoulder * 0.6) * (1.0 - wet));
               print = mix(print, vec3(0.08, 0.09, 0.1), hexLine * 0.6);

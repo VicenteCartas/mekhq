@@ -226,9 +226,40 @@ final class WarTable implements Disposable {
         }
     };
 
-    /** A label pinned over a hex of the table, kept hidden until {@code from} (in {@link TimeUtils#millis}). */
-    private record Pin(Actor actor, int x, int y, float lift, long from) {
+    /**
+     * A label pinned over a hex of the table, kept hidden until {@code from} (in {@link TimeUtils#millis}); a
+     * {@code key} one names what needs the player's attention, a scenario.
+     */
+    private record Pin(Actor actor, int x, int y, float lift, long from, boolean key) {
     }
+
+    /**
+     * Which labels the table shows: all of them; only the scenarios' and those over the hex pointed at or picked, the
+     * map's look telling the rest; or only those over the hex pointed at or picked.
+     */
+    enum Labels {
+        ALL, KEY, NONE;
+
+        Labels next() {
+            return values()[(ordinal() + 1) % values().length];
+        }
+
+        String text() {
+            return getText("WarTable.labels." + name().toLowerCase(Locale.ROOT));
+        }
+    }
+
+    private Labels labels = Labels.KEY;
+    /** How far round what the player knows the fog preview leaves scouted, in hexes. */
+    private static final int FOG_REACH = 2;
+    /**
+     * A preview of the fog of war, for a campaign that's scouted its whole map: everything but the hexes round the
+     * player's forces, own facilities and scenarios shown unscouted. Toggled by F; not part of the hint.
+     */
+    private boolean fogPreview;
+    private @Nullable Sector fogSource;
+    private @Nullable Sector fogShown;
+    private UiButton labelsButton;
 
     /** Sets the table up on the hub's look, at {@code scale} pixels a stage unit. */
     void create(UiTheme theme, UiKit ui, float scale) {
@@ -255,6 +286,9 @@ final class WarTable implements Disposable {
         UiButton plot = ui.button("hud-utility", "map", getText("WarTable.plot"), null);
         UiKit.onChange(plot, () -> view.plot(!view.plotted()));
         top.add(plot).top().right().padRight(space("sm"));
+        labelsButton = ui.button("hud-utility", "tag", labels.text(), null);
+        UiKit.onChange(labelsButton, this::cycleLabels);
+        top.add(labelsButton).top().right().padRight(space("sm"));
         UiButton back = ui.button("hud-utility", "chevron-left", getText("WarTable.back"), null);
         UiKit.onChange(back, this::escape);
         top.add(back).top().right();
@@ -587,7 +621,7 @@ final class WarTable implements Disposable {
             showOperation(index);
             return;
         }
-        Sector sector = snapshot.sectors().get(sectorIndex);
+        Sector sector = shown(snapshot.sectors().get(sectorIndex));
         List<WarTableView.Contact> arrived = view.update(sector);
         seen.put(seenKey(sectorIndex), sector);
         pinAll(sector, arrived);
@@ -635,7 +669,7 @@ final class WarTable implements Disposable {
         }
         answer(false);
         letGo();
-        Sector sector = snapshot.sectors().get(index);
+        Sector sector = shown(snapshot.sectors().get(index));
         List<WarTableView.Contact> arrived = view.show(sector, seen.get(seenKey(index)));
         seen.put(seenKey(index), sector);
         contacts.clearActions();
@@ -666,14 +700,14 @@ final class WarTable implements Disposable {
                   : beacon.daysLeft() == 0 ? getText("WarTable.today")
                   : getFormattedText("WarTable.inDays", beacon.daysLeft());
             pin(beacon.name(), when, beacon.daysLeft() == 0 ? UiKit.Tone.BAD : UiKit.Tone.WARN, beacon.x(),
-                  beacon.y(), 2.2f, from);
+                  beacon.y(), 2.2f, from, true);
         }
         for (Site site : sector.sites()) {
-            pin(site.name(), "", site.allied() ? UiKit.Tone.OK : UiKit.Tone.BAD, site.x(), site.y(), 1.4f, now);
+            pin(site.name(), "", site.allied() ? UiKit.Tone.OK : UiKit.Tone.BAD, site.x(), site.y(), 1.4f, now, false);
         }
         for (Token token : sector.tokens()) {
             // Clear of the standee
-            pin(token.name(), "", UiKit.Tone.NORMAL, token.x(), token.y(), 2f, now);
+            pin(token.name(), "", UiKit.Tone.NORMAL, token.x(), token.y(), 2f, now, false);
         }
     }
 
@@ -681,7 +715,7 @@ final class WarTable implements Disposable {
      * Pins a map label over hex ({@code x}, {@code y}): an opaque plate so it reads over any ground, its edge bar in
      * {@code tone}'s colour, the name in upper case and {@code detail}, if any, after it in the tone's colour.
      */
-    private void pin(String text, String detail, UiKit.Tone tone, int x, int y, float lift, long from) {
+    private void pin(String text, String detail, UiKit.Tone tone, int x, int y, float lift, long from, boolean key) {
         Table chip = new Table();
         chip.setBackground(ui.skin.newDrawable("white", LABEL_PLATE));
         chip.add(new Image(ui.skin.newDrawable("white", tone == UiKit.Tone.NORMAL ? LABEL_FRIEND : tone.color)))
@@ -694,7 +728,7 @@ final class WarTable implements Disposable {
         chip.pack();
         chip.setVisible(false);
         pins.addActor(chip);
-        pinned.add(new Pin(chip, x, y, lift, from));
+        pinned.add(new Pin(chip, x, y, lift, from, key));
     }
 
     /**
@@ -1251,7 +1285,73 @@ final class WarTable implements Disposable {
     }
 
     private @Nullable Sector sector() {
-        return snapshot == null || snapshot.sectors().isEmpty() ? null : snapshot.sectors().get(sectorIndex);
+        return snapshot == null || snapshot.sectors().isEmpty() ? null : shown(snapshot.sectors().get(sectorIndex));
+    }
+
+    /** Previews the fog of war, or lifts it, in place: the hexes it lifts from burn clear as newly scouted ones do. */
+    private void previewFog(boolean on) {
+        fogPreview = on;
+        Sector sector = sector();
+        if (sector == null) {
+            return;
+        }
+        List<WarTableView.Contact> arrived = view.update(sector);
+        seen.put(seenKey(sectorIndex), sector);
+        pinAll(sector, arrived);
+        fillReserve(sector);
+    }
+
+    /** {@code sector} as the table shows it: {@link #fogged} while the fog's previewed. */
+    private Sector shown(Sector sector) {
+        if (!fogPreview) {
+            return sector;
+        }
+        if (fogSource != sector || fogShown == null) {
+            fogSource = sector;
+            fogShown = fogged(sector, FOG_REACH);
+        }
+        return fogShown;
+    }
+
+    /**
+     * {@code sector} with every hex further than {@code reach} from the player's forces, own facilities and scenarios
+     * unscouted, and the enemy's facilities there of unknown size.
+     */
+    static Sector fogged(Sector sector, int reach) {
+        List<int[]> known = new ArrayList<>();
+        sector.tokens().forEach(token -> known.add(new int[] { token.x(), token.y() }));
+        sector.beacons().forEach(beacon -> known.add(new int[] { beacon.x(), beacon.y() }));
+        sector.sites().stream().filter(Site::allied).forEach(site -> known.add(new int[] { site.x(), site.y() }));
+        List<Hex> hexes = new ArrayList<>();
+        Set<Long> dark = new HashSet<>();
+        for (Hex hex : sector.hexes()) {
+            boolean near = known.stream().anyMatch(at -> hexDistance(at[0], at[1], hex.x(), hex.y()) <= reach);
+            if (near || !hex.scouted()) {
+                hexes.add(hex);
+                continue;
+            }
+            dark.add(((long) hex.x() << 32) | (hex.y() & 0xFFFFFFFFL));
+            hexes.add(new Hex(hex.x(), hex.y(), hex.terrain(), hex.relief(), hex.image(), false, hex.road(), hex.city(),
+                  hex.open()));
+        }
+        List<Site> sites = sector.sites().stream()
+              .map(site -> site.allied() || !dark.contains(((long) site.x() << 32) | (site.y() & 0xFFFFFFFFL)) ? site
+                    : new Site(site.x(), site.y(), site.name(), site.type(), null, false, site.objective(),
+                          site.cutOff(), ""))
+              .toList();
+        return new Sector(sector.name(), sector.width(), sector.height(), sector.temperature(), hexes, sites,
+              sector.beacons(), sector.tokens(), sector.supply(), sector.cuts(), sector.marks(), sector.reserve());
+    }
+
+    /** How many hexes apart (ax, ay) and (bx, by) are on StratCon's grid, its odd columns half a hex lower. */
+    static int hexDistance(int ax, int ay, int bx, int by) {
+        int aq = ax;
+        int ar = ay - (ax - (ax & 1)) / 2;
+        int bq = bx;
+        int br = by - (bx - (bx & 1)) / 2;
+        int dq = aq - bq;
+        int dr = ar - br;
+        return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
     }
 
     /** The table's input: Escape, then its controls, then the camera's while no board is up. */
@@ -1276,6 +1376,14 @@ final class WarTable implements Disposable {
                 }
                 if (keycode == Input.Keys.P && !typing()) {
                     view.plot(!view.plotted());
+                    return true;
+                }
+                if (keycode == Input.Keys.L && !typing()) {
+                    cycleLabels();
+                    return true;
+                }
+                if (keycode == Input.Keys.F && !typing() && !asking()) {
+                    previewFog(!fogPreview);
                     return true;
                 }
                 return false;
@@ -1471,15 +1579,33 @@ final class WarTable implements Disposable {
         stage.draw();
     }
 
+    /** Shows the next of {@link Labels}' sets of labels. */
+    private void cycleLabels() {
+        labels = labels.next();
+        if (labelsButton != null) {
+            labelsButton.setText(labels.text());
+        }
+    }
+
+    /** Whether {@code pin} shows under the labels chosen: always over the hex pointed at or picked. */
+    private boolean labelled(Pin pin, @Nullable Hex hovered) {
+        if (labels == Labels.ALL || labels == Labels.KEY && pin.key()) {
+            return true;
+        }
+        return pin.x() == pickedX && pin.y() == pickedY
+              || hovered != null && pin.x() == hovered.x() && pin.y() == hovered.y();
+    }
+
     private void placePins() {
         boolean settled = view.settled() && inspected == null;
+        Hex hovered = view.hovered();
         Vector3 at = new Vector3();
         // Pins sharing a hex stack upward from the lowest one instead of covering each other
         Map<Long, Float> stacked = new HashMap<>();
         long now = TimeUtils.millis();
         for (Pin pin : pinned) {
             Actor actor = pin.actor();
-            if (!settled || now < pin.from()) {
+            if (!settled || now < pin.from() || !labelled(pin, hovered)) {
                 actor.setVisible(false);
                 actor.getColor().a = 0;
                 continue;

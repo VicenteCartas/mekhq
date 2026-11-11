@@ -257,8 +257,28 @@ public final class WarTableDemo {
                         case 1320 -> shot("dayPassed");
                         // Plots the map: flat, in a printed map's colours
                         case 1330 -> table.input().keyDown(com.badlogic.gdx.Input.Keys.P);
-                        case 1390 -> {
-                            shot("plotted");
+                        case 1390 -> shot("plotted");
+                        // Zooms in close, to see the printed map's symbols and then the ground's detail
+                        case 1395 -> {
+                            table.input().mouseMoved(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2);
+                            table.input().scrolled(0, -6);
+                        }
+                        case 1460 -> shot("plotClose");
+                        case 1465 -> table.input().keyDown(com.badlogic.gdx.Input.Keys.P);
+                        case 1540 -> shot("close");
+                        // Previews the fog of war, then lifts it again; then shows every label
+                        case 1545 -> table.input().keyDown(com.badlogic.gdx.Input.Keys.F);
+                        case 1640 -> shot("fogged");
+                        case 1645 -> table.input().keyDown(com.badlogic.gdx.Input.Keys.F);
+                        case 1700 -> shot("unfogging");
+                        case 1800 -> {
+                            table.input().keyDown(com.badlogic.gdx.Input.Keys.L);
+                            table.input().keyDown(com.badlogic.gdx.Input.Keys.L);
+                        }
+                        case 1810 -> shot("allLabels");
+                        case 1815 -> table.input().keyDown(com.badlogic.gdx.Input.Keys.L);
+                        case 1825 -> {
+                            shot("keyLabels");
                             Gdx.app.exit();
                         }
                         default -> {

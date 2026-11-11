@@ -141,6 +141,7 @@ final class WarTableAssets implements Disposable {
 
     private final Map<String, Texture> shared = new HashMap<>();
     private final Map<String, Optional<GlbProp>> props = new HashMap<>();
+    private final Map<String, Optional<Texture>> details = new HashMap<>();
     /** The surfaces last loaded as texture arrays, their albedo and normal arrays; 0 for none. */
     private List<String> surfacesLoaded = List.of();
     private int albedoArray;
@@ -197,6 +198,29 @@ final class WarTableAssets implements Disposable {
             case RAISED -> new Ground(surfaces + "grassland-ground", false, 2.5f, HIGHLAND, PLOT_HILLS);
             default -> new Ground(surfaces + "grassland-ground", false, 1.6f, TEMPERATE, PLOT_OPEN);
         };
+    }
+
+    /**
+     * The cliff whose rock the bare rocks scattered over {@code ground} are textured with, as its own soil and stone
+     * would weather.
+     */
+    static String rock(Ground ground) {
+        String surface = ground.surface();
+        String cliff;
+        if (surface.contains("desert") || surface.contains("arid")) {
+            cliff = "arid-cliff";
+        } else if (surface.contains("mars")) {
+            cliff = "mars-cliff";
+        } else if (surface.contains("lunar")) {
+            cliff = "lunar-cliff";
+        } else if (surface.contains("volcano")) {
+            cliff = "volcano-cliff";
+        } else if (surface.contains("snow") || surface.contains("ice") || surface.contains("tundra")) {
+            cliff = "rock-ground";
+        } else {
+            cliff = "temperate-cliff";
+        }
+        return "surfaces/" + cliff;
     }
 
     /** Whether {@code hex} is open water. */
@@ -348,6 +372,29 @@ final class WarTableAssets implements Disposable {
         }).orElse(null);
     }
 
+    /**
+     * GPU thread: the surface {@code name}'s albedo as a repeating, mipmapped texture, to map over untextured models;
+     * null if it won't load.
+     */
+    @Nullable Texture detail(String name) {
+        return details.computeIfAbsent(name, ignored -> {
+            Path file = MODELS.resolve(SURFACES + name + "_albedo.png");
+            if (!Files.isRegularFile(file)) {
+                LOGGER.warn("War table: no surface at {}", file.toAbsolutePath());
+                return Optional.empty();
+            }
+            try {
+                Texture texture = new Texture(new FileHandle(file.toFile()), true);
+                texture.setFilter(Texture.TextureFilter.MipMapLinearLinear, Texture.TextureFilter.Linear);
+                texture.setWrap(Texture.TextureWrap.Repeat, Texture.TextureWrap.Repeat);
+                return Optional.of(texture);
+            } catch (RuntimeException e) {
+                LOGGER.warn("War table: couldn't load {}", file.toAbsolutePath(), e);
+                return Optional.empty();
+            }
+        }).orElse(null);
+    }
+
     /** GPU thread: {@code image} as a mipmapped texture, its top row at v = 0; the caller disposes it. */
     static Texture texture(BufferedImage image) {
         Pixmap pixels = new Pixmap(image.getWidth(), image.getHeight(), Pixmap.Format.RGBA8888);
@@ -371,6 +418,8 @@ final class WarTableAssets implements Disposable {
         props.clear();
         shared.values().forEach(Texture::dispose);
         shared.clear();
+        details.values().forEach(detail -> detail.ifPresent(Texture::dispose));
+        details.clear();
         deleteSurfaces();
     }
 }

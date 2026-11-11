@@ -119,7 +119,10 @@ final class WarTableView implements Disposable {
     /** How long the map takes to lie flat when plotted, or rise again, in seconds. */
     private static final float PLOT_SECONDS = 0.45f;
     /** How many hexes' radii a surface's picture covers on the ground. */
-    private static final float SURFACE_TILE = 0.7f;
+    private static final float SURFACE_TILE = 1.1f;
+    /** How many hexes' radii a rock's texture covers, and what keys a scattered model's batch by its rock too. */
+    private static final float ROCK_TILE = 0.3f;
+    private static final String DETAIL = "#";
     /** How large the small things scattered over a hex are, and a facility's main model, in hexes' radii. */
     private static final float SCATTER_SIZE = 0.26f;
     private static final float FACILITY_SIZE = 1.05f;
@@ -137,7 +140,17 @@ final class WarTableView implements Disposable {
     /** How long a scenario gone from the map takes to fade, in seconds. */
     private static final float FADE_SECONDS = 1.2f;
     /** How large a standee is, its longer side, and how thick, in hexes' radii. */
-    private static final float STANDEE_SIZE = 1.45f;
+    private static final float STANDEE_SIZE = 1.25f;
+    /**
+     * A standee's hex base, across and tall, and the rod it stands on, as shares of its size; a facility's plate,
+     * across and tall, in hexes' radii.
+     */
+    private static final float BASE_ACROSS = 0.3f;
+    private static final float BASE_TALL = 0.05f;
+    private static final float ROD_ACROSS = 0.022f;
+    private static final float ROD_TALL = 0.22f;
+    private static final float PLATE_ACROSS = 0.66f;
+    private static final float PLATE_TALL = 0.035f;
 
     /** How much of the camera's pitch a standee leans back by, for its picture to read from high up. */
     private static final float STANDEE_LEAN = 0.45f;
@@ -182,8 +195,12 @@ final class WarTableView implements Disposable {
         }
     }
 
-    /** The copies of one of the facilities' models placed over the sector, merged. */
-    private record Batch(GlbProp mesh, String model) {
+    /** A facility's plate under its models, on its side's colour. */
+    private record Plate(float x, float y, float z, float[] colour) {
+    }
+
+    /** The copies of one of the models placed over the sector, merged, and what's mapped over its bare parts. */
+    private record Batch(GlbProp mesh, @Nullable Texture detail) {
     }
 
     /** A force icon cut out and extruded: its faces, its walls, the picture and the colour its walls are painted. */
@@ -214,6 +231,10 @@ final class WarTableView implements Disposable {
     private float plot;
     private boolean plotting;
     private Mesh screen;
+    /** A hexagonal prism a unit across its corners and tall, standing on its middle: bases and plates. */
+    private Mesh prism;
+    private final List<Plate> plates = new ArrayList<>();
+    private final Matrix4 pedestal = new Matrix4();
     private final List<Batch> batches = new ArrayList<>();
     /** The models of the small things scattered over the scouted ground, merged by model. */
     private final List<Batch> scatter = new ArrayList<>();
@@ -348,6 +369,61 @@ final class WarTableView implements Disposable {
         screen = new Mesh(true, 4, 6, VertexAttribute.Position());
         screen.setVertices(new float[] { -1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0 });
         screen.setIndices(new short[] { 0, 1, 2, 2, 3, 0 });
+        prism = prism();
+    }
+
+    /** A flat-topped hexagonal prism, its corners a unit from its axis, from y 0 to 1; its top and sides. */
+    private static Mesh prism() {
+        float[] vertices = new float[(1 + 6 + 24) * 8];
+        short[] indices = new short[6 * 3 + 6 * 6];
+        int v = 0;
+        int i = 0;
+        // The top: a fan round its middle
+        v = vertex(vertices, v, 0, 1, 0, 0, 1, 0);
+        for (int k = 0; k < 6; k++) {
+            v = vertex(vertices, v, MathUtils.cosDeg(k * 60), 1, MathUtils.sinDeg(k * 60), 0, 1, 0);
+        }
+        for (int k = 0; k < 6; k++) {
+            indices[i++] = 0;
+            indices[i++] = (short) (1 + (k + 1) % 6);
+            indices[i++] = (short) (1 + k);
+        }
+        for (int k = 0; k < 6; k++) {
+            float nx = MathUtils.cosDeg(k * 60 + 30);
+            float nz = MathUtils.sinDeg(k * 60 + 30);
+            float ax = MathUtils.cosDeg(k * 60);
+            float az = MathUtils.sinDeg(k * 60);
+            float bx = MathUtils.cosDeg(k * 60 + 60);
+            float bz = MathUtils.sinDeg(k * 60 + 60);
+            short first = (short) (v / 8);
+            v = vertex(vertices, v, ax, 0, az, nx, 0, nz);
+            v = vertex(vertices, v, bx, 0, bz, nx, 0, nz);
+            v = vertex(vertices, v, bx, 1, bz, nx, 0, nz);
+            v = vertex(vertices, v, ax, 1, az, nx, 0, nz);
+            indices[i++] = first;
+            indices[i++] = (short) (first + 2);
+            indices[i++] = (short) (first + 1);
+            indices[i++] = first;
+            indices[i++] = (short) (first + 3);
+            indices[i++] = (short) (first + 2);
+        }
+        Mesh mesh = new Mesh(true, vertices.length / 8, indices.length, new VertexAttributes(
+              VertexAttribute.Position(), VertexAttribute.Normal(), VertexAttribute.TexCoords(0)));
+        mesh.setVertices(vertices);
+        mesh.setIndices(indices);
+        return mesh;
+    }
+
+    private static int vertex(float[] into, int at, float x, float y, float z, float nx, float ny, float nz) {
+        into[at] = x;
+        into[at + 1] = y;
+        into[at + 2] = z;
+        into[at + 3] = nx;
+        into[at + 4] = ny;
+        into[at + 5] = nz;
+        into[at + 6] = 0;
+        into[at + 7] = 0;
+        return at + 8;
     }
 
     /** The camera's controls, for the screen showing the view to put behind its own. */
@@ -887,7 +963,7 @@ final class WarTableView implements Disposable {
         hexUniforms(terrainShader);
         set(terrainShader, "u_albedo", 1);
         set(terrainShader, "u_normals", 2);
-        set(terrainShader, "u_tile", 1 / (radius * SURFACE_TILE));
+        set(terrainShader, "u_tile", SURFACE_TILE);
         set(terrainShader, "u_plot", flatten());
         set(terrainShader, "u_flatten", flatten());
         set(terrainShader, "u_base", TABLE_TOP);
@@ -951,7 +1027,7 @@ final class WarTableView implements Disposable {
      * and gone while the map's plotted; then the forces' standees.
      */
     private void drawProps(float front) {
-        if (batches.isEmpty() && scatter.isEmpty() && figures.isEmpty() && carried == null) {
+        if (batches.isEmpty() && plates.isEmpty() && scatter.isEmpty() && figures.isEmpty() && carried == null) {
             return;
         }
         propShader.bind();
@@ -968,9 +1044,20 @@ final class WarTableView implements Disposable {
             for (Batch batch : batches) {
                 batch.mesh().draw(propShader, glow);
             }
-            for (Batch batch : scatter) {
-                batch.mesh().draw(propShader, glow);
+            prepareFlat();
+            for (Plate plate : plates) {
+                drawBase(plate.x(), plate.y() - radius * PLATE_TALL * 0.5f, plate.z(), radius * PLATE_ACROSS,
+                      radius * PLATE_TALL * 1.5f, plate.colour(), 1);
             }
+            for (Batch batch : scatter) {
+                if (batch.detail() != null) {
+                    batch.detail().bind(4);
+                    set(propShader, "u_detailScale", 1 / (radius * ROCK_TILE));
+                }
+                batch.mesh().draw(propShader, glow);
+                set(propShader, "u_detailScale", 0f);
+            }
+            Gdx.gl.glActiveTexture(GL20.GL_TEXTURE0);
         }
         set(propShader, "u_solid", 1f);
         propShader.setUniformf("u_cutoff", 0f);
@@ -991,6 +1078,7 @@ final class WarTableView implements Disposable {
             } else if (leaving != null) {
                 y += radius * STANDEE_TRAVEL * Interpolation.pow2In.apply(Math.min(1, leaving / LIFT_SECONDS));
             }
+            drawPedestal(figure.standee(), figure.x(), y, figure.z(), figure.scale(), 1);
             upright(figure.standee(), figure.x(), y, figure.z(), figure.scale());
             drawStandee(figure.standee(), 1, 1, 1);
         }
@@ -1007,8 +1095,9 @@ final class WarTableView implements Disposable {
         }
         Hex hex = sector.hexes().get(over);
         float scale = standeeScale(carried, 1);
-        upright(carried, centreX(hex.x()), topAt(over) + radius * (0.3f + 0.03f * MathUtils.sin(time * 2.2f)),
-              centreZ(hex.x(), hex.y()), scale);
+        float y = topAt(over) + radius * (0.3f + 0.03f * MathUtils.sin(time * 2.2f));
+        drawPedestal(carried, centreX(hex.x()), y, centreZ(hex.x(), hex.y()), scale, 0.8f);
+        upright(carried, centreX(hex.x()), y, centreZ(hex.x(), hex.y()), scale);
         if (carriedForce >= 0) {
             drawStandee(carried, 0.7f, 0.78f, 0.95f);
         } else if (hex.open()) {
@@ -1023,8 +1112,53 @@ final class WarTableView implements Disposable {
      * large, its picture turned to the camera.
      */
     private void upright(Standee standee, float x, float y, float z, float scale) {
-        placed.setToTranslation(x, y, z).rotate(Vector3.Y, yaw).rotate(Vector3.X, -pitch * STANDEE_LEAN)
+        float size = scale * Math.max(standee.width(), standee.height());
+        placed.setToTranslation(x, y + size * (BASE_TALL + ROD_TALL), z).rotate(Vector3.Y, yaw).rotate(Vector3.X, -pitch * STANDEE_LEAN)
               .scale(scale, scale, scale).translate(0, standee.height() / 2, -standee.depth() / 2);
+    }
+
+    /**
+     * Draws the hex base on the player's side's colour and the rod that {@code standee}, {@code scale} large, stands on
+     * at ({@code x}, {@code y}, {@code z}), {@code bright} as bright as it is.
+     */
+    private void drawPedestal(Standee standee, float x, float y, float z, float scale, float bright) {
+        float size = scale * Math.max(standee.width(), standee.height());
+        prepareFlat();
+        drawBase(x, y - size * BASE_TALL * 0.4f, z, size * BASE_ACROSS, size * BASE_TALL * 1.4f, ALLIED, bright);
+        drawPrism(x, y + size * BASE_TALL * 0.9f, z, size * ROD_ACROSS, size * ROD_TALL, 0.12f, 0.13f, 0.14f, 0, 0, 0);
+        propShader.setUniformf("u_emissive", 0, 0, 0);
+        propShader.setUniformf("u_metallic", 0f);
+        propShader.setUniformf("u_roughness", 0.6f);
+    }
+
+    /** Sets the prop shader up for plain, untextured shapes: the bases and plates. */
+    private void prepareFlat() {
+        propShader.setUniformf("u_textured", 0f);
+        propShader.setUniformf("u_cutoff", 0f);
+        propShader.setUniformf("u_metallic", 0.4f);
+        propShader.setUniformf("u_roughness", 0.35f);
+        set(propShader, "u_detailScale", 0f);
+    }
+
+    /**
+     * Draws a base of dark metal {@code across} wide and {@code tall}, its foot's middle at the point given, edged in a
+     * thin glowing rim of {@code colour}.
+     */
+    private void drawBase(float x, float y, float z, float across, float tall, float[] colour, float bright) {
+        float glow = 0.35f * bright;
+        drawPrism(x, y, z, across, tall, colour[0] * 0.2f, colour[1] * 0.2f, colour[2] * 0.2f, colour[0] * glow,
+              colour[1] * glow, colour[2] * glow);
+        drawPrism(x, y, z, across * 0.88f, tall * 1.15f, 0.045f, 0.05f, 0.055f, 0, 0, 0);
+    }
+
+    /** Draws the prism {@code across} wide at its corners and {@code tall}, its foot's middle at the point given. */
+    private void drawPrism(float x, float y, float z, float across, float tall, float r, float g, float b,
+          float glowR, float glowG, float glowB) {
+        pedestal.setToTranslation(x, y, z).scale(across, tall, across);
+        propShader.setUniformMatrix("u_model", pedestal);
+        propShader.setUniformf("u_baseFactor", r, g, b, 1);
+        propShader.setUniformf("u_emissive", glowR, glowG, glowB);
+        prism.render(propShader, GL20.GL_TRIANGLES);
     }
 
     /** Draws {@code standee} where {@link #lay} put it, its colours multiplied by ({@code r}, {@code g}, {@code b}). */
@@ -1330,7 +1464,7 @@ final class WarTableView implements Disposable {
             if (prop != null) {
                 GlbProp batch = prop.batch(entry.getValue());
                 vertexCount += batch.vertexCount();
-                batches.add(new Batch(batch, entry.getKey()));
+                batches.add(new Batch(batch, null));
             }
         }
         LOGGER.debug("War table: {} facility models, {} batches, {} vertices", placements.values().stream()
@@ -1344,7 +1478,9 @@ final class WarTableView implements Disposable {
         float r = radius;
         float cx = centreX(site.x());
         float cz = centreZ(site.x(), site.y());
-        float floor = topOf(site.x(), site.y());
+        float ground = topOf(site.x(), site.y());
+        plates.add(new Plate(cx, ground, cz, site.allied() ? ALLIED : HOSTILE));
+        float floor = ground + r * PLATE_TALL;
         float turn = HoloTableView.hash(site.x() * 2.1, site.y() * 1.1) * 360;
         GlbProp main = assets.prop(kit.main());
         if (main != null) {
@@ -1400,23 +1536,26 @@ final class WarTableView implements Disposable {
                 float z = cz + MathUtils.sinDeg(angle) * distance;
                 String model = look.scatter().get(
                       (int) (HoloTableView.hash(seed * 3.1, 5.3) * look.scatter().size()) % look.scatter().size());
+                boolean rock = model.contains("/rocks/");
                 GlbProp prop = assets.prop(model);
                 if (prop == null) {
                     continue;
                 }
-                float tall = r * (model.contains("/rocks/") ? 0.14f : 0.22f)
+                float tall = r * (rock ? 0.14f : 0.22f)
                       * (0.75f + 0.5f * HoloTableView.hash(seed * 0.7, 8.1));
                 float scale = Math.min(r * SCATTER_SIZE / Math.max(width(prop), 1e-4f), tall / height(prop));
-                placements.computeIfAbsent(model, ignored -> new ArrayList<>())
+                placements.computeIfAbsent(rock ? model + DETAIL + WarTableAssets.rock(look) : model,
+                            ignored -> new ArrayList<>())
                       .add(place(prop, x, ground.height(x, z) - r * 0.01f, z, HoloTableView.hash(seed, 9.9) * 360,
                             scale));
             }
         }
         int instances = 0;
         for (Map.Entry<String, List<Matrix4>> entry : placements.entrySet()) {
-            GlbProp prop = assets.prop(entry.getKey());
+            String[] keyed = entry.getKey().split(DETAIL, 2);
+            GlbProp prop = assets.prop(keyed[0]);
             if (prop != null) {
-                scatter.add(new Batch(prop.batch(entry.getValue()), entry.getKey()));
+                scatter.add(new Batch(prop.batch(entry.getValue()), keyed.length > 1 ? assets.detail(keyed[1]) : null));
                 instances += entry.getValue().size();
             }
         }
@@ -1635,6 +1774,7 @@ final class WarTableView implements Disposable {
         }
         batches.forEach(batch -> batch.mesh().dispose());
         batches.clear();
+        plates.clear();
         scatter.forEach(batch -> batch.mesh().dispose());
         scatter.clear();
         groundMeshes.forEach(Mesh::dispose);
@@ -1653,7 +1793,7 @@ final class WarTableView implements Disposable {
             cells = 0;
         }
         for (Disposable resource : new Disposable[] { terrainShader, fieldShader, overlayShader, holoShader, propShader,
-              screen, effects, assets }) {
+              screen, prism, effects, assets }) {
             if (resource != null) {
                 resource.dispose();
             }
