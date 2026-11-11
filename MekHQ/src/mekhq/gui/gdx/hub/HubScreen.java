@@ -91,6 +91,7 @@ import mekhq.gui.model.view.MapLens;
 import mekhq.gui.model.view.StarMap;
 import mekhq.gui.model.view.SystemDossier;
 import mekhq.gui.model.view.TopBar;
+import mekhq.gui.model.view.Transmission;
 
 /**
  * The campaign's command post: the {@link HoloTableView holotable} with the star map around the force, and over it the
@@ -260,6 +261,9 @@ final class HubScreen extends ApplicationAdapter {
     private UiTheme theme;
     private UiKit ui;
     private Stage stage;
+    /** The campaign's immersive dialogs, over everything else. */
+    private final TransmissionView transmissions = new TransmissionView();
+    private final FrameMeter meter = new FrameMeter();
     private Label date;
     private Label where;
     private Label funds;
@@ -384,6 +388,15 @@ final class HubScreen extends ApplicationAdapter {
         }
     }
 
+    /**
+     * Any thread: shows an immersive dialog as a transmission over the hub, once those before it have gone.
+     *
+     * @return the handle the dialog updates and withdraws it by
+     */
+    Transmission.Handle transmit(Transmission transmission, Transmission.Channel channel) {
+        return transmissions.offer(transmission, channel);
+    }
+
     /** Any thread: whether a modal Swing dialog holds the input. */
     void blocked(boolean blocked) {
         this.blocked = blocked;
@@ -414,13 +427,15 @@ final class HubScreen extends ApplicationAdapter {
         mapMenuList = new UiMenuList(ui, UiTheme.TOKEN_MENU_ROW);
         stage.addActor(mapMenu);
         stage.addActor(paletteLayer());
+        transmissions.create(theme, ui, scale);
+        meter.create(theme, scale);
         InputAdapter keys = new InputAdapter() {
             @Override
             public boolean keyDown(int keycode) {
                 return HubScreen.this.keyDown(keycode);
             }
         };
-        Gdx.input.setInputProcessor(new InputMultiplexer(blocker(), stage, keys, view()));
+        Gdx.input.setInputProcessor(new InputMultiplexer(blocker(), meter.input(), transmissions.input(), stage, keys, view()));
         resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
     }
 
@@ -2058,10 +2073,13 @@ final class HubScreen extends ApplicationAdapter {
             ((ScreenViewport) stage.getViewport()).setUnitsPerPixel(1 / scale);
             stage.getViewport().update(width, height, true);
         }
+        transmissions.resize(width, height);
+        meter.resize(width, height);
     }
 
     @Override
     public void render() {
+        meter.begin();
         float delta = Math.min(Gdx.graphics.getDeltaTime(), 0.1f);
         if (pending != null) {
             apply(pending);
@@ -2097,10 +2115,14 @@ final class HubScreen extends ApplicationAdapter {
         placeChrome();
         stage.act(delta);
         stage.draw();
+        transmissions.render(delta);
+        meter.end(Gdx.graphics.getDeltaTime());
     }
 
     @Override
     public void dispose() {
+        transmissions.dispose();
+        meter.dispose();
         hub.disposed();
         holo.dispose();
         map.dispose();

@@ -203,6 +203,34 @@ Each phase ships something playable and keeps everything else reachable through 
        - Hover cards stay off the chrome (header, legend, panels).
      - Still to come: bloom.
   4. **Pins.** Contracts and markets on their systems.
+- Alongside the map, **transmissions (done).** The immersive dialogs (`ImmersiveDialogCore` and its
+  subclasses) that the map's actions and other hub flows raise come in over the hub as
+  transmissions instead of Swing windows. The hub dims and blurs behind them. The channel powers
+  on like an old screen (a dot, a line, then the panel unfolds, and then the header decrypts) while the
+  signal bars climb, the speakers' feeds tune in through the dialog's signal quality (snow, a
+  rolling picture, colour split), the message types in with a voice trace and a pulse on the
+  speaker's feed, and the responses light up. A feed stays live (a drifting interference bar, a
+  colour fringe that grows with a rougher signal). The panel powers off to a line and a dot, and a
+  queued transmission cuts straight in instead. A click or Enter skips the opening, which keeps
+  the text readable within about 0.7s, and Reduce Motion drops the effects. Number keys take a
+  response, Enter the focused one, Tab and the arrows move the focus, and Esc closes without a
+  response, as the window's close box does. Extra controls (number spinners, combo boxes,
+  checkboxes and their labels) show as the kit's and set the dialog's own, so totals the dialog
+  works out update live. Callers don't change: a modal dialog still blocks its caller, which
+  waits in a `SecondaryLoop`, so the Swing thread keeps dispatching and nothing deadlocks.
+  - `Transmission` (in `mekhq.gui.model.view`) is the snapshot (speakers, message, responses,
+    note, controls, signal) and the thread contract: a registered `Presenter` gets it on the
+    Swing thread and returns a `Handle`; the answer comes back through the dialog's `Channel`.
+  - `TransmissionRelay` (in the immersive dialogs package) offers each dialog to the presenter
+    as it is shown, applies answers and control changes to the real dialog, and falls back to
+    the window when nothing presents it or the dialog has something a transmission can't show
+    (a picture among its controls, a text field, a custom speaker panel such as Ronin's).
+  - `CampaignHub` presents only while the hub is in front (not under the campaign window or a
+    Swing modal) and, as the hub ends, sends any unanswered transmission back to its window.
+    `TransmissionView` draws them in `HubScreen`, over everything, and takes all input while
+    one shows.
+  - MegaMek's kit gained `UiRichText` (the dialogs' HTML, typing in), `UiSignalFeed`,
+    `UiBackdropBlur` and `UiResponseButton`.
 
 **Phase 2: the game loop**
 - The day loop is MekHQ's main loop, so it should feel like "End Turn".

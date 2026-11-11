@@ -34,6 +34,7 @@ package mekhq.gui.dialog;
 
 import static megamek.utilities.ImageUtilities.scaleImageIcon;
 import static mekhq.utilities.MHQInternationalization.getFormattedTextAt;
+import static mekhq.utilities.MHQInternationalization.getText;
 import static mekhq.utilities.MHQInternationalization.getTextAt;
 
 import java.awt.Component;
@@ -49,6 +50,7 @@ import mekhq.campaign.Campaign;
 import mekhq.campaign.personnel.Person;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogSimple;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogWidth;
+import mekhq.gui.model.view.Transmission;
 
 /**
  * NewsDialog is a dialog window for displaying news items within the context of a campaign. It includes information
@@ -129,6 +131,17 @@ public class NewsDialog extends ImmersiveDialogSimple {
         speakerBox.add(leftDescription);
 
         return speakerBox;
+    }
+
+    @Override
+    protected @Nullable Transmission.Speaker transmissionSpeaker(Person speaker, Campaign campaign, boolean left) {
+        if (!left) {
+            return super.transmissionSpeaker(speaker, campaign, false);
+        }
+        NewsNetwork network = getNetwork(campaign);
+        ImageIcon networkIcon = scaleImageIcon(new ImageIcon(network.imageAddress), IMAGE_WIDTH, true);
+        return new Transmission.Speaker(getText("ImmersiveDialog.source.fieldContact"),
+              getNetworkDescription(campaign, network).toString(), transmissionPicture(networkIcon), false);
     }
 
     /**
