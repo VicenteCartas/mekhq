@@ -37,6 +37,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
+import java.util.Random;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
@@ -46,11 +47,13 @@ import com.badlogic.gdx.graphics.Pixmap;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.math.Interpolation;
+import com.badlogic.gdx.scenes.scene2d.Action;
 import com.badlogic.gdx.scenes.scene2d.Actor;
 import com.badlogic.gdx.scenes.scene2d.InputEvent;
 import com.badlogic.gdx.scenes.scene2d.InputListener;
 import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.scenes.scene2d.actions.Actions;
+import com.badlogic.gdx.scenes.scene2d.actions.TemporalAction;
 import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.ScrollPane;
@@ -70,17 +73,20 @@ import megamek.client.ui.gdx.UiRichText;
 import megamek.client.ui.gdx.UiSignalFeed;
 import megamek.client.ui.gdx.UiStepper;
 import megamek.client.ui.gdx.UiTheme;
+import megamek.client.ui.gdx.UiVoiceTrace;
 import mekhq.gui.model.view.Transmission;
 
 /**
  * Immersive dialogs as the command post shows them: a {@link Transmission} coming in over the hub, which dims and blurs
- * behind it. The channel opens as a line of light that widens into the panel, the speakers' feeds boot up, the message
- * types in (a click or Enter shows it all) and the responses light up one after another; the chosen one sweeps full of
- * light as the answer goes out, and the channel closes. Number keys take a response, Enter the focused one (the first
- * to begin with), Tab and the arrows move the focus, and Esc closes the channel without a response, as closing the
- * dialog's window does. The dialog's extra controls show as the kit's, set the dialog's own as they change, and show
- * what the dialog then says. Transmissions offered while one shows wait their turn. Without motion everything shows at
- * once. GPU thread, unless a method says otherwise.
+ * behind it. The channel powers on like an old tube screen (a dot of light stretches into a line that unfolds into the
+ * panel) while the signal bars climb and, once it is open, the header decrypts, the speakers' feeds tune in from snow, the message types
+ * in as the speaker's voice trace talks, and the responses light up one after another; a click or Enter shows it all
+ * at once. The chosen response sweeps full of light as the answer goes out, and the channel powers off into a dot.
+ * Number keys take a response, Enter the focused one (the first to begin with), Tab and the arrows move the focus, and
+ * Esc closes the channel without a response, as closing the dialog's window does. The dialog's extra controls show as
+ * the kit's, set the dialog's own as they change, and show what the dialog then says. Transmissions offered while one
+ * shows wait their turn, and the channel cuts straight to the next instead of powering off and on. Without motion
+ * everything shows at once. GPU thread, unless a method says otherwise.
  */
 final class TransmissionView implements Disposable {
     /** A speaker's column and the widest and tallest their picture shows, in stage units. */
@@ -93,21 +99,32 @@ final class TransmissionView implements Disposable {
     private static final float MESSAGE_SHARE = .4f;
     private static final float NOTE_SHARE = .18f;
     private static final float IMAGE_SHARE = .25f;
-    /** Seconds the backdrop takes to dim, and the channel waits, takes to open and to close. */
+    /** Seconds the backdrop takes to dim, and the channel waits before it powers on. */
     private static final float DIM_SECONDS = .35f;
     private static final float OPEN_DELAY = .15f;
-    private static final float OPEN_SECONDS = .28f;
-    private static final float CLOSE_SECONDS = .18f;
     /** When the message starts typing, its rate in characters a second and the longest it takes, in seconds. */
-    private static final float TYPE_DELAY = .45f;
+    private static final float TYPE_DELAY = .55f;
     private static final float TYPE_RATE = 90;
     private static final float TYPE_LONGEST = 3.5f;
     /** A rate so slow the message waits blank, from nothing, until it starts typing. */
     private static final float WAITING = 1e-6f;
     /** When the first response lights up, how long after it each next one does and how long each takes. */
-    private static final float RESPONSE_DELAY = .5f;
+    private static final float RESPONSE_DELAY = .6f;
     private static final float RESPONSE_STAGGER = .06f;
     private static final float RESPONSE_SECONDS = .18f;
+    /** When the message starts typing and the first response lights up after a cut from the transmission before. */
+    private static final float CUT_TYPE_DELAY = .15f;
+    private static final float CUT_RESPONSE_DELAY = .25f;
+    /**
+     * Seconds the header takes to decrypt once the panel is open, how many times a second its cipher glyphs change, the
+     * glyphs it shows until then, and how long after one bar the next lights.
+     */
+    private static final float DECRYPT_SECONDS = .8f;
+    private static final float GLYPH_RATE = 15;
+    private static final String CIPHER = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789";
+    private static final float BAR_STAGGER = .08f;
+    /** How high the speaker's voice trace is, in stage units. */
+    private static final float VOICE_HEIGHT = 16;
     private static final Color DIM = new Color(.01f, .03f, .04f, .6f);
     private static final Color FEED_TINT = Color.valueOf("56D0C5");
     private static final Color FEED_LINE = Color.valueOf("EBB14C");
@@ -145,6 +162,18 @@ final class TransmissionView implements Disposable {
     private int focus;
     /** Whether the view is setting its controls to the dialog's, so their changes don't go back to it. */
     private boolean syncing;
+    private TransmissionTube tube;
+    /** Whether the transmission closing hands straight over to the next, which the channel cuts to. */
+    private boolean chained;
+    /** The header's label and its text, the signal bars lit and the one that drops out, if any. */
+    private @Nullable Label headerLabel;
+    private String headerText = "";
+    private final List<Image> litBars = new ArrayList<>();
+    private @Nullable Image droppingBar;
+    /** The speakers' feeds, and the voice trace of the one who speaks. */
+    private final List<UiSignalFeed> feeds = new ArrayList<>();
+    private @Nullable UiVoiceTrace voice;
+    private final Random random = new Random();
 
     /** Sets the view up on the hub's look, at {@code scale} pixels a stage unit. */
     void create(UiTheme theme, UiKit ui, float scale) {
@@ -156,6 +185,8 @@ final class TransmissionView implements Disposable {
         stage = new Stage(new ScreenViewport());
         root.setFillParent(true);
         stage.addActor(root);
+        tube = new TransmissionTube(white, UiTheme.MINT);
+        stage.addActor(tube);
         blur = new UiBackdropBlur();
     }
 
@@ -202,6 +233,7 @@ final class TransmissionView implements Disposable {
             closing = false;
             focus = 0;
             build(motion);
+            chained = false;
         }
         float target = (current != null && !closing) || !queue.isEmpty() ? 1 : 0;
         dim = motion ? approach(dim, target, delta / DIM_SECONDS) : target;
@@ -214,7 +246,36 @@ final class TransmissionView implements Disposable {
             panel.setOrigin(Align.center);
         }
         stage.act(delta);
+        if (voice != null) {
+            voice.speaking(!closing && message != null && message.revealing() && message.progress() > 0);
+        }
         stage.draw();
+    }
+
+    /** Whether the channel is still opening: powering on, or the message waiting or typing. */
+    private boolean opening() {
+        return tube.opening() || message != null && (message.revealing() || message.hasActions());
+    }
+
+    /** Shows the opening transmission as it ends up at once: the panel, the feeds, the header, the message. */
+    private void skipOpening() {
+        tube.finish();
+        for (UiSignalFeed feed : feeds) {
+            feed.settle();
+        }
+        if (headerLabel != null) {
+            headerLabel.clearActions();
+            headerLabel.setText(headerText);
+        }
+        lightBars(-1);
+        if (message != null) {
+            message.clearActions();
+            message.finish();
+        }
+        for (UiResponseButton button : buttons) {
+            button.clearActions();
+            button.getColor().a = 1;
+        }
     }
 
     /** The view's input, ahead of the hub's: while it is active it takes everything. */
@@ -261,6 +322,9 @@ final class TransmissionView implements Disposable {
                     return false;
                 }
                 if (open()) {
+                    if (opening()) {
+                        skipOpening();
+                    }
                     stage.touchDown(screenX, screenY, pointer, button);
                 }
                 return true;
@@ -318,8 +382,8 @@ final class TransmissionView implements Disposable {
         switch (keycode) {
             case Input.Keys.ESCAPE -> dismiss();
             case Input.Keys.ENTER, Input.Keys.NUMPAD_ENTER -> {
-                if (message != null && message.revealing()) {
-                    message.finish();
+                if (opening()) {
+                    skipOpening();
                 } else {
                     choose(focus);
                 }
@@ -372,6 +436,7 @@ final class TransmissionView implements Disposable {
         }
         closing = true;
         if (message != null) {
+            message.clearActions();
             message.finish();
         }
         focus(index);
@@ -392,16 +457,25 @@ final class TransmissionView implements Disposable {
         close(0);
     }
 
+    /**
+     * Closes the channel after {@code delay} seconds: powering it off, or cutting to the next transmission if one waits
+     * by then.
+     */
     private void close(float delay) {
         Table shown = panel;
         if (!motion || shown == null) {
             closed();
             return;
         }
-        shown.addAction(Actions.sequence(Actions.delay(delay),
-              Actions.parallel(Actions.scaleTo(1, .02f, CLOSE_SECONDS, Interpolation.pow2In),
-                    Actions.fadeOut(CLOSE_SECONDS)),
-              Actions.run(this::closed)));
+        tube.finish();
+        shown.addAction(Actions.delay(delay, Actions.run(() -> {
+            if (queue.isEmpty()) {
+                tube.powerOff(shown, 0, this::closed);
+            } else {
+                chained = true;
+                closed();
+            }
+        })));
     }
 
     private void closed() {
@@ -487,6 +561,7 @@ final class TransmissionView implements Disposable {
     private void build(boolean animate) {
         Entry entry = Objects.requireNonNull(current);
         Transmission transmission = entry.transmission;
+        tube.stop();
         clear();
         float stageHeight = stage.getHeight();
         float gap = space("lg");
@@ -501,11 +576,11 @@ final class TransmissionView implements Disposable {
         shown.add(ui.solid(faded(UiTheme.MINT, .35f))).height(1).growX().padTop(space("sm")).row();
         Table body = new Table();
         if (transmission.left() != null) {
-            body.add(speaker(transmission.left(), transmission.signal())).top().width(SPEAKER_WIDTH).padRight(gap);
+            body.add(speaker(transmission.left(), transmission.signal(), true)).top().width(SPEAKER_WIDTH).padRight(gap);
         }
         body.add(column(transmission, stageHeight)).top().width(columnWidth);
         if (transmission.right() != null) {
-            body.add(speaker(transmission.right(), transmission.signal())).top().width(SPEAKER_WIDTH).padLeft(gap);
+            body.add(speaker(transmission.right(), transmission.signal(), false)).top().width(SPEAKER_WIDTH).padLeft(gap);
         }
         shown.add(body).padTop(space("md")).row();
         if (transmission.note() != null && !transmission.note().isBlank()) {
@@ -516,21 +591,73 @@ final class TransmissionView implements Disposable {
         focus(Math.min(focus, Math.max(0, buttons.size() - 1)));
 
         if (!animate) {
+            lightBars(-1);
             return;
         }
-        shown.setScale(1, .02f);
-        shown.getColor().a = 0;
-        shown.addAction(Actions.sequence(Actions.delay(OPEN_DELAY),
-              Actions.parallel(Actions.scaleTo(1, 1, OPEN_SECONDS, Interpolation.pow3Out),
-                    Actions.fadeIn(OPEN_SECONDS * .6f))));
+        boolean cut = chained;
+        float unfolded = 0;
+        if (cut) {
+            tube.cut(shown);
+        } else {
+            tube.powerOn(shown, OPEN_DELAY);
+            unfolded = OPEN_DELAY + TransmissionTube.DOT + TransmissionTube.LINE;
+        }
+        Label title = Objects.requireNonNull(headerLabel);
+        long seed = random.nextLong();
+        title.setText(decrypted(headerText, 0, new Random(seed)));
+        float open = cut ? TransmissionTube.CUT : OPEN_DELAY + TransmissionTube.openSeconds();
+        title.addAction(Actions.delay(open, new TemporalAction(DECRYPT_SECONDS) {
+            @Override
+            protected void update(float percent) {
+                // the same glyphs for a tick, so they read as letters rather than noise
+                long tick = (long) (getTime() * GLYPH_RATE);
+                title.setText(decrypted(headerText, percent, new Random(seed + tick)));
+            }
+        }));
+        lightBars(unfolded);
         UiRichText typed = Objects.requireNonNull(message);
         float rate = Math.max(TYPE_RATE, typed.document().length() / TYPE_LONGEST);
         typed.typeIn(WAITING);
-        typed.addAction(Actions.delay(TYPE_DELAY, Actions.run(() -> typed.typeIn(rate))));
+        typed.addAction(Actions.delay(cut ? CUT_TYPE_DELAY : TYPE_DELAY, Actions.run(() -> typed.typeIn(rate))));
+        float responses = cut ? CUT_RESPONSE_DELAY : RESPONSE_DELAY;
         for (int i = 0; i < buttons.size(); i++) {
             UiResponseButton button = buttons.get(i);
             button.getColor().a = 0;
-            button.addAction(Actions.delay(RESPONSE_DELAY + i * RESPONSE_STAGGER, Actions.fadeIn(RESPONSE_SECONDS)));
+            button.addAction(Actions.delay(responses + i * RESPONSE_STAGGER, Actions.fadeIn(RESPONSE_SECONDS)));
+        }
+    }
+
+    /**
+     * {@code text} decrypting: the first {@code percent} of its characters show, the rest as random cipher glyphs,
+     * spaces kept.
+     */
+    static String decrypted(String text, float percent, Random random) {
+        int shown = Math.round(text.length() * Math.max(0, Math.min(1, percent)));
+        StringBuilder decrypting = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char character = text.charAt(i);
+            decrypting.append(i < shown || Character.isWhitespace(character) ? character
+                  : CIPHER.charAt(random.nextInt(CIPHER.length())));
+        }
+        return decrypting.toString();
+    }
+
+    /**
+     * Lights the signal bars: climbing one after another from {@code start} seconds, or at once when it is negative;
+     * the one that drops out on the roughest signal starts dropping out once lit.
+     */
+    private void lightBars(float start) {
+        for (int i = 0; i < litBars.size(); i++) {
+            Image bar = litBars.get(i);
+            bar.clearActions();
+            Action lit = start < 0 || !motion ? Actions.alpha(1)
+                  : Actions.sequence(Actions.alpha(.15f), Actions.delay(start + (i + 1) * BAR_STAGGER),
+                  Actions.alpha(1, .06f));
+            if (motion && bar == droppingBar) {
+                lit = Actions.sequence(lit, Actions.forever(Actions.sequence(Actions.alpha(.15f, .08f),
+                      Actions.delay(.4f), Actions.alpha(1, .08f), Actions.delay(1.1f))));
+            }
+            bar.addAction(lit);
         }
     }
 
@@ -545,7 +672,10 @@ final class TransmissionView implements Disposable {
                   Actions.alpha(1, .6f, Interpolation.sine))));
         }
         header.add(live).size(6).padRight(space("sm"));
-        header.add(ui.label(transmission.texts().header(), UiTheme.CAPS_FONT, 13, UiTheme.MINT)).left();
+        headerText = transmission.texts().header();
+        Label title = ui.label(headerText, UiTheme.CAPS_FONT, 13, UiTheme.MINT);
+        headerLabel = title;
+        header.add(title).left();
         header.add(bars(level, tone)).bottom().padLeft(space("md")).padBottom(3);
         header.add(ui.label(transmission.texts().status(), UiTheme.CAPS_FONT, 11, tone)).padLeft(space("sm"));
         header.add().growX();
@@ -560,16 +690,21 @@ final class TransmissionView implements Disposable {
         for (int i = 0; i < 3; i++) {
             Image bar = ui.solid(i < lit ? tone : faded(UiTheme.MUTED, .3f));
             bars.add(bar).size(3, 5 + i * 3).bottom().padLeft(i == 0 ? 0 : 2);
-            if (motion && level == 2 && i == lit - 1) {
-                bar.addAction(Actions.forever(Actions.sequence(Actions.alpha(.15f, .08f), Actions.delay(.4f),
-                      Actions.alpha(1, .08f), Actions.delay(1.1f))));
+            if (i < lit) {
+                litBars.add(bar);
+                if (level == 2 && i == lit - 1) {
+                    droppingBar = bar;
+                }
             }
         }
         return bars;
     }
 
-    /** A speaker's column: the channel they speak on, their picture and who they are. */
-    private Table speaker(Transmission.Speaker speaker, Transmission.Signal signal) {
+    /**
+     * A speaker's column: the channel they speak on, their picture and who they are; the one who {@code speaks} has a
+     * voice trace under their feed.
+     */
+    private Table speaker(Transmission.Speaker speaker, Transmission.Signal signal, boolean speaks) {
         Table column = new Table();
         column.top();
         column.add(ui.label(speaker.source(), UiTheme.CAPS_FONT, 11, UiTheme.MINT)).left().row();
@@ -579,15 +714,21 @@ final class TransmissionView implements Disposable {
             float width = height * picture.width() / picture.height();
             TextureRegion region = region(picture);
             Actor shown;
+            UiSignalFeed feed = null;
             if (speaker.feed()) {
-                UiSignalFeed feed = new UiSignalFeed(region, white, width, height, FEED_TINT, FEED_LINE,
-                      signal(signal), motion);
+                feed = new UiSignalFeed(region, white, width, height, FEED_TINT, FEED_LINE, signal(signal), motion);
                 owned.add(feed);
+                feeds.add(feed);
                 shown = feed;
             } else {
                 shown = new Image(region);
             }
             column.add(shown).size(width, height).padTop(space("xs")).row();
+            if (feed != null && speaks) {
+                UiVoiceTrace trace = new UiVoiceTrace(white, width, VOICE_HEIGHT, FEED_TINT, motion).drive(feed);
+                voice = trace;
+                column.add(trace).size(width, VOICE_HEIGHT).padTop(space("xs")).row();
+            }
         }
         UiRichText about = rich(speaker.description(), small()).wrapWidth(SPEAKER_WIDTH);
         column.add(about).width(SPEAKER_WIDTH).padTop(space("sm"));
@@ -841,6 +982,11 @@ final class TransmissionView implements Disposable {
         panel = null;
         message = null;
         detail = null;
+        headerLabel = null;
+        litBars.clear();
+        droppingBar = null;
+        feeds.clear();
+        voice = null;
         for (Disposable resource : owned) {
             resource.dispose();
         }

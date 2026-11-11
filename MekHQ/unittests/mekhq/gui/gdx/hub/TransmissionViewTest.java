@@ -33,6 +33,9 @@
 package mekhq.gui.gdx.hub;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.Random;
 
 import megamek.client.ui.gdx.UiSignalFeed;
 import mekhq.gui.model.view.Transmission;
@@ -60,5 +63,20 @@ class TransmissionViewTest {
         assertEquals(1, feed.glitchStepsMin());
         assertEquals(1, feed.glitchStepsMax());
         assertEquals(6, feed.glitchHeightMax());
+    }
+
+    @Test
+    void headerDecryptsFromCipherToItsText() {
+        String header = "INCOMING TRANSMISSION";
+        Random random = new Random(7);
+
+        String start = TransmissionView.decrypted(header, 0, random);
+        String half = TransmissionView.decrypted(header, .5f, random);
+
+        assertEquals(header.length(), start.length());
+        assertEquals(' ', start.charAt(8));
+        assertTrue(start.replace(" ", "").chars().allMatch(c -> "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789".indexOf(c) >= 0));
+        assertEquals(header.substring(0, 11), half.substring(0, 11));
+        assertEquals(header, TransmissionView.decrypted(header, 1, random));
     }
 }

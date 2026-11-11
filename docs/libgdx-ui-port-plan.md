@@ -205,9 +205,14 @@ Each phase ships something playable and keeps everything else reachable through 
   4. **Pins.** Contracts and markets on their systems.
 - Alongside the map, **transmissions (done).** The immersive dialogs (`ImmersiveDialogCore` and its
   subclasses) that the map's actions and other hub flows raise come in over the hub as
-  transmissions instead of Swing windows. The hub dims and blurs behind them. The channel opens as
-  a line of light, the speakers' feeds boot up through the dialog's signal quality, the message
-  types in (a click or Enter shows it all) and the responses light up. Number keys take a
+  transmissions instead of Swing windows. The hub dims and blurs behind them. The channel powers
+  on like an old screen (a dot, a line, then the panel unfolds, and then the header decrypts) while the
+  signal bars climb, the speakers' feeds tune in through the dialog's signal quality (snow, a
+  rolling picture, colour split), the message types in with a voice trace and a pulse on the
+  speaker's feed, and the responses light up. A feed stays live (a drifting interference bar, a
+  colour fringe that grows with a rougher signal). The panel powers off to a line and a dot, and a
+  queued transmission cuts straight in instead. A click or Enter skips the opening, which keeps
+  the text readable within about 0.7s, and Reduce Motion drops the effects. Number keys take a
   response, Enter the focused one, Tab and the arrows move the focus, and Esc closes without a
   response, as the window's close box does. Extra controls (number spinners, combo boxes,
   checkboxes and their labels) show as the kit's and set the dialog's own, so totals the dialog
