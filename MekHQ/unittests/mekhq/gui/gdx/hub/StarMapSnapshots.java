@@ -41,6 +41,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
@@ -272,6 +273,10 @@ public final class StarMapSnapshots {
         }
 
         @Override
+        public void warTableShown(boolean shown) {
+        }
+
+        @Override
         public void system(String id) {
         }
 
@@ -285,6 +290,18 @@ public final class StarMapSnapshots {
 
         @Override
         public void cancelTrip() {
+        }
+
+        @Override
+        public void warTable(String systemId) {
+        }
+
+        @Override
+        public void deploy(UUID contract, int sector, int x, int y, int force) {
+        }
+
+        @Override
+        public void recall(UUID contract, int sector, int force) {
         }
 
         @Override

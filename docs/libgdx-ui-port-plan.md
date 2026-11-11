@@ -251,7 +251,8 @@ Each phase ships something playable and keeps everything else reachable through 
 - **Contract market**: job boards with cards. Negotiation becomes an immersive conversation built
   on `ImmersiveDialogCore` ideas.
 - **Briefing**: the mission and scenario room.
-- **StratCon**: a 3D hex operational map on the board renderer, replacing `StratConPanel`.
+- **StratCon**: the **war table**, a command display over the sector's real terrain, replacing
+  `StratConPanel`. See [The war table](#the-war-table).
 - **Scenarios**: launching a battle and resolving it becomes an after-action screen
   (`ResolveScenarioWizardDialog`).
 
@@ -267,6 +268,70 @@ Each phase ships something playable and keeps everything else reachable through 
 - GM tools and editors (the planetary system, contract and scenario editors) can stay Swing the
   longest; they're tools, not gameplay.
 - Finally delete `CampaignGUI` and the Swing tabs.
+
+## The war table
+
+StratCon is the part of MekHQ that already plays like a board game, so it gets the game's own
+board: each sector is drawn by MegaMek's 3D board renderer, framed as a full-screen command display
+with the operation's tracking laid over it. The look aims at serious military sci-fi: no hologram
+flicker, no pieces dropping in, no camera swoop.
+
+- **Where it lives.** The Command area's StratCon entry opens the war table instead of the Swing
+  tab. On the star map, a contract's pin gets "Go to operation", which dives from the pin into the
+  table.
+- **The map.** One sector at a time. `WarTableBoard` turns the sector into a MegaMek `Board`, one
+  board hex per StratCon hex: elevation from the terrain category (water low, hills and mountains
+  high), woods, jungle, fields, swamp, rough, sand, snow and ice from the biome, buildings for
+  cities, pavement for facilities, and roads where StratCon has them. MegaMek's
+  `GpuEmbeddedBoard` renders it off screen with the board's own blended terrain, slopes, water,
+  roads and shadows, and a full-screen composite pass lays the map over it. It reconstructs each
+  pixel's hex from the depth buffer, greys and mists unscouted hexes, draws the grid, the cyan
+  frontier, the hover and selection rims, and frames the display with a vignette, corner brackets
+  and a hairline border. The sector opens with a scan sweeping across it rather than an animation of
+  the pieces.
+- **On the map.** Facilities are the board's scenery and building models (a barracks, a hangar,
+  a radar) from mm-data (`WarTableAssets`), sized by the facility's tier. Scenarios are beacons
+  with a ring that empties as the deadline nears and a low marker of light.
+- **Forces are counters.** Each force lies on the map as its TO&E icon seen from above and extruded
+  down into a thick counter, as the MegaMek board shows its units. MegaMek's `GpuStandee` builds
+  the geometry.
+- **Labels.** Names sit on near-opaque plates with an edge bar in the side's or status's colour, so
+  they read over any terrain; a scenario's deadline follows its name in the status's colour.
+- **Supply and intel.** Supply runs as light flowing along the network's links, cut roads break
+  it, and points of interest show as markers. A hover card says what a hex holds, as
+  `StratConPanel`'s info pane does.
+- **Into the battle.** Clicking a scenario dives into the hex, and the real MegaMek board opens
+  under it on the game's own 3D renderer (`GpuBoardInspection`, a public face for the lobby's
+  board inspection), with the briefing beside it.
+- **Deploy and recall by hand.** The sector's reserve sits in a drawer at the table's left edge.
+  Shut, it's a tab with the reserve's count. Open, it has a tab per kind of force (ground,
+  aerospace, infantry, from `getPrimaryUnitType`), the forces under their parent TO&E force, and a
+  search by name. A real campaign's reserve can run to dozens of forces, so a strip of tiles along
+  the bottom would bury the table. The drawer slides away while a force is dragged out of it and
+  opens while one is carried off the table. Dragging a force from it lights the hexes it may go onto (`canManuallyDeployAnyForce`), and its standee
+  floats over the hex under the pointer, tinted red where it can't go. Dropping it asks for a
+  confirmation in a GL panel (it replaces the Swing deploy nag), and then the counter is set down
+  on the hex. Dragging a counter off the map onto the drawer, or using the Recall button on its hex
+  card, asks to recall it for its SP cost, and it's lifted off the map. A force that can't leave says why (`canRecallFormation`). Orders run on the
+  campaign's thread through `StratConDeploymentService.deployPrimaryForces` and
+  `StratConRulesManager.recallFormation`, and the table refreshes in place with the result.
+- **A living table.** While the table is open it watches the campaign (new days, scenario and
+  mission events) and refreshes in place. It also remembers each sector as it last showed it, so
+  opening a sector again replays what changed since. Newly scouted hexes burn their fog off in a
+  ragged front with a cyan ember edge, spreading out from the middle of the scouting. A new
+  scenario's beacon lights its hex, and a "New contact" banner calls it out. The camera turns
+  towards it if it's off screen. Finished scenarios fade away, and a facility that changes hands
+  flashes its new owner's colour. The composite reads each hex's state and neighbours from a small
+  per-hex texture, for the frontier along the edge of the scouted ground.
+- **Still in Swing.** Reinforcements, auxiliary and utility units, scenario assignment and
+  resolution still go through the Swing deployment wizard and `StratConPanel`.
+- **Snapshots.** The view never touches the campaign. `WarTableSnapshot` copies a track on the
+  campaign's thread, and the table draws that copy, as the star map does.
+- **The demo.** `gradlew :MekHQ:warTableDemo` opens the table over a sector generated from a fixed
+  seed, without a campaign, so the look can be judged and captured the same way every time. Its
+  deploys and recalls change the demo's own snapshot, N passes a day (scouting, a new scenario,
+  a facility changing hands), and `-Pcapture` scripts one of each, counting frames only once the
+  board's ground is drawn.
 
 ## Swapping UI patterns for game patterns
 

@@ -601,6 +601,17 @@ tasks.register('starMapSnapshots', JavaExec) {
     maxHeapSize = '4g'
     args = (project.findProperty('shots') ?: '').toString().split(' ').findAll { !it.isBlank() }
 }
+// A developer's look at the war table without a campaign: generates a seeded operation and opens the table on it in a
+// window. -Pcapture instead writes a few shots to build/war-table and exits.
+tasks.register('warTableDemo', JavaExec) {
+    dependsOn stageDataFiles
+    group = 'verification'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'mekhq.gui.gdx.hub.WarTableDemo'
+    workingDir = layout.projectDirectory.asFile
+    maxHeapSize = '4g'
+    args = project.hasProperty('capture') ? ['capture'] : []
+}
 tasks.register('officialUnitList', JavaExec) {
     dependsOn jar
     mustRunAfter(stageDataFiles)

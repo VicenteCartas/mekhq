@@ -46,6 +46,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
@@ -168,6 +169,28 @@ final class HubScreen extends ApplicationAdapter {
         /** Reads the full record of the system {@code id}, for {@link HubScreen#dossier}. */
         void dossier(String id);
 
+        /**
+         * Reads the campaign's StratCon operations for the war table, the one at the system {@code systemId} first, which
+         * come back through {@link HubScreen#warTable(List)}.
+         */
+        void warTable(@Nullable String systemId);
+
+        /**
+         * The war table opened or closed: while it's open, a new day or a change to a scenario or contract comes back
+         * through {@link HubScreen#warTableRefresh(List)}, and plays out on the table.
+         */
+        void warTableShown(boolean shown);
+
+        /**
+         * Deploys force {@code force} onto hex ({@code x}, {@code y}) of sector {@code sector} of contract
+         * {@code contract}'s operation, the operations as they then are coming back through
+         * {@link HubScreen#warTableRefresh(List)}.
+         */
+        void deploy(UUID contract, int sector, int x, int y, int force);
+
+        /** Recalls force {@code force} off sector {@code sector} of contract {@code contract}'s operation, likewise. */
+        void recall(UUID contract, int sector, int force);
+
         /** The screen's listener is being disposed. */
         void disposed();
     }
@@ -263,6 +286,19 @@ final class HubScreen extends ApplicationAdapter {
     private Stage stage;
     /** The campaign's immersive dialogs, over everything else. */
     private final TransmissionView transmissions = new TransmissionView();
+    private final WarTable warTable = new WarTable(this::closeWarTable, new WarTable.Orders() {
+        @Override
+        public void deploy(UUID contract, int sector, int x, int y, int force) {
+            hub.deploy(contract, sector, x, y, force);
+        }
+
+        @Override
+        public void recall(UUID contract, int sector, int force) {
+            hub.recall(contract, sector, force);
+        }
+    });
+    /** What the campaign has at systems by their ids, as its star map marks them. */
+    private Map<String, Integer> marks = Map.of();
     private final FrameMeter meter = new FrameMeter();
     private Label date;
     private Label where;
@@ -324,6 +360,7 @@ final class HubScreen extends ApplicationAdapter {
     /** The campaign's star map changed. */
     void map(StarMap changed) {
         map.show(changed);
+        marks = changed.marks();
         LocalDate before = today;
         today = changed.date();
         if (scrubber != null) {
@@ -428,6 +465,7 @@ final class HubScreen extends ApplicationAdapter {
         stage.addActor(mapMenu);
         stage.addActor(paletteLayer());
         transmissions.create(theme, ui, scale);
+        warTable.create(theme, ui, scale);
         meter.create(theme, scale);
         InputAdapter keys = new InputAdapter() {
             @Override
@@ -435,7 +473,8 @@ final class HubScreen extends ApplicationAdapter {
                 return HubScreen.this.keyDown(keycode);
             }
         };
-        Gdx.input.setInputProcessor(new InputMultiplexer(blocker(), meter.input(), transmissions.input(), stage, keys, view()));
+        Gdx.input.setInputProcessor(new InputMultiplexer(blocker(), meter.input(), transmissions.input(), table(), stage,
+              keys, view()));
         resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
     }
 
@@ -1800,6 +1839,9 @@ final class HubScreen extends ApplicationAdapter {
         StarMap.Star force = map.current();
         if (star != null) {
             menuItem("HqHub.map.menu.details", null, () -> map.focus(star));
+            if ((marks.getOrDefault(star.id(), 0) & StarMap.MISSION) != 0) {
+                menuItem("HqHub.map.menu.operation", null, () -> openWarTable(star.id()));
+            }
             if (force != null && !force.id().equals(star.id())) {
                 menuItem("HqHub.map.menu.measure", null, () -> map.measureFromForce(star));
             }
@@ -1835,6 +1877,123 @@ final class HubScreen extends ApplicationAdapter {
         mapMenu.header(title, detail).content(mapMenuList);
         mapMenu.showAt(corner.x, corner.y);
         hoverCard.setVisible(false);
+    }
+
+    /** Takes the player to the war table, the operation at the system {@code systemId} first. */
+    private void openWarTable(@Nullable String systemId) {
+        if (flyout.isVisible()) {
+            flyout.cancel();
+        }
+        if (mapMenu.isVisible()) {
+            mapMenu.cancel();
+        }
+        hub.warTable(systemId);
+    }
+
+    /** The campaign's operations came: the war table opens on them. */
+    void warTable(List<WarTableSnapshot> operations) {
+        warTable.open(operations);
+        hub.warTableShown(true);
+        hoverCard.setVisible(false);
+        Gdx.graphics.setSystemCursor(Cursor.SystemCursor.Arrow);
+        handCursor = false;
+    }
+
+    /** An order on the war table was carried out: the table shows the operations as they now are. */
+    void warTableRefresh(List<WarTableSnapshot> operations) {
+        warTable.refresh(operations);
+    }
+
+    private void closeWarTable() {
+        warTable.close();
+        hub.warTableShown(false);
+    }
+
+    /** The war table's input, all of it while the table is up. */
+    private InputProcessor table() {
+        InputProcessor table = warTable.input();
+        return new InputProcessor() {
+            @Override
+            public boolean keyDown(int keycode) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.keyDown(keycode);
+                return true;
+            }
+
+            @Override
+            public boolean keyUp(int keycode) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.keyUp(keycode);
+                return true;
+            }
+
+            @Override
+            public boolean keyTyped(char character) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.keyTyped(character);
+                return true;
+            }
+
+            @Override
+            public boolean touchDown(int screenX, int screenY, int pointer, int button) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.touchDown(screenX, screenY, pointer, button);
+                return true;
+            }
+
+            @Override
+            public boolean touchUp(int screenX, int screenY, int pointer, int button) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.touchUp(screenX, screenY, pointer, button);
+                return true;
+            }
+
+            @Override
+            public boolean touchCancelled(int screenX, int screenY, int pointer, int button) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.touchCancelled(screenX, screenY, pointer, button);
+                return true;
+            }
+
+            @Override
+            public boolean touchDragged(int screenX, int screenY, int pointer) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.touchDragged(screenX, screenY, pointer);
+                return true;
+            }
+
+            @Override
+            public boolean mouseMoved(int screenX, int screenY) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.mouseMoved(screenX, screenY);
+                return true;
+            }
+
+            @Override
+            public boolean scrolled(float amountX, float amountY) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.scrolled(amountX, amountY);
+                return true;
+            }
+        };
     }
 
     private void menuItem(String key, @Nullable String hint, Runnable action) {
@@ -1948,6 +2107,11 @@ final class HubScreen extends ApplicationAdapter {
             flyoutList.clearChildren();
             UiButton first = null;
             for (MHQTabType tab : tabs) {
+                if (tab == MHQTabType.STRAT_CON) {
+                    UiButton table = flyoutList.item(getText("HqHub.warTable"), null, null, false, true,
+                          () -> openWarTable(null));
+                    first = first == null ? table : first;
+                }
                 UiButton row = flyoutList.item(tab.toString(), null, null, false, true, () -> {
                     flyout.cancel();
                     hub.go(new PaletteEntry.Screen(tab));
@@ -2074,6 +2238,7 @@ final class HubScreen extends ApplicationAdapter {
             stage.getViewport().update(width, height, true);
         }
         transmissions.resize(width, height);
+        warTable.resize(width, height);
         meter.resize(width, height);
     }
 
@@ -2086,6 +2251,12 @@ final class HubScreen extends ApplicationAdapter {
             pending = null;
         }
         advance(delta);
+        if (warTable.shown()) {
+            warTable.render(delta);
+            transmissions.render(delta);
+            meter.end(Gdx.graphics.getDeltaTime());
+            return;
+        }
         if (progress >= 1) {
             map.render();
         } else {
@@ -2122,6 +2293,7 @@ final class HubScreen extends ApplicationAdapter {
     @Override
     public void dispose() {
         transmissions.dispose();
+        warTable.dispose();
         meter.dispose();
         hub.disposed();
         holo.dispose();
