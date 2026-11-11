@@ -252,6 +252,9 @@ final class WarTable implements Disposable {
         Table top = new Table();
         top.add(header).top().left();
         top.add(tabs).expandX().top().padLeft(space("xl"));
+        UiButton plot = ui.button("hud-utility", "map", getText("WarTable.plot"), null);
+        UiKit.onChange(plot, () -> view.plot(!view.plotted()));
+        top.add(plot).top().right().padRight(space("sm"));
         UiButton back = ui.button("hud-utility", "chevron-left", getText("WarTable.back"), null);
         UiKit.onChange(back, this::escape);
         top.add(back).top().right();
@@ -607,6 +610,11 @@ final class WarTable implements Disposable {
         hoverCard.setVisible(false);
     }
 
+    /** Where {@code force}'s standee shows on the map, in input coordinates; null if it isn't on it. */
+    @Nullable Vector2 standeeOnScreen(int force) {
+        return view.screenOf(force);
+    }
+
     /** Which of the operation's sectors is on the table. */
     int sectorShown() {
         return sectorIndex;
@@ -664,7 +672,7 @@ final class WarTable implements Disposable {
             pin(site.name(), "", site.allied() ? UiKit.Tone.OK : UiKit.Tone.BAD, site.x(), site.y(), 1.4f, now);
         }
         for (Token token : sector.tokens()) {
-            // Clear of the counter
+            // Clear of the standee
             pin(token.name(), "", UiKit.Tone.NORMAL, token.x(), token.y(), 2f, now);
         }
     }
@@ -1264,6 +1272,10 @@ final class WarTable implements Disposable {
                 }
                 if (keycode == Input.Keys.SPACE && !typing()) {
                     view.settle();
+                    return true;
+                }
+                if (keycode == Input.Keys.P && !typing()) {
+                    view.plot(!view.plotted());
                     return true;
                 }
                 return false;

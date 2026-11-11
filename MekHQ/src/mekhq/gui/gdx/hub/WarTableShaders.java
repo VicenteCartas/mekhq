@@ -33,8 +33,9 @@
 package mekhq.gui.gdx.hub;
 
 /**
- * The war table's GLSL: the map laid over the board the game's renderer drew, the facilities and counters standing on
- * it, and the tracking drawn over it.
+ * The war table's GLSL: the operations map's ground, scouted as the real thing and unscouted as a hologram, the
+ * field behind it and the display's frame over it; the facilities, scatter and forces standing on it; and the tracking
+ * drawn over it.
  */
 final class WarTableShaders {
     private WarTableShaders() {
@@ -78,36 +79,13 @@ final class WarTableShaders {
           """;
 
     /**
-     * The map: the board the game's renderer drew of the sector, laid over the screen with its depth, so what's drawn
-     * over it after sits in and behind its hills and buildings. Each pixel finds where it lies on the table, and so its
-     * hex, from that depth (or where its ray meets the table's plane, off the board); u_cells holds each hex's state.
+     * Shared by the map's passes: the sector's hexes, one texel each in u_cells (R when it was scouted on the view's
+     * clock, G its flags: 1 water, 2 road, 4 city; B 1 + its plotted kind, 0 where there's no hex; A its surface's
+     * layer), how to find a hex's neighbours and the hex under a point, and how far the opening scan and a hex's
+     * scouting have turned its hologram into ground.
      */
-    static final String COMPOSITE_VERTEX = """
-          #version 330 core
-          in vec3 a_position;
-          out vec2 v_uv;
-          void main() {
-              v_uv = a_position.xy * 0.5 + 0.5;
-              gl_Position = vec4(a_position.xy, 0.0, 1.0);
-          }
-          """;
-
-    /**
-     * Over the board: a fine hex grid, the fog greying what nobody has scouted and burning off what's newly scouted,
-     * the line of light along the edge of what's known, the hex hovered and the one picked. Round it the command
-     * display's dark field with the grid running on faintly, a vignette and the frame's corner marks. Until the board
-     * is drawn the display shows the sector's outline alone; then a scan line paints the ground in, u_open from 0 to 1.
-     */
-    static final String COMPOSITE_FRAGMENT = """
-          #version 330 core
-          in vec2 v_uv;
-          uniform sampler2D u_colour;
-          uniform sampler2D u_depth;
-          // The sector's hexes, one texel each: when it was scouted, whether it's water, whether it's there at all
+    private static final String HEX = """
           uniform sampler2D u_cells;
-          uniform mat4 u_inverse;
-          uniform float u_board;
-          uniform float u_open;
           // The grid's origin and a hex's radius; its first column and row, and how many there are of each
           uniform vec3 u_grid;
           uniform vec4 u_cellBox;
@@ -115,18 +93,13 @@ final class WarTableShaders {
           uniform float u_clock;
           uniform float u_time;
           uniform float u_reveal;
-          // The hexes hovered and picked, by column and row; far off the grid for none
-          uniform vec2 u_hover;
-          uniform vec2 u_selected;
-          // Where the opening scan starts and ends, across the table
+          // How far the opening scan has gone, and where it starts and ends across the table
+          uniform float u_open;
           uniform vec2 u_scan;
-          uniform vec2 u_screen;
-          out vec4 fragColor;
 
           const vec2 SIDES[6] = vec2[](vec2(0.8660254, 0.5), vec2(0.0, 1.0), vec2(-0.8660254, 0.5),
                 vec2(-0.8660254, -0.5), vec2(0.0, -1.0), vec2(0.8660254, -0.5));
-          const vec3 CYAN = vec3(0.42, 0.78, 0.95);
-          const vec3 AMBER = vec3(1.0, 0.68, 0.25);
+          const vec3 GREEN = vec3(0.22, 1.0, 0.5);
 
           vec4 cell(vec2 at) {
               vec2 c = at - u_cellBox.xy;
@@ -134,6 +107,10 @@ final class WarTableShaders {
                   return vec4(-1e9, 0.0, 0.0, 0.0);
               }
               return texelFetch(u_cells, ivec2(c + 0.5), 0);
+          }
+
+          bool flag(vec4 c, float bit) {
+              return mod(floor(c.y / bit + 0.5), 2.0) > 0.5;
           }
 
           // The hex across side k: odd columns sit half a row lower
@@ -148,6 +125,10 @@ final class WarTableShaders {
               float dx = k == 0 || k == 5 ? 1.0 : -1.0;
               float dy = k == 0 || k == 2 ? odd : odd - 1.0;
               return at + vec2(dx, dy);
+          }
+
+          vec2 centreOf(vec2 at) {
+              return u_grid.xy + u_grid.z * vec2(1.5 * at.x, 1.7320508 * (at.y + mod(at.x, 2.0) * 0.5));
           }
 
           // The column and row of the hex round (x, z) on the table
@@ -167,6 +148,18 @@ final class WarTableShaders {
 
           float seenBy(float at) {
               return clamp((u_clock - at) / u_reveal, 0.0, 1.0);
+          }
+
+          // How far the opening scan has painted the ground in at x across the table
+          float painted(float x) {
+              float front = mix(u_scan.x, u_scan.y, u_open);
+              return u_open >= 1.0 ? 1.0 : 1.0 - smoothstep(front - u_grid.z * 0.5, front, x);
+          }
+
+          // How solid what's at world is: 1 scouted and painted in, 0 a hologram
+          float sight(vec3 world) {
+              vec4 c = cell(hexAt(world.xz));
+              return c.z < 0.5 ? 1.0 : seenBy(c.x) * painted(world.x);
           }
 
           float hash(vec2 p) {
@@ -193,120 +186,332 @@ final class WarTableShaders {
               return sum / 0.9375;
           }
 
-          vec3 unproject(vec2 uv, float depth) {
-              vec4 world = u_inverse * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
-              return world.xyz / world.w;
+          // A hairline every unit of v, a pixel or so wide however far off
+          float hairline(float v, float width) {
+              float w = max(fwidth(v), 1e-5);
+              return 1.0 - clamp((abs(fract(v - 0.5) - 0.5) - width * w) / w, 0.0, 1.0);
+          }
+
+          // The hologram's wire mesh: triangles half a hex's apothem across, lined up with the hexes' sides
+          float wires(vec2 p) {
+              vec2 q = (p - u_grid.xy) / (u_grid.z * 0.4330127);
+              float line = 0.0;
+              for (int k = 0; k < 3; k++) {
+                  line = max(line, hairline(dot(q, SIDES[k]), 0.15));
+              }
+              return line;
+          }
+          """;
+
+    /** The ground: the sector's relief (see WarTableGround), a hex's column and row in a_hex.xy, its skirt in z. */
+    static final String TERRAIN_VERTEX = """
+          #version 330 core
+          in vec3 a_position;
+          in vec3 a_normal;
+          in vec3 a_hex;
+          uniform mat4 u_projView;
+          uniform float u_flatten;
+          uniform float u_base;
+          out vec3 v_world;
+          out vec3 v_normal;
+          flat out vec3 v_hex;
+          void main() {
+              vec3 position = a_position;
+              // The plotted map lies flat on the table; the skirt's foot stays where it is
+              position.y = mix(position.y, max(u_base, min(position.y, u_base + 0.0005)), u_flatten);
+              v_world = position;
+              v_normal = normalize(mix(a_normal, vec3(0.0, 1.0, 0.0), u_flatten * (1.0 - a_hex.z)));
+              v_hex = a_hex;
+              gl_Position = u_projView * vec4(position, 1.0);
+          }
+          """;
+
+    /**
+     * Scouted ground as the real thing: each hex painted with its surface, blending into its neighbours' along a
+     * ragged line, lit with its surface's relief; open water dark and moving; roads and city blocks; faint contour
+     * lines and the hex grid as hairlines. Ground nobody has scouted is a green hologram: a wire mesh over the relief,
+     * its contours glowing, a scan line drifting over it. A newly scouted hex burns from hologram to ground; the opening
+     * scan turns the scouted hexes from hologram to ground across the table. The plotted map (u_plot) is flat colours
+     * by kind of ground, contours and roads, as a printed map's. The hex hovered is rimmed cyan, the one picked amber.
+     */
+    static final String TERRAIN_FRAGMENT = """
+          #version 330 core
+          in vec3 v_world;
+          in vec3 v_normal;
+          flat in vec3 v_hex;
+          uniform sampler2DArray u_albedo;
+          uniform sampler2DArray u_normals;
+          // How many hexes' radii a surface's picture covers
+          uniform float u_tile;
+          uniform float u_plot;
+          // The hexes hovered and picked, by column and row; far off the grid for none
+          uniform vec2 u_hover;
+          uniform vec2 u_selected;
+          out vec4 fragColor;
+          """ + LIGHTING + HEX + """
+
+          const vec3 CYAN = vec3(0.42, 0.78, 0.95);
+          const vec3 AMBER = vec3(1.0, 0.68, 0.25);
+          // The plotted map's colours by kind of ground: open, woods, hills, peaks, arid, snow, built, water, barren
+          const vec3 PLOT[9] = vec3[](vec3(0.56, 0.6, 0.42), vec3(0.3, 0.44, 0.27), vec3(0.6, 0.53, 0.36),
+                vec3(0.5, 0.42, 0.34), vec3(0.74, 0.64, 0.45), vec3(0.85, 0.88, 0.9), vec3(0.5, 0.5, 0.52),
+                vec3(0.27, 0.43, 0.55), vec3(0.48, 0.44, 0.42));
+
+          // Which way the ragged line between two hexes leans, the same seen from either
+          float leaning(vec2 a, vec2 b) {
+              return a.x < b.x || a.x == b.x && a.y < b.y ? 1.0 : -1.0;
+          }
+
+          vec3 plotted(vec4 c) {
+              return PLOT[int(clamp(c.z - 1.0, 0.0, 8.0) + 0.5)];
           }
 
           void main() {
-              float depth = texture(u_depth, v_uv).r;
-              bool ground = u_board > 0.5 && depth < 1.0;
-              vec3 world;
-              bool plane = true;
-              if (ground) {
-                  world = unproject(v_uv, depth);
-              } else {
-                  vec3 near = unproject(v_uv, 0.0);
-                  vec3 ray = unproject(v_uv, 1.0) - near;
-                  float t = ray.y < -1e-6 ? (u_tableTop - near.y) / ray.y : -1.0;
-                  plane = t > 0.0;
-                  world = near + ray * max(t, 0.0);
-              }
-              vec2 at = hexAt(world.xz);
-              float odd = mod(at.x, 2.0);
-              vec2 centre = u_grid.xy + u_grid.z * vec2(1.5 * at.x, 1.7320508 * (at.y + odd * 0.5));
-              vec2 local = (world.xz - centre) / u_grid.z;
-              float pixel = clamp(length(fwidth(world.xz)) / u_grid.z / 0.8660254, 1e-4, 0.2);
+              vec2 at = v_hex.xy;
+              vec4 here = cell(at);
+              vec3 n = normalize(v_normal);
+              vec3 toCamera = normalize(u_camera - v_world);
+              float height = (v_world.y - u_tableTop) / u_grid.z;
+              vec2 local = (v_world.xz - centreOf(at)) / u_grid.z;
+              float pixel = clamp(length(fwidth(v_world.xz)) / u_grid.z / 0.8660254, 1e-4, 0.2);
               float inset[6];
               float edge = 1.0;
               for (int k = 0; k < 6; k++) {
                   inset[k] = (0.8660254 - dot(local, SIDES[k])) / 0.8660254;
                   edge = min(edge, inset[k]);
               }
-              vec4 here = cell(at);
-              bool present = here.z > 0.5;
-              float width = max(0.012, pixel * 0.9);
-              float line = 1.0 - smoothstep(width - pixel * 0.75, width + pixel * 0.75, edge);
+              float width = max(0.008, pixel * 0.7);
+              float hexLine = 1.0 - smoothstep(width - pixel * 0.75, width + pixel * 0.75, edge);
 
-              // The display's field: near-black slate, the grid running on faintly, fading away from the sector
-              float away = length((world.xz - u_grid.xy) / u_grid.z);
-              vec3 field = vec3(0.016, 0.02, 0.026) + vec3(0.01, 0.014, 0.018) * (1.0 - v_uv.y);
-              vec3 colour = field;
-              if (plane) {
-                  colour += vec3(0.05, 0.075, 0.09) * line * (present ? 1.4 : 0.45);
-                  if (present) {
-                      colour += vec3(0.012, 0.02, 0.026);
-                  }
+              // How solid: scouted, painted in by the opening scan, a newly scouted hex burning through its middle
+              float seen = seenBy(here.x);
+              float clear = seen;
+              float ember = 0.0;
+              if (seen > 0.0 && seen < 1.0) {
+                  float reach = seen * 1.55 - 0.1;
+                  float ragged = length(local) + (fbm(v_world.xz / u_grid.z * 3.0) - 0.5) * 0.35;
+                  clear = 1.0 - smoothstep(reach - 0.07, reach, ragged);
+                  ember = exp(-pow((ragged - reach) * 12.0, 2.0)) * (1.0 - smoothstep(0.75, 1.0, seen));
+              }
+              float scan = painted(v_world.x);
+              clear *= scan;
+
+              // The hologram
+              // Lines every 0.08 of a radius, clear of the plains' gentle rise and fall
+              float contourStep = (height - 0.05) / 0.08;
+              float fade = 1.0 - smoothstep(0.25, 0.6, fwidth(contourStep));
+              float contour = hairline(contourStep, 0.2) * fade;
+              float major = hairline(contourStep / 5.0, 0.4) * fade;
+              float fresnel = pow(1.0 - max(dot(n, toCamera), 0.0), 3.0);
+              vec3 holo = vec3(0.002, 0.012, 0.008) + GREEN * 0.02 * clamp(height * 2.0 + 0.4, 0.0, 1.0);
+              holo += GREEN * (wires(v_world.xz) * 0.045 + contour * 0.16 + major * 0.16 + fresnel * 0.12
+                    + hexLine * 0.16);
+              holo += GREEN * smoothstep(0.97, 1.0, fract(v_world.z / u_grid.z * 0.35 - u_time * 0.12)) * 0.06;
+              holo *= 0.9 + 0.1 * noise(vec2(u_time * 7.0, at.x * 3.1 + at.y));
+
+              if (v_hex.z > 0.5) {
+                  // The skirt: the slab's dark edge, its lip lit; a hologram's glows faintly
+                  vec3 slab = light(vec3(0.045, 0.05, 0.055), n, v_world, 0.0);
+                  vec3 ghost = vec3(0.003, 0.016, 0.01) + GREEN * 0.05;
+                  fragColor = finish(mix(ghost, slab, clear), v_world);
+                  return;
               }
 
-              // The ground, painted in behind the opening scan
-              float front = mix(u_scan.x, u_scan.y, u_open);
-              float painted = ground && present ? 1.0 - smoothstep(front - u_grid.z * 0.4, front, world.x) : 0.0;
-              if (painted > 0.0) {
-                  vec3 board = texture(u_colour, v_uv).rgb;
-                  float seen = seenBy(here.x);
-                  // Once scouted, a ragged front burns the fog off from the hex's middle
-                  float clear = seen;
-                  float ember = 0.0;
-                  if (seen > 0.0 && seen < 1.0) {
-                      float reach = seen * 1.55 - 0.1;
-                      float ragged = length(local) + (fbm(world.xz / u_grid.z * 3.0) - 0.5) * 0.35;
-                      clear = 1.0 - smoothstep(reach - 0.07, reach, ragged);
-                      ember = exp(-pow((ragged - reach) * 12.0, 2.0)) * (1.0 - smoothstep(0.75, 1.0, seen));
+              // The ground: each hex's surface, its neighbours' leaning in along a ragged line
+              vec2 uv = v_world.xz / (u_grid.z * u_tile);
+              float ragged = (fbm(v_world.xz / u_grid.z * 2.6) - 0.5) * 0.36;
+              vec2 uvX = dFdx(uv);
+              vec2 uvY = dFdy(uv);
+              // Seen from high above: a surface's detail calmed toward its average colour
+              const float CALM = 0.45;
+              vec3 albedo = mix(textureGrad(u_albedo, vec3(uv, here.w), uvX, uvY).rgb,
+                    textureLod(u_albedo, vec3(uv, here.w), 9.0).rgb, CALM);
+              vec3 bump = textureGrad(u_normals, vec3(uv, here.w), uvX, uvY).rgb;
+              vec3 plot = plotted(here);
+              float water = flag(here, 1.0) ? 1.0 : 0.0;
+              float total = 1.0;
+              bool road = flag(here, 2.0);
+              float paved = 0.0;
+              float shoulder = 0.0;
+              for (int k = 0; k < 6; k++) {
+                  vec2 next = across(at, k);
+                  vec4 there = cell(next);
+                  if (there.z < 0.5) {
+                      continue;
                   }
-                  // What nobody has scouted lies grey and dim under a slow drifting haze
-                  float grey = dot(board, vec3(0.3, 0.55, 0.15));
-                  vec3 veiled = vec3(grey) * vec3(0.6, 0.68, 0.78) * 0.42;
-                  vec2 drift = world.xz / u_grid.z * 0.6 + vec2(u_time * 0.05, u_time * 0.03);
-                  float mist = fbm(drift + fbm(drift * 0.7 - u_time * 0.03) * 1.5);
-                  veiled += vec3(0.03, 0.045, 0.06) * smoothstep(0.3, 0.9, mist);
-                  board = mix(veiled, board, clear);
-                  // The grid: hairlines, darker than the ground, so they read without shouting
-                  board = mix(board, board * 0.55, line * 0.6);
-                  // The edge of what's known: a thin line along the sides that face the fog
-                  float frontier = 0.0;
-                  for (int k = 0; k < 6 && seen > 0.0; k++) {
-                      vec4 next = cell(across(at, k));
-                      float facing = seen * (1.0 - seenBy(next.x)) * next.z;
-                      if (facing > 0.0) {
-                          float core = 1.0 - smoothstep(width - pixel, width + pixel, inset[k]);
-                          float halo = 1.0 - smoothstep(0.0, 0.12, inset[k]);
-                          frontier = max(frontier, (core + halo * 0.2) * facing);
-                      }
+                  if (road && flag(there, 2.0)) {
+                      float t = clamp(dot(local, SIDES[k]) / 0.8660254, 0.0, 1.0);
+                      float d = length(local - SIDES[k] * 0.8660254 * t);
+                      d += (noise(v_world.xz / u_grid.z * 9.0) - 0.5) * 0.012;
+                      paved = max(paved, 1.0 - smoothstep(0.035 - pixel, 0.035 + pixel, d));
+                      shoulder = max(shoulder, 1.0 - smoothstep(0.06 - pixel, 0.06 + pixel, d));
                   }
-                  board += CYAN * frontier * 0.45 + CYAN * ember * 0.9;
-                  float rim = 1.0 - smoothstep(0.0, 0.1 + pixel, edge);
-                  if (at == u_hover) {
-                      board += CYAN * (0.04 + rim * 0.55);
+                  float share = 1.0 - smoothstep(-0.3, 0.3, inset[k] + ragged * leaning(at, next));
+                  if (share < 0.004) {
+                      continue;
                   }
-                  if (at == u_selected) {
-                      board += AMBER * (0.03 + rim * (0.7 + 0.15 * sin(u_time * 4.0)));
-                  }
-                  colour = mix(colour, board, painted);
+                  float odds = share / max(1.0 - share, 0.02);
+                  albedo += mix(textureGrad(u_albedo, vec3(uv, there.w), uvX, uvY).rgb,
+                        textureLod(u_albedo, vec3(uv, there.w), 9.0).rgb, CALM) * odds;
+                  bump += textureGrad(u_normals, vec3(uv, there.w), uvX, uvY).rgb * odds;
+                  plot += plotted(there) * odds;
+                  water += (flag(there, 1.0) ? 1.0 : 0.0) * odds;
+                  total += odds;
               }
-              // The scan line itself, a thin trace across the sector as it paints
-              if (present && u_open > 0.0 && u_open < 1.0) {
-                  float trace = exp(-pow((world.x - front) / (u_grid.z * 0.06), 2.0));
-                  colour += CYAN * trace * 0.5 * sin(u_open * 3.14159);
+              albedo = pow(albedo / total, vec3(2.2));
+              albedo *= mix(0.8, 1.15, fbm(v_world.xz / u_grid.z * 0.55));
+              plot /= total;
+              water /= total;
+              if (flag(here, 4.0)) {
+                  // A city's blocks: roofs of varied greys between darker streets
+                  float turn = hash(at) * 1.57;
+                  vec2 q = mat2(cos(turn), -sin(turn), sin(turn), cos(turn)) * local / 0.19;
+                  vec2 inBlock = abs(fract(q) - 0.5);
+                  float block = step(max(inBlock.x, inBlock.y), 0.36);
+                  float roof = mix(0.75, 1.35, hash(floor(q) + at));
+                  albedo *= mix(1.0, mix(0.5, roof, block), smoothstep(0.05, 0.3, edge));
               }
+              vec3 b = bump / total * 2.0 - 1.0;
+              vec3 tangent = normalize(vec3(1.0, 0.0, 0.0) - n * n.x);
+              vec3 bitangent = cross(tangent, n);
+              vec3 lit = normalize(tangent * b.x * 0.8 + bitangent * b.y * 0.8 + n * max(b.z, 0.2));
+              vec3 colour = light(albedo, lit, v_world, 0.03);
 
-              // The display's vignette, and its frame: corner marks and a hairline border
+              // Open water: dark, deeper further from shore, a slow swell catching the sun
+              float wet = smoothstep(0.4, 0.6, water + (fbm(v_world.xz / u_grid.z * 4.0) - 0.5) * 0.25);
+              if (wet > 0.0) {
+                  vec2 swell = v_world.xz / u_grid.z * 6.0;
+                  vec3 wn = normalize(vec3(noise(swell + u_time * 0.3) - 0.5, 2.2,
+                        noise(swell * 1.3 - u_time * 0.25 + 9.0) - 0.5));
+                  float deep = clamp(-height / 0.09, 0.0, 1.0);
+                  vec3 sea = mix(vec3(0.03, 0.09, 0.1), vec3(0.008, 0.035, 0.05), deep);
+                  vec3 sun = reflect(u_keyDir, wn);
+                  float glint = pow(max(dot(sun, toCamera), 0.0), 90.0) * 1.2;
+                  float sky = pow(1.0 - max(dot(wn, toCamera), 0.0), 4.0);
+                  vec3 surface = sea * (0.6 + 0.4 * u_keyColor.g) + vec3(0.06, 0.09, 0.11) * sky + u_keyColor * glint;
+                  colour = mix(colour, surface, wet);
+              }
+              // Roads: a pale dirt shoulder, a dark metalled core
+              colour = mix(colour, light(vec3(0.3, 0.27, 0.22), n, v_world, 0.0), shoulder * (1.0 - wet));
+              colour = mix(colour, light(vec3(0.07, 0.068, 0.065), n, v_world, 0.05), paved * (1.0 - wet));
+              // Contours and the grid as hairlines, darker than the ground, so they read without shouting
+              colour *= 1.0 - (contour * 0.12 + major * 0.12) * (1.0 - wet);
+              colour = mix(colour, colour * 0.45 + vec3(0.004, 0.008, 0.006), hexLine * 0.75);
+
+              // The plotted map: flat colours, a little hill shade, contours and roads printed over
+              float shade = 0.82 + 0.3 * max(dot(n, normalize(vec3(-0.5, 0.8, -0.35))), 0.0);
+              vec3 print = mix(plot, PLOT[7], wet) * shade;
+              print *= 1.0 - (contour * 0.15 + major * 0.25) * (1.0 - wet);
+              print = mix(print, vec3(0.42, 0.14, 0.08), max(paved, shoulder * 0.6) * (1.0 - wet));
+              print = mix(print, vec3(0.08, 0.09, 0.1), hexLine * 0.6);
+              colour = mix(colour, pow(print, vec3(2.2)) * 0.7, u_plot);
+
+              colour = mix(holo, colour, clear);
+              // The edge of what's known: a thin line along the sides that face the hologram
+              float frontier = 0.0;
+              for (int k = 0; k < 6 && seen > 0.0; k++) {
+                  vec4 there = cell(across(at, k));
+                  float facing = seen * (1.0 - seenBy(there.x)) * step(0.5, there.z);
+                  if (facing > 0.0) {
+                      float core = 1.0 - smoothstep(width - pixel, width + pixel, inset[k]);
+                      float halo = 1.0 - smoothstep(0.0, 0.12, inset[k]);
+                      frontier = max(frontier, (core + halo * 0.25) * facing);
+                  }
+              }
+              colour += GREEN * (frontier * 0.35 + ember * 0.8) * scan;
+              float rim = 1.0 - smoothstep(0.0, 0.1 + pixel, edge);
+              if (at == u_hover) {
+                  colour += CYAN * (0.03 + rim * 0.5);
+              }
+              if (at == u_selected) {
+                  colour += AMBER * (0.03 + rim * (0.65 + 0.15 * sin(u_time * 4.0)));
+              }
+              // The opening scan's line itself, a thin trace across the sector as it paints
+              if (u_open > 0.0 && u_open < 1.0) {
+                  float front = mix(u_scan.x, u_scan.y, u_open);
+                  colour += GREEN * exp(-pow((v_world.x - front) / (u_grid.z * 0.05), 2.0)) * 0.6
+                        * sin(u_open * 3.14159);
+              }
+              fragColor = finish(colour, v_world);
+          }
+          """;
+
+    /** A quad over the whole screen, for the passes drawn behind and over everything. */
+    static final String SCREEN_VERTEX = """
+          #version 330 core
+          in vec3 a_position;
+          out vec2 v_uv;
+          void main() {
+              v_uv = a_position.xy * 0.5 + 0.5;
+              gl_Position = vec4(a_position.xy, 0.0, 1.0);
+          }
+          """;
+
+    /**
+     * Behind the map, the command display's field: near-black slate where the slab of the sector sits, the hex grid
+     * running on faintly under it, fading away from it.
+     */
+    static final String FIELD_FRAGMENT = """
+          #version 330 core
+          in vec2 v_uv;
+          uniform mat4 u_inverse;
+          // The grid's origin and a hex's radius, and the field's height
+          uniform vec3 u_grid;
+          uniform float u_floor;
+          out vec4 fragColor;
+
+          vec3 unproject(vec2 uv, float depth) {
+              vec4 world = u_inverse * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+              return world.xyz / world.w;
+          }
+
+          void main() {
+              vec3 colour = vec3(0.014, 0.018, 0.024) + vec3(0.01, 0.013, 0.017) * (1.0 - v_uv.y);
+              vec3 near = unproject(v_uv, 0.0);
+              vec3 ray = unproject(v_uv, 1.0) - near;
+              float t = ray.y < -1e-6 ? (u_floor - near.y) / ray.y : -1.0;
+              if (t > 0.0) {
+                  vec2 p = (near + ray * t).xz;
+                  vec2 q = (p - u_grid.xy) / (u_grid.z * 0.8660254);
+                  float line = 0.0;
+                  for (int k = 0; k < 3; k++) {
+                      float a = 0.5235988 + 1.0471976 * float(k);
+                      float v = dot(q, vec2(cos(a), sin(a))) * 0.5 + 0.5;
+                      float w = max(fwidth(v), 1e-5);
+                      line = max(line, 1.0 - clamp((abs(fract(v - 0.5) - 0.5) - 0.3 * w) / w, 0.0, 1.0));
+                  }
+                  float away = length((p - u_grid.xy) / u_grid.z);
+                  colour += vec3(0.03, 0.05, 0.06) * line * 0.5 / (1.0 + away * 0.04);
+              }
+              fragColor = vec4(colour, 1.0);
+          }
+          """;
+
+    /**
+     * Over everything, the display's vignette and its frame: corner marks and a hairline border. Blended as
+     * premultiplied: what's under it darkens by the vignette, the frame laid over.
+     */
+    static final String OVERLAY_FRAGMENT = """
+          #version 330 core
+          in vec2 v_uv;
+          uniform vec2 u_screen;
+          out vec4 fragColor;
+          void main() {
               vec2 centred = (v_uv - 0.5) * vec2(u_screen.x / u_screen.y, 1.0);
-              colour *= mix(1.0, 0.45, smoothstep(0.45, 1.05, length(centred)));
+              float vignette = mix(1.0, 0.45, smoothstep(0.45, 1.05, length(centred)));
               vec2 px = v_uv * u_screen;
               vec2 inside = min(px, u_screen - px) - 14.0;
               float border = 1.0 - smoothstep(0.0, 1.2, abs(min(inside.x, inside.y)));
               float corner = step(min(inside.x, inside.y), 1.5) * step(-1.5, min(inside.x, inside.y))
                     * step(max(inside.x, inside.y), 56.0);
-              colour = mix(colour, vec3(0.5, 0.62, 0.68), max(border * 0.12, corner * 0.55));
-              fragColor = vec4(colour, 1.0);
-              gl_FragDepth = ground && painted > 0.5 ? depth : 1.0;
+              float frame = max(border * 0.12, corner * 0.55);
+              fragColor = vec4(vec3(0.5, 0.62, 0.68) * frame, 1.0 - vignette * (1.0 - frame));
           }
           """;
 
     /**
-     * The models standing on the map: the facilities' buildings and the forces' counters. u_model places a counter
-     * (identity for batches, already placed); u_drop lifts a counter as it's set down or taken off.
+     * The models standing on the map: the facilities' buildings, the small things scattered over the ground and the
+     * forces' standees. u_model places a standee (identity for batches, already placed); u_drop lifts one.
      */
     static final String PROP_VERTEX = """
           #version 330 core
@@ -331,8 +536,9 @@ final class WarTableShaders {
 
     /**
      * Lit as glTF's metallic-roughness materials roughly are; masked ones cut out below u_cutoff. Untextured parts take
-     * u_detail mapped over them from three sides when u_detailScale is set, as the board's rocks are; u_dim greys
-     * what stands where nobody has scouted, partly while its hex is being scouted.
+     * u_detail mapped over them from three sides when u_detailScale is set, as the board's rocks are. What stands where
+     * nobody has scouted is part of the hologram, a green glass of its shape, unless u_solid (the forces' standees).
+     * u_plot hides all but the standees, as the plotted map shows none of it.
      */
     static final String PROP_FRAGMENT = """
           #version 330 core
@@ -348,16 +554,17 @@ final class WarTableShaders {
           uniform float u_cutoff;
           uniform float u_textured;
           uniform float u_detailScale;
-          uniform float u_dim;
           // Nothing past this, across the table, shows yet: the opening scan hasn't painted it in
           uniform float u_front;
+          uniform float u_solid;
           out vec4 fragColor;
-          """ + LIGHTING + """
+          """ + LIGHTING + HEX + """
 
           void main() {
               if (v_world.x > u_front) {
                   discard;
               }
+              float real = u_solid > 0.5 ? 1.0 : sight(v_world);
               vec3 n = normalize(v_normal);
               vec4 base = u_baseFactor;
               if (u_textured > 0.5) {
@@ -384,8 +591,12 @@ final class WarTableShaders {
               float shine = u_cutoff > 0.0 ? 0.0 : mix(0.04, 0.6, u_metallic) * (1.0 - 0.85 * u_roughness);
               vec3 albedo = base.rgb * (1.0 - 0.6 * u_metallic);
               vec3 colour = light(albedo, n, v_world, shine) + u_emissive;
-              float grey = dot(colour, vec3(0.3, 0.55, 0.15));
-              colour = mix(colour, mix(colour, vec3(grey) * vec3(0.55, 0.68, 0.95), 0.75) * 0.4, u_dim);
+              if (real < 1.0) {
+                  float fresnel = pow(1.0 - abs(dot(n, normalize(u_camera - v_world))), 2.0);
+                  float bands = smoothstep(0.8, 1.0, fract((v_world.y - u_tableTop) / u_grid.z * 10.0 - u_time * 0.4));
+                  vec3 ghost = vec3(0.004, 0.02, 0.012) + GREEN * (0.06 + fresnel * 0.5 + bands * 0.1);
+                  colour = mix(ghost, colour, real);
+              }
               fragColor = finish(colour, v_world);
           }
           """;

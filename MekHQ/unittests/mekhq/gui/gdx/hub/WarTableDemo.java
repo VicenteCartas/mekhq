@@ -220,7 +220,11 @@ public final class WarTableDemo {
                         // Opens the reserve's drawer and drags its first force onto the middle of the table
                         case 832 -> table.openDrawer(true);
                         case 860 -> shot("drawer");
-                        case 870 -> table.input().touchDown(tileX(), tileY(), 0, 0);
+                        case 870 -> {
+                            List<Reserve> held = table.reserveShown();
+                            sent = held.isEmpty() ? -1 : held.get(0).force();
+                            table.input().touchDown(tileX(), tileY(), 0, 0);
+                        }
                         case 880 -> table.input().touchDragged(tileX() + 120, tileY(), 0);
                         case 890 -> table.input().touchDragged(Gdx.graphics.getWidth() / 2,
                               Gdx.graphics.getHeight() / 2, 0);
@@ -232,7 +236,11 @@ public final class WarTableDemo {
                         case 945 -> shot("landing");
                         case 990 -> shot("landed");
                         // Carries it back off the table onto the drawer to recall it
-                        case 1010 -> table.input().touchDown(780, 447, 0, 0);
+                        case 1010 -> {
+                            Vector2 standee = table.standeeOnScreen(sent);
+                            Vector2 at = standee == null ? new Vector2(780, 447) : standee;
+                            table.input().touchDown(Math.round(at.x), Math.round(at.y), 0, 0);
+                        }
                         case 1020 -> table.input().touchDragged(600, 500, 0);
                         case 1030 -> table.input().touchDragged(170, 500, 0);
                         case 1040 -> shot("recalling");
@@ -246,8 +254,11 @@ public final class WarTableDemo {
                         case 1180 -> shot("revealing");
                         case 1206 -> shot("striking");
                         case 1230 -> shot("struck");
-                        case 1320 -> {
-                            shot("dayPassed");
+                        case 1320 -> shot("dayPassed");
+                        // Plots the map: flat, in a printed map's colours
+                        case 1330 -> table.input().keyDown(com.badlogic.gdx.Input.Keys.P);
+                        case 1390 -> {
+                            shot("plotted");
                             Gdx.app.exit();
                         }
                         default -> {
@@ -255,6 +266,9 @@ public final class WarTableDemo {
                     }
                 }
             }
+
+            /** The force dragged onto the table, to carry back off it. */
+            private int sent = -1;
 
             private int tileX() {
                 return Math.round(firstTile().x);
@@ -502,7 +516,7 @@ public final class WarTableDemo {
                       hex.image(), true, hex.road(), hex.city(), hex.open()));
             }
             List<Hex> free = hexes.stream().filter(hex -> hex.scouted() && hex.open()
-                  && !WarTableBoard.water(hex)
+                  && !WarTableAssets.water(hex)
                   && beacons.stream().noneMatch(b -> b.x() == hex.x() && b.y() == hex.y())
                   && at.sites().stream().noneMatch(s -> s.x() == hex.x() && s.y() == hex.y())).toList();
             if (!free.isEmpty()) {
