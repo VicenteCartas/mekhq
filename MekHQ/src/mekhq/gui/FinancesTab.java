@@ -57,9 +57,10 @@ import megamek.common.ui.FastJScrollPane;
 import mekhq.MHQConstants;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.events.AcquisitionEvent;
+import mekhq.campaign.events.BulkGenerationCompletedEvent;
 import mekhq.campaign.events.GMModeEvent;
-import mekhq.campaign.events.OrganizationChangedEvent;
 import mekhq.campaign.events.assets.AssetEvent;
 import mekhq.campaign.events.loans.LoanEvent;
 import mekhq.campaign.events.missions.MissionChangedEvent;
@@ -676,11 +677,16 @@ public final class FinancesTab extends CampaignGuiTab {
                   String.format(formatted, rentals.toAmountAndSymbolString())));
         }
 
-        if (getCampaign().getCampaignOptions().isChargingPeacetimeCost()) {
+        CampaignOptions campaignOptions = getCampaign().getCampaignOptions();
+        if (campaignOptions.isChargingPeacetimeSpareParts()) {
             financialLine.append(formattingFinancialReport(resourceMap.getString("spareParts.text"), 2,
                   String.format(formatted, report.getMonthlySparePartCosts().toAmountAndSymbolString())));
+        }
+        if (campaignOptions.isChargingPeacetimeTrainingMunitions()) {
             financialLine.append(formattingFinancialReport(resourceMap.getString("trainingMunitions.text"), 2,
                   String.format(formatted, report.getMonthlyAmmoCosts().toAmountAndSymbolString())));
+        }
+        if (campaignOptions.isChargingPeacetimeFuel()) {
             financialLine.append(formattingFinancialReport(resourceMap.getString("fuel.text"), 2,
                   String.format(formatted, report.getMonthlyFuelCosts().toAmountAndSymbolString())));
         }
@@ -738,7 +744,7 @@ public final class FinancesTab extends CampaignGuiTab {
      * {@link #refreshFinancialReport()}.</p>
      */
     @Subscribe
-    public void handle(OrganizationChangedEvent ev) {
+    public void handle(BulkGenerationCompletedEvent ev) {
         financialTransactionsScheduler.schedule();
     }
 

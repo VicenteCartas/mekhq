@@ -79,6 +79,7 @@ import megamek.client.ui.dialogs.abstractDialogs.AutoResolveProgressDialog;
 import megamek.client.ui.dialogs.gameConnectionDialogs.ConnectDialog;
 import megamek.client.ui.dialogs.gameConnectionDialogs.HostDialog;
 import megamek.client.ui.dialogs.helpDialogs.AutoResolveSimulationLogDialog;
+import megamek.client.ui.dialogs.releaseNotes.ReleaseNotes;
 import megamek.client.ui.preferences.PreferencesNode;
 import megamek.client.ui.preferences.SuitePreferences;
 import megamek.client.ui.util.UIUtil;
@@ -266,6 +267,7 @@ public class MekHQ implements GameListener {
                       "Welcome to " + MHQConstants.PROJECT_NAME + " " + MHQConstants.VERSION);
             }
         });
+        ReleaseNotes.rememberRunningVersion();
     }
 
     /**

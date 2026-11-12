@@ -113,6 +113,7 @@ import mekhq.campaign.digitalGM.stratCon.StratConCampaignState;
 import mekhq.campaign.digitalGM.stratCon.StratConCoords;
 import mekhq.campaign.digitalGM.stratCon.StratConTrackState;
 import mekhq.campaign.digitalGM.stratCon.facility.StratConFacility;
+import mekhq.campaign.digitalGM.stratCon.gm.StratConGMs;
 import mekhq.campaign.enums.DailyReportType;
 import mekhq.campaign.events.DayEndingEvent;
 import mekhq.campaign.events.DeploymentChangedEvent;
@@ -514,6 +515,10 @@ public class CampaignNewDayManager {
 
         campaign.getPlayerForce().getHumanResources().resetAsTechMinutes(campaign.getCampaignOptions());
 
+        // Formations whose StratCon deployment ends today come home before the hangar is processed. Salvage from their
+        // battle arrives today too, and New Day Mass Repair must see their damaged units alongside it.
+        StratConGMs.processForceReturns(campaign);
+
         processNewDayUnits();
 
         processNewDayFormations();
@@ -590,6 +595,12 @@ public class CampaignNewDayManager {
         // clear above, as happened when this ran before the day was started).
         // When "no release" is also set, only hire to cover shortfalls (skip firing surplus).
         final MHQOptions mhqOptions = MekHQ.getMHQOptions();
+
+        // Return temp crew that units no longer have seats for (e.g. a temp who covered an injured crew member who has
+        // since recovered) to the pool first, so over-crewed units are fully crewed again and the fills below see the
+        // spare temp crew as available.
+        campaign.getPlayerForce().getHumanResources().returnSurplusTempCrewToPool(campaign);
+
         if (mhqOptions.getNewDayAsTechPoolFill()) {
             if (mhqOptions.getNewDayAsTechPoolNoRelease()) {
                 campaign.fillAsTechPool();
