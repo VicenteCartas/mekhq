@@ -176,6 +176,11 @@ final class GlbProp implements Disposable {
         return parts.stream().mapToInt(part -> part.mesh().getNumVertices()).sum();
     }
 
+    /** The meshes of the parts made of material {@code material}, for a view to draw its own way. */
+    List<Mesh> meshes(String material) {
+        return parts.stream().filter(part -> part.material().equals(material)).map(Part::mesh).toList();
+    }
+
     /** Where a hologram stands, in the prop's Y-up metres. */
     Vector3 anchor() {
         return anchor;

@@ -72,6 +72,11 @@ The 12 tabs and the menu bar are replaced by three things that work together:
   around the force, with the campaign's top bar (date, location, funds, alerts) over it. The day
   starts here, and it's where you return to. It replaced an earlier idea of making the start
   screen's command-post art clickable.
+  Stations stand around the holotable. A click steps the camera over to one, and a right click or
+  Esc steps back:
+  - the operations table, a green sand hologram that opens the war table;
+  - the comms console, whose screens blink amber while a transmission waits;
+  - the status wall, whose boards show the date and location, the funds, and the alerts.
 - **Nav rail.** A slim, always-visible bar with an icon for each area (Command, Map, Forces,
   Roster, Hangar, Logistics, Finances), with hotkeys 1-7. It's for fast travel during long
   campaigns. An area with several screens opens a flyout listing them.

@@ -312,6 +312,9 @@ final class HubScreen extends ApplicationAdapter {
     private Label where;
     private Label funds;
     private Table alerts;
+    /** The hints along the bottom, and the station they are for. */
+    private Label controls;
+    private HqStations.Station controlsFor;
     private final Map<HubArea, UiButton> rail = new EnumMap<>(HubArea.class);
     private UiPopover flyout;
     private UiMenuList flyoutList;
@@ -333,7 +336,7 @@ final class HubScreen extends ApplicationAdapter {
      */
     HubScreen(Path glb, @Nullable StarChart chart, String campaignName, float scale, Hub hub,
           BorderHistory history) {
-        holo = new HoloTableView(glb, chart, () -> showMap(true));
+        holo = new HoloTableView(glb, chart, () -> showMap(true), () -> openWarTable(null));
         map = new StarMapView(new StarMapView.Listener() {
             @Override
             public void hovered(@Nullable StarMap.Star star) {
@@ -453,6 +456,7 @@ final class HubScreen extends ApplicationAdapter {
         map.create();
         theme = new UiTheme(Configuration.fontsDir());
         ui = new UiKit(theme.skin);
+        holo.fonts(theme.font("hq-board-label", UiTheme.ROBOTO, 9), theme.font("hq-board-figure", UiTheme.ROBOTO, 30));
         labels = new StarLabels(theme);
         stage = new Stage(new ScreenViewport());
         stage.addActor(layout());
@@ -678,7 +682,7 @@ final class HubScreen extends ApplicationAdapter {
                 map.clearChoice();
             } else if (mapOpen) {
                 showMap(false);
-            } else {
+            } else if (!holo.back()) {
                 hub.go(new PaletteEntry.Classic());
             }
             return true;
@@ -761,7 +765,7 @@ final class HubScreen extends ApplicationAdapter {
         leave.add(back);
         leave.add(ui.caption(getText("HqHub.escape"), true)).padLeft(space("md"));
         root.add(leave).left().bottom();
-        Label controls = ui.caption(getText("HqHub.controls"), true);
+        controls = ui.caption(getText("HqHub.controls"), true);
         controls.setAlignment(Align.right);
         root.add(controls).right().bottom();
         return root;
@@ -2300,6 +2304,11 @@ final class HubScreen extends ApplicationAdapter {
             UiKit.Tone tone = alert == TopBar.Alert.SCENARIO_DUE ? UiKit.Tone.WARN : UiKit.Tone.BAD;
             alerts.add(ui.chip(getText("HqHub.alert." + alert.name()), tone, true)).padLeft(space("sm"));
         }
+        List<String> raised = bar.alerts().stream().map(alert -> getText("HqHub.alert." + alert.name())).toList();
+        holo.boards(new String[] { getText("HqHub.board.date"), getText("HqHub.board.funds"),
+                    getText("HqHub.board.status") }, bar.dateText(), whereabouts(bar), bar.fundsText(), campaignName,
+              raised.isEmpty() ? getText("HqHub.board.clear") : getFormattedText("HqHub.board.alerts", raised.size()),
+              raised, bar.alerts().contains(TopBar.Alert.SCENARIO_DUE));
     }
 
     private static String whereabouts(TopBar bar) {
@@ -2349,12 +2358,18 @@ final class HubScreen extends ApplicationAdapter {
             map.render(drop.mapLight(), true);
         } else {
             float fade = ease((progress - FADE_START) / (1 - FADE_START));
+            holo.incoming(transmissions.active());
             holo.render(ease(progress / DIVE_END), fade);
             if (fade > 0) {
                 map.render(fade, false);
             }
         }
-        boolean hand = !mapOpen && progress == 0 && holo.hoveringMap();
+        boolean hand = !mapOpen && progress == 0 && holo.hovering();
+        if (holo.focus() != controlsFor) {
+            controlsFor = holo.focus();
+            controls.setText(getText(controlsFor == HqStations.Station.TABLE ? "HqHub.controls"
+                  : "HqHub.station." + controlsFor.name()));
+        }
         if (hand != handCursor) {
             handCursor = hand;
             Gdx.graphics.setSystemCursor(hand ? Cursor.SystemCursor.Hand : Cursor.SystemCursor.Arrow);
