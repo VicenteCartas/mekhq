@@ -281,8 +281,8 @@ MegaMek's board renderer is only used to dive into a scenario.
   tab. On the star map, a contract's pin gets "Go to operation", which makes an orbital drop
   (`OrbitalDrop`, about two seconds) from the pin into the table: the star resolves into a cyan
   wireframe globe that turns the operation's amber marker to the camera; the camera falls onto the
-  marker as the globe opens out flat beneath it, turning green, and the war table's hex grid locks
-  in from the marker outward before the table shows under it with its usual opening. The table
+  marker as the globe opens out flat beneath it, turning green, and the sector's own hexes locks
+  in from the marker outward, filling just the table's area, before the table shows under it with its usual opening. The table
   is built before the drop starts, so the drop plays without a hitch. Leaving the table climbs back
   out the same way to the map. A click, Esc, Space or Enter skips it, and with Reduce motion the
   table opens directly.

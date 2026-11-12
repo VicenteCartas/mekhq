@@ -161,6 +161,8 @@ final class OrbitalDrop implements Disposable {
           in vec3 v_world;
           // The grid's origin and a hex's radius
           uniform vec3 u_grid;
+          // The sector's first and last column, then its first and last row
+          uniform vec4 u_hexes;
           uniform vec3 u_colour;
           uniform float u_alpha;
           uniform float u_front;
@@ -186,17 +188,20 @@ final class OrbitalDrop implements Disposable {
 
           void main() {
               vec2 p = v_world.xz;
-              vec2 local = (p - centreOf(hexAt(p))) / u_grid.z;
+              vec2 at = hexAt(p);
+              float inside = step(u_hexes.x - 0.5, at.x) * step(at.x, u_hexes.y + 0.5)
+                    * step(u_hexes.z - 0.5, at.y) * step(at.y, u_hexes.w + 0.5);
+              vec2 local = (p - centreOf(at)) / u_grid.z;
               float d = max(abs(local.y), max(abs(dot(local, vec2(0.8660254, 0.5))),
                     abs(dot(local, vec2(0.8660254, -0.5)))));
-              float w = max(fwidth(d), 1e-5);
+              // A pixel's width in hexes, from the position: d's own derivative jumps where its nearest edge changes
+              float w = max(length(fwidth(p)) / u_grid.z * 0.75, 1e-5);
               float line = 1.0 - smoothstep(0.4 * w, 1.4 * w, 0.8660254 - d);
               float away = length(p);
               float locked = 1.0 - smoothstep(u_front - 0.06, u_front, away);
               float front = exp(-pow((away - u_front) / 0.05, 2.0));
-              float fade = 1.0 - smoothstep(0.9, 1.9, away);
               float glow = line * (0.32 * locked + 0.9 * front) + front * 0.025;
-              fragColor = vec4(u_colour * glow * fade * u_alpha, 1.0);
+              fragColor = vec4(u_colour * glow * inside * u_alpha, 1.0);
           }
           """;
 
@@ -219,7 +224,7 @@ final class OrbitalDrop implements Disposable {
 
     private PerspectiveCamera camera;
     private final Vector2 star = new Vector2();
-    private final float[] grid = { 0, 0, 0.06f };
+    private final float[] grid = { 0, 0, 0.06f, -8, 8, -6, 6 };
     private ShaderProgram lineShader;
     private ShaderProgram gridShader;
     private ShaderProgram veilShader;
@@ -302,9 +307,12 @@ final class OrbitalDrop implements Disposable {
         return (1 - 0.5f * smooth(clock / FALL)) * (1 - veil());
     }
 
-    /** Lands the drop on the war table's sector's hex grid: its origin's x and z and a hex's radius. */
+    /**
+     * Lands the drop on the war table's sector's hex grid: its origin's x and z, a hex's radius, then its first and
+     * last column and its first and last row.
+     */
     void grid(float[] sector) {
-        System.arraycopy(sector, 0, grid, 0, 3);
+        System.arraycopy(sector, 0, grid, 0, grid.length);
     }
 
     /** Puts the globe over the star it rises from, in normalised device coordinates; null when it's off screen. */
@@ -393,6 +401,7 @@ final class OrbitalDrop implements Disposable {
             gridShader.bind();
             gridShader.setUniformMatrix("u_projView", camera.combined);
             set(gridShader, "u_grid", grid[0], grid[1], grid[2]);
+            set(gridShader, "u_hexes", grid[3], grid[4], grid[5], grid[6]);
             set(gridShader, "u_colour", GREEN.x, GREEN.y, GREEN.z);
             set(gridShader, "u_alpha", hexes);
             set(gridShader, "u_front", (clock - 1.3f) * 4);
@@ -444,8 +453,8 @@ final class OrbitalDrop implements Disposable {
 
     /**
      * The globe's lines: its meridians and parallels every 15 degrees, each vertex where it lies on the globe as
-     * lengths along it from the marker, revealed from the marker outward; then the marker, a ring with ticks round it
-     * and a beam up from it, and a ring pulsing out from it.
+     * lengths along it from the marker, revealed from the marker outward; then the marker, a ring with ticks round it,
+     * and a ring pulsing out from it.
      */
     private static Mesh globe() {
         FloatArray lines = new FloatArray();
@@ -480,8 +489,6 @@ final class OrbitalDrop implements Disposable {
             vertex(lines, MathUtils.cos(a) * ring * 1.4f, MathUtils.sin(a) * ring * 1.4f, 0, 0, 1);
             vertex(lines, MathUtils.cos(a) * ring * 2.1f, MathUtils.sin(a) * ring * 2.1f, 0, 0, 1);
         }
-        vertex(lines, 0, 0, 0, 0, 1);
-        vertex(lines, 0, 0, 0.45f, 0, 1);
         Mesh mesh = new Mesh(true, lines.size / 5, 0, new VertexAttributes(
               new VertexAttribute(VertexAttributes.Usage.Generic, 2, "a_surface"),
               new VertexAttribute(VertexAttributes.Usage.Generic, 1, "a_lift"),
@@ -517,7 +524,8 @@ final class OrbitalDrop implements Disposable {
         switch (values.length) {
             case 1 -> shader.setUniformf(name, values[0]);
             case 2 -> shader.setUniformf(name, values[0], values[1]);
-            default -> shader.setUniformf(name, values[0], values[1], values[2]);
+            case 3 -> shader.setUniformf(name, values[0], values[1], values[2]);
+            default -> shader.setUniformf(name, values[0], values[1], values[2], values[3]);
         }
     }
 }

@@ -267,6 +267,10 @@ final class WarTableView implements Disposable {
     private float radius = 0.06f;
     private float originX;
     private float originZ;
+    private int firstColumn;
+    private int lastColumn;
+    private int firstRow;
+    private int lastRow;
     private float scanFrom;
     private float scanTo;
     private float[] tops = new float[0];
@@ -920,9 +924,12 @@ final class WarTableView implements Disposable {
         return camera.project(world);
     }
 
-    /** The sector's hex grid: its origin's x and z on the table and a hex's radius. */
+    /**
+     * The sector's hex grid: its origin's x and z on the table, a hex's radius, then the first and last column and the
+     * first and last row of its hexes.
+     */
     float[] grid() {
-        return new float[] { originX, originZ, radius };
+        return new float[] { originX, originZ, radius, firstColumn, lastColumn, firstRow, lastRow };
     }
 
     /** How large a hex shows at {@code world}, in pixels across. */
@@ -1485,6 +1492,10 @@ final class WarTableView implements Disposable {
         if (minX > maxX) {
             minX = maxX = minY = maxY = 0;
         }
+        firstColumn = minX;
+        lastColumn = maxX;
+        firstRow = minY;
+        lastRow = maxY;
         int columns = maxX - minX + 1;
         int rows = maxY - minY + 1;
         float across = 1.5f * (columns - 1) + 2;
