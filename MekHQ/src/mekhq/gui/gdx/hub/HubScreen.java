@@ -75,6 +75,7 @@ import com.badlogic.gdx.scenes.scene2d.utils.Drawable;
 import com.badlogic.gdx.utils.Align;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
 import jakarta.annotation.Nullable;
+import megamek.client.ui.clientGUI.GUIPreferences;
 import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent.StarChart;
 import megamek.client.ui.design.DesignTokens;
 import megamek.client.ui.gdx.UiButton;
@@ -286,6 +287,13 @@ final class HubScreen extends ApplicationAdapter {
     private Stage stage;
     /** The campaign's immersive dialogs, over everything else. */
     private final TransmissionView transmissions = new TransmissionView();
+    /** The drop from the star map down onto the war table, and the climb back out. */
+    private final OrbitalDrop drop = new OrbitalDrop();
+    /** The system the drop falls from, once the operations come, or fell from; null for none. */
+    private @Nullable String dropStar;
+    /** Whether the table showing was dropped onto from the star map, so leaving it climbs back out. */
+    private boolean dropped;
+    private final Vector2 starDevice = new Vector2();
     private final WarTable warTable = new WarTable(this::closeWarTable, new WarTable.Orders() {
         @Override
         public void deploy(UUID contract, int sector, int x, int y, int force) {
@@ -466,6 +474,7 @@ final class HubScreen extends ApplicationAdapter {
         stage.addActor(paletteLayer());
         transmissions.create(theme, ui, scale);
         warTable.create(theme, ui, scale);
+        drop.create();
         meter.create(theme, scale);
         InputAdapter keys = new InputAdapter() {
             @Override
@@ -473,8 +482,8 @@ final class HubScreen extends ApplicationAdapter {
                 return HubScreen.this.keyDown(keycode);
             }
         };
-        Gdx.input.setInputProcessor(new InputMultiplexer(blocker(), meter.input(), transmissions.input(), table(), stage,
-              keys, view()));
+        Gdx.input.setInputProcessor(new InputMultiplexer(blocker(), dropping(), meter.input(), transmissions.input(),
+              table(), stage, keys, view()));
         resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
     }
 
@@ -592,6 +601,58 @@ final class HubScreen extends ApplicationAdapter {
             @Override
             public boolean scrolled(float amountX, float amountY) {
                 return blocked;
+            }
+        };
+    }
+
+    /** Swallows every input while the orbital drop plays; a click, Esc, Space or Enter skips it. */
+    private InputAdapter dropping() {
+        return new InputAdapter() {
+            @Override
+            public boolean keyDown(int keycode) {
+                if (drop.active() && (keycode == Input.Keys.ESCAPE || keycode == Input.Keys.SPACE
+                      || keycode == Input.Keys.ENTER)) {
+                    drop.skip();
+                }
+                return drop.active();
+            }
+
+            @Override
+            public boolean keyUp(int keycode) {
+                return drop.active();
+            }
+
+            @Override
+            public boolean keyTyped(char character) {
+                return drop.active();
+            }
+
+            @Override
+            public boolean touchDown(int screenX, int screenY, int pointer, int button) {
+                if (drop.active()) {
+                    drop.skip();
+                }
+                return drop.active();
+            }
+
+            @Override
+            public boolean touchUp(int screenX, int screenY, int pointer, int button) {
+                return drop.active();
+            }
+
+            @Override
+            public boolean touchDragged(int screenX, int screenY, int pointer) {
+                return drop.active();
+            }
+
+            @Override
+            public boolean mouseMoved(int screenX, int screenY) {
+                return drop.active();
+            }
+
+            @Override
+            public boolean scrolled(float amountX, float amountY) {
+                return drop.active();
             }
         };
     }
@@ -1879,7 +1940,10 @@ final class HubScreen extends ApplicationAdapter {
         hoverCard.setVisible(false);
     }
 
-    /** Takes the player to the war table, the operation at the system {@code systemId} first. */
+    /**
+     * Takes the player to the war table, the operation at the system {@code systemId} first; from the star map, the
+     * camera drops from the system down onto it.
+     */
     private void openWarTable(@Nullable String systemId) {
         if (flyout.isVisible()) {
             flyout.cancel();
@@ -1887,12 +1951,25 @@ final class HubScreen extends ApplicationAdapter {
         if (mapMenu.isVisible()) {
             mapMenu.cancel();
         }
+        boolean drops = systemId != null && mapOpen && progress >= 1 && !drop.active()
+              && !GUIPreferences.getInstance().getReduceMotion();
+        dropStar = drops ? systemId : null;
         hub.warTable(systemId);
     }
 
-    /** The campaign's operations came: the war table opens on them. */
+    /**
+     * The campaign's operations came: the war table opens on them; from the star map, built first so the drop onto it
+     * plays without a hitch.
+     */
     void warTable(List<WarTableSnapshot> operations) {
         warTable.open(operations);
+        StarMap.Star star = dropStar == null || !mapOpen ? null : map.system(dropStar);
+        dropped = star != null;
+        if (star != null) {
+            map.dive(star);
+            drop.grid(warTable.grid());
+            drop.drop();
+        }
         hub.warTableShown(true);
         hoverCard.setVisible(false);
         Gdx.graphics.setSystemCursor(Cursor.SystemCursor.Arrow);
@@ -1907,6 +1984,11 @@ final class HubScreen extends ApplicationAdapter {
     private void closeWarTable() {
         warTable.close();
         hub.warTableShown(false);
+        if (dropped && mapOpen && !GUIPreferences.getInstance().getReduceMotion()) {
+            drop.climb();
+            map.surface();
+        }
+        dropped = false;
     }
 
     /** The war table's input, all of it while the table is up. */
@@ -2239,6 +2321,7 @@ final class HubScreen extends ApplicationAdapter {
         }
         transmissions.resize(width, height);
         warTable.resize(width, height);
+        drop.resize(width, height);
         meter.resize(width, height);
     }
 
@@ -2251,14 +2334,19 @@ final class HubScreen extends ApplicationAdapter {
             pending = null;
         }
         advance(delta);
-        if (warTable.shown()) {
+        if (drop.active()) {
+            drop.star(dropStar != null && map.device(dropStar, starDevice) ? starDevice : null);
+            drop.advance(delta, warTable.shown());
+        }
+        if (warTable.shown() && drop.tableShows()) {
             warTable.render(delta);
+            drop.render();
             transmissions.render(delta);
             meter.end(Gdx.graphics.getDeltaTime());
             return;
         }
         if (progress >= 1) {
-            map.render();
+            map.render(drop.mapLight(), true);
         } else {
             float fade = ease((progress - FADE_START) / (1 - FADE_START));
             holo.render(ease(progress / DIVE_END), fade);
@@ -2286,6 +2374,7 @@ final class HubScreen extends ApplicationAdapter {
         placeChrome();
         stage.act(delta);
         stage.draw();
+        drop.render();
         transmissions.render(delta);
         meter.end(Gdx.graphics.getDeltaTime());
     }
@@ -2294,6 +2383,7 @@ final class HubScreen extends ApplicationAdapter {
     public void dispose() {
         transmissions.dispose();
         warTable.dispose();
+        drop.dispose();
         meter.dispose();
         hub.disposed();
         holo.dispose();

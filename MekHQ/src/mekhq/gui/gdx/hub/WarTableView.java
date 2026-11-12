@@ -111,7 +111,9 @@ final class WarTableView implements Disposable {
     private static final float HOLO_AT = 1.5f;
     static final float FIELD_OF_VIEW = 40;
     /** How steeply the camera looks down on the map when a sector shows, in degrees. */
-    private static final float DEFAULT_PITCH = 58;
+    static final float DEFAULT_PITCH = 58;
+    /** How far off the camera looks over the map as a sector shows. */
+    static final float DEFAULT_DISTANCE = 2.15f;
     private static final float CLICK_SLOP = 6;
     /** How long the sector shows as a hologram alone, and the opening scan then takes to paint the ground in, in s. */
     private static final float INTRO_SECONDS = 0.35f;
@@ -273,7 +275,7 @@ final class WarTableView implements Disposable {
     private float clock;
     private float yaw;
     private float pitch = 52;
-    private float distance = 2.15f;
+    private float distance = DEFAULT_DISTANCE;
     private final Vector3 target = new Vector3(0, TABLE_TOP, 0);
     private final Vector3 focus = new Vector3(0, TABLE_TOP, 0);
     private int hovered = -1;
@@ -467,7 +469,7 @@ final class WarTableView implements Disposable {
         focus.set(0, TABLE_TOP, 0);
         yaw = 0;
         pitch = DEFAULT_PITCH;
-        distance = 2.15f;
+        distance = DEFAULT_DISTANCE;
         lifted.values().forEach(Runnable::run);
         lifted.clear();
         lifting.clear();
@@ -916,6 +918,11 @@ final class WarTableView implements Disposable {
     /** Projects {@code world} onto the screen, y up; z beyond 1 is behind the camera. */
     Vector3 project(Vector3 world) {
         return camera.project(world);
+    }
+
+    /** The sector's hex grid: its origin's x and z on the table and a hex's radius. */
+    float[] grid() {
+        return new float[] { originX, originZ, radius };
     }
 
     /** How large a hex shows at {@code world}, in pixels across. */

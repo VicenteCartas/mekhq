@@ -654,6 +654,11 @@ final class WarTable implements Disposable {
         return sectorIndex;
     }
 
+    /** The hex grid of the sector shown: its origin's x and z on the table and a hex's radius. */
+    float[] grid() {
+        return view.grid();
+    }
+
     /** Whether the sector shown has its ground drawn (or the map's given up waiting for it). */
     boolean groundReady() {
         return view.ready();

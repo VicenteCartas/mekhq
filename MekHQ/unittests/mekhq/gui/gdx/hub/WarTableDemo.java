@@ -56,6 +56,7 @@ import com.badlogic.gdx.InputAdapter;
 import com.badlogic.gdx.InputMultiplexer;
 import com.badlogic.gdx.backends.lwjgl3.Lwjgl3Application;
 import com.badlogic.gdx.backends.lwjgl3.Lwjgl3ApplicationConfiguration;
+import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.Pixmap;
 import com.badlogic.gdx.graphics.PixmapIO;
 import com.badlogic.gdx.math.Vector2;
@@ -165,7 +166,9 @@ public final class WarTableDemo {
         configuration.setOpenGLEmulation(Lwjgl3ApplicationConfiguration.GLEmulation.GL30, 4, 3);
         new Lwjgl3Application(new ApplicationAdapter() {
             private WarTable table;
+            private final OrbitalDrop drop = new OrbitalDrop();
             private int frames;
+            private int dropFrames;
 
             @Override
             public void create() {
@@ -176,6 +179,9 @@ public final class WarTableDemo {
                 table.create(theme, ui, 1);
                 table.resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
                 table.open(List.of(operation));
+                drop.create();
+                drop.grid(table.grid());
+                drop.drop();
                 Gdx.input.setInputProcessor(new InputMultiplexer(new InputAdapter() {
                     @Override
                     public boolean keyDown(int keycode) {
@@ -191,10 +197,15 @@ public final class WarTableDemo {
             @Override
             public void resize(int width, int height) {
                 table.resize(width, height);
+                drop.resize(width, height);
             }
 
             @Override
             public void render() {
+                if (drop.active()) {
+                    falling();
+                    return;
+                }
                 table.render(Math.min(Gdx.graphics.getDeltaTime(), 0.1f));
                 // The script counts only frames with the sector's ground drawn, however long the board takes to load
                 if (table.groundReady()) {
@@ -287,6 +298,30 @@ public final class WarTableDemo {
                 }
             }
 
+            /** The orbital drop onto the table it opens with, as from the star map, though there's none here. */
+            private void falling() {
+                drop.advance(capture ? 1 / 60f : Math.min(Gdx.graphics.getDeltaTime(), 0.1f), table.shown());
+                if (drop.tableShows()) {
+                    table.render(Math.min(Gdx.graphics.getDeltaTime(), 0.1f));
+                } else {
+                    Gdx.gl.glClearColor(0.01f, 0.012f, 0.02f, 1);
+                    Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT | GL20.GL_DEPTH_BUFFER_BIT);
+                }
+                drop.render();
+                dropFrames++;
+                if (capture) {
+                    switch (dropFrames) {
+                        case 20 -> shot("drop1Globe");
+                        case 55 -> shot("drop2Falling");
+                        case 75 -> shot("drop3Opening");
+                        case 95 -> shot("drop4Locking");
+                        case 120 -> shot("drop5Landing");
+                        default -> {
+                        }
+                    }
+                }
+            }
+
             /** The force dragged onto the table, to carry back off it. */
             private int sent = -1;
 
@@ -316,6 +351,7 @@ public final class WarTableDemo {
             @Override
             public void dispose() {
                 table.dispose();
+                drop.dispose();
             }
         }, configuration);
     }
