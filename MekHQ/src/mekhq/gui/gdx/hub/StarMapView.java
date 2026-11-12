@@ -224,6 +224,8 @@ final class StarMapView {
     private boolean emptyShown = true;
     /** The distance the camera glides to, or NaN when it stays. */
     private float wantedDistance = Float.NaN;
+    /** How far off the camera was before it dove onto a system; NaN when it hasn't. */
+    private float beforeDive = Float.NaN;
     /** The ruler: whether one is laid, being drawn out, its ends on the plane and its strokes. */
     private boolean ruled;
     private boolean measuring;
@@ -542,6 +544,39 @@ final class StarMapView {
             flyTo(star);
             choose(at);
         }
+    }
+
+    /** Flies the camera down onto {@code star}, as close as it goes, for an orbital drop to fall from. */
+    void dive(StarMap.Star star) {
+        beforeDive = Float.isNaN(wantedDistance) ? distance : wantedDistance;
+        flyTo(star);
+        wantedDistance = MIN_DISTANCE;
+    }
+
+    /** Glides the camera back out as far as it was before it {@link #dive dove}. */
+    void surface() {
+        if (!Float.isNaN(beforeDive)) {
+            wantedDistance = beforeDive;
+            beforeDive = Float.NaN;
+        }
+    }
+
+    /**
+     * Where the system {@code id} shows, in normalised device coordinates, -1 to 1 either way, into {@code out}; false
+     * when the map shows no such system or it's behind the camera.
+     */
+    boolean device(String id, Vector2 out) {
+        StarMap.Star star = system(id);
+        if (star == null || camera == null) {
+            return false;
+        }
+        Vector3 at = world(star.x(), star.y(), new Vector3());
+        if (at.cpy().sub(camera.position).dot(camera.direction) <= camera.near) {
+            return false;
+        }
+        at.prj(camera.combined);
+        out.set(at.x, at.y);
+        return true;
     }
 
     /** Opens the map over ({@code x}, {@code y}) light years, where the holotable centres its own. */

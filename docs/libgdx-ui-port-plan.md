@@ -72,6 +72,11 @@ The 12 tabs and the menu bar are replaced by three things that work together:
   around the force, with the campaign's top bar (date, location, funds, alerts) over it. The day
   starts here, and it's where you return to. It replaced an earlier idea of making the start
   screen's command-post art clickable.
+  Stations stand around the holotable. A click steps the camera over to one, and a right click or
+  Esc steps back:
+  - the operations table, a green sand hologram that opens the war table;
+  - the comms console, whose screens blink amber while a transmission waits;
+  - the status wall, whose boards show the date and location, the funds, and the alerts.
 - **Nav rail.** A slim, always-visible bar with an icon for each area (Command, Map, Forces,
   Roster, Hangar, Logistics, Finances), with hotkeys 1-7. It's for fast travel during long
   campaigns. An area with several screens opens a flyout listing them.
@@ -251,7 +256,7 @@ Each phase ships something playable and keeps everything else reachable through 
 - **Contract market**: job boards with cards. Negotiation becomes an immersive conversation built
   on `ImmersiveDialogCore` ideas.
 - **Briefing**: the mission and scenario room.
-- **StratCon**: a 3D hex operational map on the board renderer, replacing `StratConPanel`.
+- **StratCon**: the **war table**, an operations map of the sector, replacing `StratConPanel`. See [The war table](#the-war-table).
 - **Scenarios**: launching a battle and resolving it becomes an after-action screen
   (`ResolveScenarioWizardDialog`).
 
@@ -267,6 +272,99 @@ Each phase ships something playable and keeps everything else reachable through 
 - GM tools and editors (the planetary system, contract and scenario editors) can stay Swing the
   longest; they're tools, not gameplay.
 - Finally delete `CampaignGUI` and the Swing tabs.
+
+## The war table
+
+StratCon is the part of MekHQ that already plays like a board game, so it gets a 3D operations map:
+a full-screen command display of the sector with the operation's tracking laid over it. It's a
+strategic map, not a battle board: hexes are regions, so the ground shows what a region is like
+rather than the board a fight would be on. The look aims at serious military sci-fi: no flicker, no
+pieces dropping in, no camera swoop. The table has its own renderer, which builds a sector at once;
+MegaMek's board renderer is only used to dive into a scenario.
+
+- **Where it lives.** The Command area's StratCon entry opens the war table instead of the Swing
+  tab. On the star map, a contract's pin gets "Go to operation", which makes an orbital drop
+  (`OrbitalDrop`, about two seconds) from the pin into the table: the star resolves into a cyan
+  wireframe globe that turns the operation's amber marker to the camera; the camera falls onto the
+  marker as the globe opens out flat beneath it, turning green, and the sector's own hexes locks
+  in from the marker outward, filling just the table's area, before the table shows under it with its usual opening. The table
+  is built before the drop starts, so the drop plays without a hitch. Leaving the table climbs back
+  out the same way to the map. A click, Esc, Space or Enter skips it, and with Reduce motion the
+  table opens directly.
+- **The map.** One sector at a time. `WarTableGround` gives the sector its relief: water sits low, hills
+  rise a third of a hex and mountains up to a hex, the land rolls in a long, low swell, and heights
+  blend smoothly between hexes, with each hex's own height kept at its middle. A low sun from the
+  left models the slopes, and the heights' shadows and the hollows' shade are baked into the
+  ground's mesh. Scouted hexes show the ground as it is:
+  the biome's surface textures from mm-data (`WarTableAssets`), each covering about a hex and
+  sampled at two scales so the repeats don't show, blended across ragged hex edges, with water
+  (dark and calm, with long low swells and a line of surf at the shore), roads, city blocks,
+  contour lines and a hairline hex grid. Unscouted hexes are a
+  green holographic wireframe of the same relief, so the table shows what intel there is and
+  where it runs out. Toward the unscouted ground the scouted ground dissolves into the hologram
+  along a ragged, faintly glowing edge, and the hover and selection rims sit on the hexes. The sector opens with a scan sweeping across it that paints the
+  scouted ground in. F (left out of the hint) previews the fog of war on a campaign that's scouted
+  everything: hexes more than two from the player's forces, own facilities and scenarios turn
+  back into hologram, and F again burns the fog off them.
+- **Plot mode.** The Plot button (or P) flattens the map into a printed operations map: flat
+  colours per terrain overprinted with map symbols (tree rings for woods, stipple for arid ground,
+  hachures for peaks, dashes for snow, a street grid for built-up areas, wave lines for water) on a
+  faint paper grain, plus the relief's contours and hill shade, roads and the grid, without the props.
+  Unscouted ground keeps its hologram's contours. P again lifts it back.
+- **On the map.** Scenery is kept small: a few trees or rocks per scouted hex, from the biome's
+  density, with one major feature per hex at most. Bare rocks take the texture of the biome's
+  cliffs. Facilities are scenery and building models
+  (a barracks, a hangar, a radar) from mm-data, sized by the facility's tier but kept within their
+  hex, standing on a dark hex plate rimmed in their side's colour (blue for the player's, red for
+  the enemy's). Unscouted facilities show as holographic ghosts. Scenarios are beacons with a ring that
+  empties as the deadline nears and a low marker of light.
+- **Forces are standees.** Each force stands on its hex as its TO&E icon cut out and given
+  thickness (MegaMek's `GpuStandee` builds the geometry), turned to the camera and leaned back a
+  little so it reads from above. It stands on a thin rod in a hex base like the facilities'
+  plates, rimmed in the player's blue. Two or three forces on a hex fan out round it, spaced so
+  their bases don't touch; more stand as one standee on a stack of bases, one for each. On a
+  facility's hex the forces stand at the front of its plate, and the facility steps back and
+  shrinks to make room.
+- **Labels.** Names sit on near-opaque plates with an edge bar in the side's or status's colour, so
+  they read over any terrain; a scenario's deadline follows its name in the status's colour. As on
+  a strategy game's map, the map's own look should tell what's where, so the Labels button (or L)
+  cycles through key labels (the default: scenarios only), all labels and none. Whatever the
+  setting, the hex hovered or picked always shows its labels.
+- **Supply and intel.** Supply runs as light flowing along the network's links, cut roads break
+  it, and points of interest show as markers. A hover card says what a hex holds, as
+  `StratConPanel`'s info pane does.
+- **Into the battle.** Clicking a scenario dives into the hex, and the real MegaMek board opens
+  under it on the game's own 3D renderer (`GpuBoardInspection`, a public face for the lobby's
+  board inspection), with the briefing beside it.
+- **Deploy and recall by hand.** The sector's reserve sits in a drawer at the table's left edge.
+  Shut, it's a tab with the reserve's count. Open, it has a tab per kind of force (ground,
+  aerospace, infantry, from `getPrimaryUnitType`), the forces under their parent TO&E force, and a
+  search by name. A real campaign's reserve can run to dozens of forces, so a strip of tiles along
+  the bottom would bury the table. The drawer slides away while a force is dragged out of it and
+  opens while one is carried off the table. Dragging a force from it lights the hexes it may go onto (`canManuallyDeployAnyForce`), and its standee
+  floats over the hex under the pointer, tinted red where it can't go. Dropping it asks for a
+  confirmation in a GL panel (it replaces the Swing deploy nag), and then the standee is set down
+  on the hex. Dragging a standee off the map onto the drawer, or using the Recall button on its hex
+  card, asks to recall it for its SP cost, and it's lifted off the map. A force that can't leave says why (`canRecallFormation`). Orders run on the
+  campaign's thread through `StratConDeploymentService.deployPrimaryForces` and
+  `StratConRulesManager.recallFormation`, and the table refreshes in place with the result.
+- **A living table.** While the table is open it watches the campaign (new days, scenario and
+  mission events) and refreshes in place. It also remembers each sector as it last showed it, so
+  opening a sector again replays what changed since. Newly scouted hexes burn their fog off in a
+  ragged front with a cyan ember edge, spreading out from the middle of the scouting. A new
+  scenario's beacon lights its hex, and a "New contact" banner calls it out. The camera turns
+  towards it if it's off screen. Finished scenarios fade away, and a facility that changes hands
+  flashes its new owner's colour. The terrain shader reads each hex's state and neighbours from a
+  small per-hex texture, for the blending, the holographic fog and the frontier.
+- **Still in Swing.** Reinforcements, auxiliary and utility units, scenario assignment and
+  resolution still go through the Swing deployment wizard and `StratConPanel`.
+- **Snapshots.** The view never touches the campaign. `WarTableSnapshot` copies a track on the
+  campaign's thread, and the table draws that copy, as the star map does.
+- **The demo.** `gradlew :MekHQ:warTableDemo` opens the table over a sector generated from a fixed
+  seed, without a campaign, so the look can be judged and captured the same way every time. Its
+  deploys and recalls change the demo's own snapshot, N passes a day (scouting, a new scenario,
+  a facility changing hands), and `-Pcapture` scripts one of each, counting frames only once the
+  sector's ground is drawn.
 
 ## Swapping UI patterns for game patterns
 

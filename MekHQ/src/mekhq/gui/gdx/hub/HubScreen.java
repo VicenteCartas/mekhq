@@ -46,6 +46,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
@@ -74,6 +75,7 @@ import com.badlogic.gdx.scenes.scene2d.utils.Drawable;
 import com.badlogic.gdx.utils.Align;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
 import jakarta.annotation.Nullable;
+import megamek.client.ui.clientGUI.GUIPreferences;
 import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent.StarChart;
 import megamek.client.ui.design.DesignTokens;
 import megamek.client.ui.gdx.UiButton;
@@ -167,6 +169,28 @@ final class HubScreen extends ApplicationAdapter {
 
         /** Reads the full record of the system {@code id}, for {@link HubScreen#dossier}. */
         void dossier(String id);
+
+        /**
+         * Reads the campaign's StratCon operations for the war table, the one at the system {@code systemId} first, which
+         * come back through {@link HubScreen#warTable(List)}.
+         */
+        void warTable(@Nullable String systemId);
+
+        /**
+         * The war table opened or closed: while it's open, a new day or a change to a scenario or contract comes back
+         * through {@link HubScreen#warTableRefresh(List)}, and plays out on the table.
+         */
+        void warTableShown(boolean shown);
+
+        /**
+         * Deploys force {@code force} onto hex ({@code x}, {@code y}) of sector {@code sector} of contract
+         * {@code contract}'s operation, the operations as they then are coming back through
+         * {@link HubScreen#warTableRefresh(List)}.
+         */
+        void deploy(UUID contract, int sector, int x, int y, int force);
+
+        /** Recalls force {@code force} off sector {@code sector} of contract {@code contract}'s operation, likewise. */
+        void recall(UUID contract, int sector, int force);
 
         /** The screen's listener is being disposed. */
         void disposed();
@@ -263,11 +287,34 @@ final class HubScreen extends ApplicationAdapter {
     private Stage stage;
     /** The campaign's immersive dialogs, over everything else. */
     private final TransmissionView transmissions = new TransmissionView();
+    /** The drop from the star map down onto the war table, and the climb back out. */
+    private final OrbitalDrop drop = new OrbitalDrop();
+    /** The system the drop falls from, once the operations come, or fell from; null for none. */
+    private @Nullable String dropStar;
+    /** Whether the table showing was dropped onto from the star map, so leaving it climbs back out. */
+    private boolean dropped;
+    private final Vector2 starDevice = new Vector2();
+    private final WarTable warTable = new WarTable(this::closeWarTable, new WarTable.Orders() {
+        @Override
+        public void deploy(UUID contract, int sector, int x, int y, int force) {
+            hub.deploy(contract, sector, x, y, force);
+        }
+
+        @Override
+        public void recall(UUID contract, int sector, int force) {
+            hub.recall(contract, sector, force);
+        }
+    });
+    /** What the campaign has at systems by their ids, as its star map marks them. */
+    private Map<String, Integer> marks = Map.of();
     private final FrameMeter meter = new FrameMeter();
     private Label date;
     private Label where;
     private Label funds;
     private Table alerts;
+    /** The hints along the bottom, and the station they are for. */
+    private Label controls;
+    private HqStations.Station controlsFor;
     private final Map<HubArea, UiButton> rail = new EnumMap<>(HubArea.class);
     private UiPopover flyout;
     private UiMenuList flyoutList;
@@ -289,7 +336,7 @@ final class HubScreen extends ApplicationAdapter {
      */
     HubScreen(Path glb, @Nullable StarChart chart, String campaignName, float scale, Hub hub,
           BorderHistory history) {
-        holo = new HoloTableView(glb, chart, () -> showMap(true));
+        holo = new HoloTableView(glb, chart, () -> showMap(true), () -> openWarTable(null));
         map = new StarMapView(new StarMapView.Listener() {
             @Override
             public void hovered(@Nullable StarMap.Star star) {
@@ -324,6 +371,7 @@ final class HubScreen extends ApplicationAdapter {
     /** The campaign's star map changed. */
     void map(StarMap changed) {
         map.show(changed);
+        marks = changed.marks();
         LocalDate before = today;
         today = changed.date();
         if (scrubber != null) {
@@ -408,6 +456,7 @@ final class HubScreen extends ApplicationAdapter {
         map.create();
         theme = new UiTheme(Configuration.fontsDir());
         ui = new UiKit(theme.skin);
+        holo.fonts(theme.font("hq-board-label", UiTheme.ROBOTO, 9), theme.font("hq-board-figure", UiTheme.ROBOTO, 30));
         labels = new StarLabels(theme);
         stage = new Stage(new ScreenViewport());
         stage.addActor(layout());
@@ -428,6 +477,8 @@ final class HubScreen extends ApplicationAdapter {
         stage.addActor(mapMenu);
         stage.addActor(paletteLayer());
         transmissions.create(theme, ui, scale);
+        warTable.create(theme, ui, scale);
+        drop.create();
         meter.create(theme, scale);
         InputAdapter keys = new InputAdapter() {
             @Override
@@ -435,7 +486,8 @@ final class HubScreen extends ApplicationAdapter {
                 return HubScreen.this.keyDown(keycode);
             }
         };
-        Gdx.input.setInputProcessor(new InputMultiplexer(blocker(), meter.input(), transmissions.input(), stage, keys, view()));
+        Gdx.input.setInputProcessor(new InputMultiplexer(blocker(), dropping(), meter.input(), transmissions.input(),
+              table(), stage, keys, view()));
         resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
     }
 
@@ -557,6 +609,58 @@ final class HubScreen extends ApplicationAdapter {
         };
     }
 
+    /** Swallows every input while the orbital drop plays; a click, Esc, Space or Enter skips it. */
+    private InputAdapter dropping() {
+        return new InputAdapter() {
+            @Override
+            public boolean keyDown(int keycode) {
+                if (drop.active() && (keycode == Input.Keys.ESCAPE || keycode == Input.Keys.SPACE
+                      || keycode == Input.Keys.ENTER)) {
+                    drop.skip();
+                }
+                return drop.active();
+            }
+
+            @Override
+            public boolean keyUp(int keycode) {
+                return drop.active();
+            }
+
+            @Override
+            public boolean keyTyped(char character) {
+                return drop.active();
+            }
+
+            @Override
+            public boolean touchDown(int screenX, int screenY, int pointer, int button) {
+                if (drop.active()) {
+                    drop.skip();
+                }
+                return drop.active();
+            }
+
+            @Override
+            public boolean touchUp(int screenX, int screenY, int pointer, int button) {
+                return drop.active();
+            }
+
+            @Override
+            public boolean touchDragged(int screenX, int screenY, int pointer) {
+                return drop.active();
+            }
+
+            @Override
+            public boolean mouseMoved(int screenX, int screenY) {
+                return drop.active();
+            }
+
+            @Override
+            public boolean scrolled(float amountX, float amountY) {
+                return drop.active();
+            }
+        };
+    }
+
     /** The keys the stage left: Esc, the palette's Ctrl+K and the areas' 1 to 7. */
     private boolean keyDown(int keycode) {
         if (paletteLayer.isVisible() || UiModal.active(stage) != null
@@ -578,7 +682,7 @@ final class HubScreen extends ApplicationAdapter {
                 map.clearChoice();
             } else if (mapOpen) {
                 showMap(false);
-            } else {
+            } else if (!holo.back()) {
                 hub.go(new PaletteEntry.Classic());
             }
             return true;
@@ -661,7 +765,7 @@ final class HubScreen extends ApplicationAdapter {
         leave.add(back);
         leave.add(ui.caption(getText("HqHub.escape"), true)).padLeft(space("md"));
         root.add(leave).left().bottom();
-        Label controls = ui.caption(getText("HqHub.controls"), true);
+        controls = ui.caption(getText("HqHub.controls"), true);
         controls.setAlignment(Align.right);
         root.add(controls).right().bottom();
         return root;
@@ -1800,6 +1904,9 @@ final class HubScreen extends ApplicationAdapter {
         StarMap.Star force = map.current();
         if (star != null) {
             menuItem("HqHub.map.menu.details", null, () -> map.focus(star));
+            if ((marks.getOrDefault(star.id(), 0) & StarMap.MISSION) != 0) {
+                menuItem("HqHub.map.menu.operation", null, () -> openWarTable(star.id()));
+            }
             if (force != null && !force.id().equals(star.id())) {
                 menuItem("HqHub.map.menu.measure", null, () -> map.measureFromForce(star));
             }
@@ -1835,6 +1942,144 @@ final class HubScreen extends ApplicationAdapter {
         mapMenu.header(title, detail).content(mapMenuList);
         mapMenu.showAt(corner.x, corner.y);
         hoverCard.setVisible(false);
+    }
+
+    /**
+     * Takes the player to the war table, the operation at the system {@code systemId} first; from the star map, the
+     * camera drops from the system down onto it.
+     */
+    private void openWarTable(@Nullable String systemId) {
+        if (flyout.isVisible()) {
+            flyout.cancel();
+        }
+        if (mapMenu.isVisible()) {
+            mapMenu.cancel();
+        }
+        boolean drops = systemId != null && mapOpen && progress >= 1 && !drop.active()
+              && !GUIPreferences.getInstance().getReduceMotion();
+        dropStar = drops ? systemId : null;
+        hub.warTable(systemId);
+    }
+
+    /**
+     * The campaign's operations came: the war table opens on them; from the star map, built first so the drop onto it
+     * plays without a hitch.
+     */
+    void warTable(List<WarTableSnapshot> operations) {
+        warTable.open(operations);
+        StarMap.Star star = dropStar == null || !mapOpen ? null : map.system(dropStar);
+        dropped = star != null;
+        if (star != null) {
+            map.dive(star);
+            drop.grid(warTable.grid());
+            drop.drop();
+        }
+        hub.warTableShown(true);
+        hoverCard.setVisible(false);
+        Gdx.graphics.setSystemCursor(Cursor.SystemCursor.Arrow);
+        handCursor = false;
+    }
+
+    /** An order on the war table was carried out: the table shows the operations as they now are. */
+    void warTableRefresh(List<WarTableSnapshot> operations) {
+        warTable.refresh(operations);
+    }
+
+    private void closeWarTable() {
+        warTable.close();
+        hub.warTableShown(false);
+        if (dropped && mapOpen && !GUIPreferences.getInstance().getReduceMotion()) {
+            drop.climb();
+            map.surface();
+        }
+        dropped = false;
+    }
+
+    /** The war table's input, all of it while the table is up. */
+    private InputProcessor table() {
+        InputProcessor table = warTable.input();
+        return new InputProcessor() {
+            @Override
+            public boolean keyDown(int keycode) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.keyDown(keycode);
+                return true;
+            }
+
+            @Override
+            public boolean keyUp(int keycode) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.keyUp(keycode);
+                return true;
+            }
+
+            @Override
+            public boolean keyTyped(char character) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.keyTyped(character);
+                return true;
+            }
+
+            @Override
+            public boolean touchDown(int screenX, int screenY, int pointer, int button) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.touchDown(screenX, screenY, pointer, button);
+                return true;
+            }
+
+            @Override
+            public boolean touchUp(int screenX, int screenY, int pointer, int button) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.touchUp(screenX, screenY, pointer, button);
+                return true;
+            }
+
+            @Override
+            public boolean touchCancelled(int screenX, int screenY, int pointer, int button) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.touchCancelled(screenX, screenY, pointer, button);
+                return true;
+            }
+
+            @Override
+            public boolean touchDragged(int screenX, int screenY, int pointer) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.touchDragged(screenX, screenY, pointer);
+                return true;
+            }
+
+            @Override
+            public boolean mouseMoved(int screenX, int screenY) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.mouseMoved(screenX, screenY);
+                return true;
+            }
+
+            @Override
+            public boolean scrolled(float amountX, float amountY) {
+                if (!warTable.shown()) {
+                    return false;
+                }
+                table.scrolled(amountX, amountY);
+                return true;
+            }
+        };
     }
 
     private void menuItem(String key, @Nullable String hint, Runnable action) {
@@ -1948,6 +2193,11 @@ final class HubScreen extends ApplicationAdapter {
             flyoutList.clearChildren();
             UiButton first = null;
             for (MHQTabType tab : tabs) {
+                if (tab == MHQTabType.STRAT_CON) {
+                    UiButton table = flyoutList.item(getText("HqHub.warTable"), null, null, false, true,
+                          () -> openWarTable(null));
+                    first = first == null ? table : first;
+                }
                 UiButton row = flyoutList.item(tab.toString(), null, null, false, true, () -> {
                     flyout.cancel();
                     hub.go(new PaletteEntry.Screen(tab));
@@ -2054,6 +2304,11 @@ final class HubScreen extends ApplicationAdapter {
             UiKit.Tone tone = alert == TopBar.Alert.SCENARIO_DUE ? UiKit.Tone.WARN : UiKit.Tone.BAD;
             alerts.add(ui.chip(getText("HqHub.alert." + alert.name()), tone, true)).padLeft(space("sm"));
         }
+        List<String> raised = bar.alerts().stream().map(alert -> getText("HqHub.alert." + alert.name())).toList();
+        holo.boards(new String[] { getText("HqHub.board.date"), getText("HqHub.board.funds"),
+                    getText("HqHub.board.status") }, bar.dateText(), whereabouts(bar), bar.fundsText(), campaignName,
+              raised.isEmpty() ? getText("HqHub.board.clear") : getFormattedText("HqHub.board.alerts", raised.size()),
+              raised, bar.alerts().contains(TopBar.Alert.SCENARIO_DUE));
     }
 
     private static String whereabouts(TopBar bar) {
@@ -2074,6 +2329,8 @@ final class HubScreen extends ApplicationAdapter {
             stage.getViewport().update(width, height, true);
         }
         transmissions.resize(width, height);
+        warTable.resize(width, height);
+        drop.resize(width, height);
         meter.resize(width, height);
     }
 
@@ -2086,16 +2343,33 @@ final class HubScreen extends ApplicationAdapter {
             pending = null;
         }
         advance(delta);
+        if (drop.active()) {
+            drop.star(dropStar != null && map.device(dropStar, starDevice) ? starDevice : null);
+            drop.advance(delta, warTable.shown());
+        }
+        if (warTable.shown() && drop.tableShows()) {
+            warTable.render(delta);
+            drop.render();
+            transmissions.render(delta);
+            meter.end(Gdx.graphics.getDeltaTime());
+            return;
+        }
         if (progress >= 1) {
-            map.render();
+            map.render(drop.mapLight(), true);
         } else {
             float fade = ease((progress - FADE_START) / (1 - FADE_START));
+            holo.incoming(transmissions.active());
             holo.render(ease(progress / DIVE_END), fade);
             if (fade > 0) {
                 map.render(fade, false);
             }
         }
-        boolean hand = !mapOpen && progress == 0 && holo.hoveringMap();
+        boolean hand = !mapOpen && progress == 0 && holo.hovering();
+        if (holo.focus() != controlsFor) {
+            controlsFor = holo.focus();
+            controls.setText(getText(controlsFor == HqStations.Station.TABLE ? "HqHub.controls"
+                  : "HqHub.station." + controlsFor.name()));
+        }
         if (hand != handCursor) {
             handCursor = hand;
             Gdx.graphics.setSystemCursor(hand ? Cursor.SystemCursor.Hand : Cursor.SystemCursor.Arrow);
@@ -2115,6 +2389,7 @@ final class HubScreen extends ApplicationAdapter {
         placeChrome();
         stage.act(delta);
         stage.draw();
+        drop.render();
         transmissions.render(delta);
         meter.end(Gdx.graphics.getDeltaTime());
     }
@@ -2122,6 +2397,8 @@ final class HubScreen extends ApplicationAdapter {
     @Override
     public void dispose() {
         transmissions.dispose();
+        warTable.dispose();
+        drop.dispose();
         meter.dispose();
         hub.disposed();
         holo.dispose();

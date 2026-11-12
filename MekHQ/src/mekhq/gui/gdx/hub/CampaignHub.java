@@ -41,6 +41,7 @@ import java.nio.file.Path;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -62,6 +63,15 @@ import mekhq.MekHQ;
 import mekhq.campaign.AbstractLocation;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.JumpPath;
+import mekhq.campaign.digitalGM.stratCon.StratConCampaignState;
+import mekhq.campaign.digitalGM.stratCon.StratConCoords;
+import mekhq.campaign.digitalGM.stratCon.StratConRulesManager;
+import mekhq.campaign.digitalGM.stratCon.StratConTrackState;
+import mekhq.campaign.digitalGM.stratCon.deployment.StratConDeploymentService;
+import mekhq.campaign.events.NewDayEvent;
+import mekhq.campaign.events.missions.MissionEvent;
+import mekhq.campaign.events.scenarios.ScenarioEvent;
+import mekhq.campaign.mission.contract.AbstractContract;
 import mekhq.campaign.universe.PlanetarySystem;
 import mekhq.campaign.universe.Systems;
 import mekhq.gui.BeginTransit;
@@ -74,6 +84,7 @@ import mekhq.gui.model.view.StarMap;
 import mekhq.gui.model.view.SystemDossier;
 import mekhq.gui.model.view.TopBar;
 import mekhq.gui.model.view.Transmission;
+import mekhq.gui.model.view.ViewModel;
 
 /**
  * The campaign's command post in the native window (docs/libgdx-ui-port-plan.md), which the start screen's HQ
@@ -130,6 +141,8 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
     private volatile Set<MHQTabType> screens = EnumSet.allOf(MHQTabType.class);
     /** The star map's watch while the map is open. */
     private @Nullable CampaignSession.Watch mapWatch;
+    /** The war table's watch while the table is open. */
+    private @Nullable CampaignSession.Watch tableWatch;
 
     private CampaignHub(MekHQ app, Campaign campaign, @Nullable StarChart chart, float scale) {
         this.app = app;
@@ -285,6 +298,83 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
                 GpuHost.post(() -> screen.dossier(read));
             }
         });
+    }
+
+    @Override
+    public void warTable(@Nullable String systemId) {
+        session.dispatch(current -> {
+            List<WarTableSnapshot> operations = WarTableSnapshot.operations(current, systemId);
+            GpuHost.post(() -> screen.warTable(operations));
+        });
+    }
+
+    @Override
+    public void warTableShown(boolean shown) {
+        CampaignSession.Watch watched;
+        synchronized (this) {
+            watched = tableWatch;
+            tableWatch = null;
+            if (shown) {
+                // The first comes as the watch starts, the table just opened on the same; only later ones are news
+                boolean[] first = { true };
+                tableWatch = session.watch(ViewModel.of("WarTable", current -> WarTableSnapshot.operations(current,
+                            null), List.of(NewDayEvent.class, ScenarioEvent.class, MissionEvent.class)),
+                      operations -> {
+                          if (first[0]) {
+                              first[0] = false;
+                          } else {
+                              screen.warTableRefresh(operations);
+                          }
+                      });
+            }
+        }
+        if (watched != null) {
+            watched.close();
+        }
+    }
+
+    @Override
+    public void deploy(UUID contract, int sector, int x, int y, int force) {
+        session.dispatch(current -> {
+            StratConCampaignState state = stratCon(current, contract);
+            StratConTrackState track = state == null ? null : track(state, sector);
+            if (track != null) {
+                StratConDeploymentService.deployPrimaryForces(current, state, track, new StratConCoords(x, y), false,
+                      List.of(force));
+            }
+            refreshWarTable(current);
+        });
+    }
+
+    @Override
+    public void recall(UUID contract, int sector, int force) {
+        session.dispatch(current -> {
+            StratConCampaignState state = stratCon(current, contract);
+            StratConTrackState track = state == null ? null : track(state, sector);
+            if (track != null) {
+                StratConRulesManager.recallFormation(force, track, state, current);
+            }
+            refreshWarTable(current);
+        });
+    }
+
+    private static @Nullable StratConCampaignState stratCon(Campaign campaign, UUID contract) {
+        for (AbstractContract active : campaign.getActiveContracts(false)) {
+            if (contract.equals(active.getId())) {
+                return active.getStratConCampaignState();
+            }
+        }
+        return null;
+    }
+
+    private static @Nullable StratConTrackState track(StratConCampaignState state, int sector) {
+        List<StratConTrackState> tracks = state.getTracks();
+        return sector >= 0 && sector < tracks.size() ? tracks.get(sector) : null;
+    }
+
+    private void refreshWarTable(Campaign current) {
+        List<WarTableSnapshot> operations = WarTableSnapshot.operations(current, null);
+        GpuHost.post(() -> screen.warTableRefresh(operations));
     }
 
     @Override

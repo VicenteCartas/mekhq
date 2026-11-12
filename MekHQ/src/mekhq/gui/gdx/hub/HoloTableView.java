@@ -33,6 +33,7 @@
 package mekhq.gui.gdx.hub;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import com.badlogic.gdx.ApplicationAdapter;
@@ -47,7 +48,9 @@ import com.badlogic.gdx.graphics.Pixmap;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.VertexAttribute;
 import com.badlogic.gdx.graphics.VertexAttributes;
+import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.glutils.ShaderProgram;
+import com.badlogic.gdx.math.Interpolation;
 import com.badlogic.gdx.math.Intersector;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Matrix4;
@@ -57,17 +60,22 @@ import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.math.collision.Ray;
 import com.badlogic.gdx.utils.FloatArray;
 import jakarta.annotation.Nullable;
+import megamek.client.ui.clientGUI.GUIPreferences;
 import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent.Star;
 import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent.StarChart;
+import mekhq.gui.gdx.hub.HqStations.Pose;
+import mekhq.gui.gdx.hub.HqStations.Station;
 
 /**
  * The command post's holotable in its dark room, the star map projected above it: the table lit by a dim key, two rim
  * lights and the hologram's own light, and the hologram drawn additively over it (a disc of rings, a beam from the
- * emitter, and the systems as glowing points in their owners' colours, tinted towards the projector's cyan).
+ * emitter, and the systems as glowing points in their owners' colours, tinted towards the projector's cyan). Around it
+ * stand the {@link HqStations}: the operations table, the comms console and the status boards.
  *
  * <p>The camera starts at a fixed view; dragging turns it, the wheel moves it in or out, and a click on the map's disc
  * opens the star map ({@link #input}), for which the camera can dive down onto the disc ({@link #render(float, float)}).
- * </p>
+ * A click on a station steps the camera over to it, and a click on the operations table there opens the war table; a
+ * click on nothing, a right click or {@link #back} steps back to the holotable.</p>
  */
 final class HoloTableView extends ApplicationAdapter {
     /** The projector's colour, linear. */
@@ -89,6 +97,8 @@ final class HoloTableView extends ApplicationAdapter {
     private static final float DIVED_STAR_SCALE = 0.15f;
     /** How far a press may move, in pixels, and still be a click. */
     private static final float CLICK_SLOP = 6;
+    /** How long the camera takes to step between stations, in seconds. */
+    private static final float MOVE_SECONDS = 0.55f;
     private static final int GL_PROGRAM_POINT_SIZE = 0x8642;
 
     private final Path glb;
@@ -114,9 +124,18 @@ final class HoloTableView extends ApplicationAdapter {
     /** The disc's turn this frame, and how far the camera has dived. */
     private float angle;
     private float dive;
-    private float yaw = 35;
-    private float pitch = 24;
-    private float distance = 3.3f;
+    private final HqStations stations;
+    /** The camera's pose at the holotable, kept while it is at a station. */
+    private final Pose overview = new Pose();
+    /** The camera steps {@code travel} (0 to 1) of the way from one pose to the other, and is at the third now. */
+    private final Pose from = new Pose();
+    private final Pose to = new Pose();
+    private final Pose live = new Pose();
+    private float travel = 1;
+    /** The station the camera is at, or steps to. */
+    private Station focus = Station.TABLE;
+    /** The station under the cursor, nearer than the map's disc; null for none. */
+    private @Nullable Station overStation;
     /** Whether the cursor is over the map's disc, and how much it glows for that, 0 to 1. */
     private boolean overMap;
     private float hoverGlow;
@@ -124,6 +143,7 @@ final class HoloTableView extends ApplicationAdapter {
     private int pressY;
     private boolean dragged;
     private final Runnable mapClicked;
+    private final Runnable operationsClicked;
     private final InputProcessor orbit = new InputAdapter() {
         @Override
         public boolean touchDown(int screenX, int screenY, int pointer, int button) {
@@ -138,40 +158,51 @@ final class HoloTableView extends ApplicationAdapter {
             if (Math.abs(screenX - pressX) + Math.abs(screenY - pressY) > CLICK_SLOP) {
                 dragged = true;
             }
-            yaw -= Gdx.input.getDeltaX() * 0.25f;
-            pitch = MathUtils.clamp(pitch + Gdx.input.getDeltaY() * 0.2f, 4, 80);
+            float turn = -Gdx.input.getDeltaX() * 0.25f;
+            float tilt = Gdx.input.getDeltaY() * 0.2f;
+            for (Pose pose : new Pose[] { from, to }) {
+                pose.yaw += turn;
+                pose.pitch = MathUtils.clamp(pose.pitch + tilt, 4, 80);
+            }
             return true;
         }
 
         @Override
         public boolean touchUp(int screenX, int screenY, int pointer, int button) {
-            if (!dragged && button == Input.Buttons.LEFT && overMap(screenX, screenY)) {
-                mapClicked.run();
+            if (!dragged && button == Input.Buttons.LEFT) {
+                click(screenX, screenY);
+            } else if (!dragged && button == Input.Buttons.RIGHT) {
+                back();
             }
             return true;
         }
 
         @Override
         public boolean mouseMoved(int screenX, int screenY) {
-            overMap = overMap(screenX, screenY);
+            hover(screenX, screenY);
             return false;
         }
 
         @Override
         public boolean scrolled(float amountX, float amountY) {
-            distance = MathUtils.clamp(distance * (1 + amountY * 0.08f), 1.2f, 8);
+            for (Pose pose : new Pose[] { from, to }) {
+                pose.distance = MathUtils.clamp(pose.distance * (1 + amountY * 0.08f), 1.2f, 8);
+            }
             return true;
         }
     };
 
     /**
-     * The table from the GLB file {@code glb}, with {@code chart} over it; none when null. A click on the map's disc
-     * runs {@code mapClicked}.
+     * The table from the GLB file {@code glb}, with {@code chart} over it; none when null, and the stations' props
+     * beside it. A click on the map's disc runs {@code mapClicked}, and one on the operations table, with the camera at
+     * it, {@code operationsClicked}.
      */
-    HoloTableView(Path glb, @Nullable StarChart chart, Runnable mapClicked) {
+    HoloTableView(Path glb, @Nullable StarChart chart, Runnable mapClicked, Runnable operationsClicked) {
         this.glb = glb;
         this.chart = chart;
         this.mapClicked = mapClicked;
+        this.operationsClicked = operationsClicked;
+        stations = new HqStations(glb);
     }
 
     /** The camera's controls, for the screen showing the view to put behind its own. */
@@ -179,9 +210,39 @@ final class HoloTableView extends ApplicationAdapter {
         return orbit;
     }
 
-    /** Whether the cursor is over the map's disc, which a click opens. */
-    boolean hoveringMap() {
-        return overMap;
+    /** Whether the cursor is over something a click acts on: the map's disc, or a station. */
+    boolean hovering() {
+        return overMap || overStation != null && (overStation != focus || overStation == Station.OPERATIONS);
+    }
+
+    /** The station the camera is at, or steps to. */
+    Station focus() {
+        return focus;
+    }
+
+    /** Steps the camera back to the holotable from a station; false if it is there already. */
+    boolean back() {
+        if (focus == Station.TABLE) {
+            return false;
+        }
+        focus(Station.TABLE);
+        return true;
+    }
+
+    /** The fonts the status boards write in, once the hub's theme has them. */
+    void fonts(BitmapFont label, BitmapFont headline) {
+        stations.fonts(label, headline);
+    }
+
+    /** What the status boards show; see {@link HqStations#boards}. */
+    void boards(String[] captions, String date, String where, String funds, String campaign, String alertsTitle,
+          List<String> alerts, boolean scenarioDue) {
+        stations.boards(captions, date, where, funds, campaign, alertsTitle, alerts, scenarioDue);
+    }
+
+    /** Whether a transmission is coming in, which the comms console blinks for. */
+    void incoming(boolean waiting) {
+        stations.incoming(waiting);
     }
 
     /**
@@ -212,6 +273,11 @@ final class HoloTableView extends ApplicationAdapter {
         disc = disc();
         beam = beam();
         stars = stars();
+        stations.create();
+        overview.set(35, 17, 5.2f, new Vector3(0, anchor.y * 1.2f, 0));
+        from.set(overview);
+        to.set(overview);
+        live.set(overview);
         camera = new PerspectiveCamera(FIELD_OF_VIEW, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         camera.near = 0.05f;
         camera.far = 60;
@@ -245,12 +311,15 @@ final class HoloTableView extends ApplicationAdapter {
         angle = MathUtils.lerp(spin, facing, dive);
         hoverGlow = MathUtils.clamp(hoverGlow + (overMap && dive == 0 ? delta : -delta) * 5, 0, 1);
         this.dive = dive;
+        stations.hover(dive == 0 ? overStation : null);
+        stations.prepare(delta);
+        travel = Math.min(1, travel + delta / MOVE_SECONDS);
+        live.lerp(from, to, Interpolation.smooth.apply(travel));
 
-        Vector3 target = new Vector3(0, anchor.y * 0.9f, 0)
-              .lerp(new Vector3(anchor.x, anchor.y + DISC_LIFT, anchor.z), dive);
-        float turned = MathUtils.lerp(yaw, Math.round(yaw / 360) * 360f, dive);
-        float tilted = MathUtils.lerp(pitch, 90, dive);
-        float far = distance * (float) Math.pow(diveHeight(StarMapView.START_DISTANCE) / distance, dive);
+        Vector3 target = new Vector3(live.target).lerp(new Vector3(anchor.x, anchor.y + DISC_LIFT, anchor.z), dive);
+        float turned = MathUtils.lerp(live.yaw, Math.round(live.yaw / 360) * 360f, dive);
+        float tilted = MathUtils.lerp(live.pitch, 90, dive);
+        float far = live.distance * (float) Math.pow(diveHeight(StarMapView.START_DISTANCE) / live.distance, dive);
         float cosPitch = MathUtils.cosDeg(tilted);
         camera.position.set(MathUtils.sinDeg(turned) * cosPitch, MathUtils.sinDeg(tilted),
               MathUtils.cosDeg(turned) * cosPitch).scl(far).add(target);
@@ -298,11 +367,13 @@ final class HoloTableView extends ApplicationAdapter {
         propShader.setUniformf("u_holoLight", anchor.x, anchor.y + DISC_LIFT, anchor.z);
         propShader.setUniformf("u_holoColor", new Vector3(CYAN).scl(0.9f * flicker));
         propShader.setUniformf("u_fog", FOG);
-        propShader.setUniformf("u_fogDensity", 0.3f);
+        propShader.setUniformf("u_fogDensity", 0.2f);
         propShader.setUniformf("u_glowPulse", 1.4f + 0.25f * MathUtils.sin(time * 2.2f));
         propShader.setUniformf("u_tableRadius", TABLE_RADIUS);
         propShader.setUniformf("u_floor", 0f);
+        stations.light(propShader);
         table.draw(propShader, EMITTER_GLOW);
+        stations.drawSolids(propShader, white, flat);
 
         propShader.setUniformf("u_floor", 1f);
         flat.bind(1);
@@ -361,6 +432,57 @@ final class HoloTableView extends ApplicationAdapter {
             stars.render(starShader, GL20.GL_POINTS);
             Gdx.gl.glDisable(GL_PROGRAM_POINT_SIZE);
         }
+
+        holoShader.bind();
+        stations.drawHolograms(holoShader, glow);
+    }
+
+    /** Steps the camera over to {@code station}, or back to its pose at the holotable. */
+    void focus(Station station) {
+        if (focus == Station.TABLE) {
+            overview.set(to);
+        }
+        focus = station;
+        from.set(live);
+        if (station == Station.TABLE) {
+            to.set(overview);
+        } else {
+            stations.pose(station, to);
+        }
+        // Turn the short way round
+        to.yaw = from.yaw + ((to.yaw - from.yaw) % 360 + 540) % 360 - 180;
+        travel = GUIPreferences.getInstance().getReduceMotion() ? 1 : 0;
+    }
+
+    /** A click: on the map's disc opens it; on a station steps to it, or acts on it there; on nothing steps back. */
+    private void click(int screenX, int screenY) {
+        if (camera == null) {
+            return;
+        }
+        Ray ray = camera.getPickRay(screenX, screenY);
+        float[] along = new float[1];
+        Station station = stations.pick(ray, along);
+        if (mapDistance(ray) < along[0]) {
+            mapClicked.run();
+        } else if (station == null) {
+            back();
+        } else if (station != focus) {
+            focus(station);
+        } else if (station == Station.OPERATIONS) {
+            operationsClicked.run();
+        }
+    }
+
+    private void hover(int screenX, int screenY) {
+        if (camera == null) {
+            return;
+        }
+        Ray ray = camera.getPickRay(screenX, screenY);
+        float[] along = new float[1];
+        Station station = stations.pick(ray, along);
+        float map = mapDistance(ray);
+        overMap = map < along[0];
+        overStation = overMap ? null : station;
     }
 
     /** The map's frame: over the anchor, turned as far as the disc has. */
@@ -368,23 +490,20 @@ final class HoloTableView extends ApplicationAdapter {
         return model.setToTranslation(anchor.x, anchor.y + DISC_LIFT, anchor.z).rotate(Vector3.Y, angle);
     }
 
-    /** Whether the input coordinates are over the map's disc. */
-    private boolean overMap(int screenX, int screenY) {
-        if (camera == null) {
-            return false;
-        }
-        Ray ray = camera.getPickRay(screenX, screenY);
+    /** How far along {@code ray} it meets the map's disc, or the largest float if it misses. */
+    private float mapDistance(Ray ray) {
         Vector3 hit = new Vector3();
-        if (!Intersector.intersectRayPlane(ray, new Plane(Vector3.Y, -(anchor.y + DISC_LIFT)), hit)) {
-            return false;
+        if (!Intersector.intersectRayPlane(ray, new Plane(Vector3.Y, -(anchor.y + DISC_LIFT)), hit)
+              || Vector2.dst(hit.x, hit.z, anchor.x, anchor.z) > DISC_RADIUS) {
+            return Float.MAX_VALUE;
         }
-        return Vector2.dst(hit.x, hit.z, anchor.x, anchor.z) <= DISC_RADIUS;
+        return ray.origin.dst(hit);
     }
 
     @Override
     public void dispose() {
         for (var resource : new com.badlogic.gdx.utils.Disposable[] { propShader, starShader, holoShader, veilShader,
-              table, floor, disc, beam, stars, veil, white, flat }) {
+              stations, table, floor, disc, beam, stars, veil, white, flat }) {
             if (resource != null) {
                 resource.dispose();
             }
