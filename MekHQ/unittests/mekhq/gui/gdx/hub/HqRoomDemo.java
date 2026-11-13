@@ -70,14 +70,14 @@ public final class HqRoomDemo {
         configuration.setOpenGLEmulation(Lwjgl3ApplicationConfiguration.GLEmulation.GL30, 4, 3);
         new Lwjgl3Application(new ApplicationAdapter() {
             private final Station[] poses = { Station.TABLE, Station.OPERATIONS, Station.COMMS, Station.STATUS,
-                                              Station.TABLE };
+                                              Station.FORCES, Station.TABLE };
             private HoloTableView holo;
             private int frames;
 
             @Override
             public void create() {
                 UiTheme theme = new UiTheme(Configuration.fontsDir());
-                holo = new HoloTableView(CampaignHub.TABLE, null, () -> { }, () -> { });
+                holo = new HoloTableView(CampaignHub.TABLE, null, () -> { }, () -> { }, () -> { });
                 holo.create();
                 holo.fonts(theme.font("hq-board-label", UiTheme.ROBOTO, 9),
                       theme.font("hq-board-figure", UiTheme.ROBOTO, 30));

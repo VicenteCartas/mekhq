@@ -70,7 +70,7 @@ import jakarta.annotation.Nullable;
  */
 final class HqStations implements Disposable {
     /** A place in the room the camera can step over to; {@link #TABLE} is the holotable, the room's overview. */
-    enum Station { TABLE, OPERATIONS, COMMS, STATUS }
+    enum Station { TABLE, OPERATIONS, COMMS, STATUS, FORCES }
 
     /** A camera's pose about a point: its bearing and elevation in degrees, its distance in metres, and the point. */
     static final class Pose {
@@ -110,6 +110,11 @@ final class HqStations implements Disposable {
     private static final float OPERATIONS_RANGE = 2.75f;
     private static final float COMMS_BEARING = 158;
     private static final float COMMS_RANGE = 2.6f;
+    /** The forces table, a second sand table across the holotable from the operations one. */
+    private static final float FORCES_BEARING = 98;
+    private static final float FORCES_RANGE = 2.75f;
+    private static final int FORCES_LAYERS = 3;
+    private static final float FORCES_STEP = 0.03f;
     private static final float WALL_BEARING = 215;
     private static final float WALL_RADIUS = 4.6f;
     /** How far the wall reaches either side of its bearing, in degrees, and how tall it is. */
@@ -139,9 +144,11 @@ final class HqStations implements Disposable {
     private final Path sandFile;
     private final Path consoleFile;
     private final Matrix4 sandPlace = new Matrix4();
+    private final Matrix4 forcesPlace = new Matrix4();
     private final Matrix4 consolePlace = new Matrix4();
     private final Matrix4 model = new Matrix4();
     private final Vector3 plate = new Vector3();
+    private final Vector3 forcesPlate = new Vector3();
     private final Vector3 desk = new Vector3();
     private final Vector3[] boardCentres = new Vector3[3];
     private final Vector3[] boardRights = new Vector3[3];
@@ -180,11 +187,13 @@ final class HqStations implements Disposable {
         sandSource = GlbProp.load(sandFile);
         consoleSource = GlbProp.load(consoleFile);
         place(sandPlace, OPERATIONS_BEARING, OPERATIONS_RANGE);
+        place(forcesPlace, FORCES_BEARING, FORCES_RANGE);
         place(consolePlace, COMMS_BEARING, COMMS_RANGE);
-        sand = sandSource.batch(List.of(sandPlace));
+        sand = sandSource.batch(List.of(sandPlace, forcesPlace));
         console = consoleSource.batch(List.of(consolePlace));
         screens = console.meshes("comms-console-alert");
         plate.set(sandSource.anchor()).mul(sandPlace);
+        forcesPlate.set(sandSource.anchor()).mul(forcesPlace);
         desk.set(0, 1.2f, 0).mul(consolePlace);
         plateQuad = plateQuad();
         wall = wall();
@@ -242,6 +251,7 @@ final class HqStations implements Disposable {
             case OPERATIONS -> pose.set(OPERATIONS_BEARING + 180, 52, 2.7f, plate);
             case COMMS -> pose.set(COMMS_BEARING + 180, 14, 2.2f, desk);
             case STATUS -> pose.set(WALL_BEARING + 180, 4, 4.4f, boardCentres[1]);
+            case FORCES -> pose.set(FORCES_BEARING + 180, 52, 2.7f, forcesPlate);
         };
     }
 
@@ -254,6 +264,11 @@ final class HqStations implements Disposable {
         if (sandAt < best) {
             best = sandAt;
             nearest = Station.OPERATIONS;
+        }
+        float forcesAt = boxHit(ray, forcesPlace, sandSource, hit);
+        if (forcesAt < best) {
+            best = forcesAt;
+            nearest = Station.FORCES;
         }
         float consoleAt = boxHit(ray, consolePlace, consoleSource, hit);
         if (consoleAt < best) {
@@ -343,19 +358,24 @@ final class HqStations implements Disposable {
     void light(ShaderProgram shader) {
         float blink = incoming ? 0.5f + 0.5f * MathUtils.sin(time * 6) : 0;
         float sandGlow = 0.12f * (1 + 0.6f * hover[Station.OPERATIONS.ordinal()]);
+        float forcesGlow = 0.12f * (1 + 0.6f * hover[Station.FORCES.ordinal()]);
         Vector3 screen = new Vector3(desk).add(0, 0.15f, 0).lerp(new Vector3(0, desk.y, 0), 0.12f);
         Vector3 screenLight = new Vector3(GREEN).scl(0.05f).lerp(new Vector3(AMBER).scl(0.16f), blink);
         shader.setUniform3fv("u_pointLight", new float[] {
               plate.x, plate.y + 0.3f, plate.z,
-              screen.x, screen.y, screen.z }, 0, 6);
+              screen.x, screen.y, screen.z,
+              forcesPlate.x, forcesPlate.y + 0.3f, forcesPlate.z }, 0, 9);
         shader.setUniform3fv("u_pointColor", new float[] {
               GREEN.x * sandGlow, GREEN.y * sandGlow, GREEN.z * sandGlow,
-              screenLight.x, screenLight.y, screenLight.z }, 0, 6);
+              screenLight.x, screenLight.y, screenLight.z,
+              CYAN.x * forcesGlow, CYAN.y * forcesGlow, CYAN.z * forcesGlow }, 0, 9);
         Vector3 sandAt = new Vector3().mul(sandPlace);
         Vector3 consoleAt = new Vector3().mul(consolePlace);
+        Vector3 forcesAt = new Vector3().mul(forcesPlace);
         shader.setUniform4fv("u_blockers", new float[] {
               sandAt.x, sandAt.z, 1.25f, 0.55f,
-              consoleAt.x, consoleAt.z, 0.85f, 0.5f }, 0, 8);
+              consoleAt.x, consoleAt.z, 0.85f, 0.5f,
+              forcesAt.x, forcesAt.z, 1.25f, 0.55f }, 0, 12);
     }
 
     /** Draws the stations' props, the wall and the boards' bezels with the room's prop shader. */
@@ -380,8 +400,8 @@ final class HqStations implements Disposable {
     }
 
     /**
-     * Draws the stations' light additively with the hologram shader: the operations table's hologram, the console's
-     * screens and the boards, {@code intensity} as bright as they are when the room is in full view.
+     * Draws the stations' light additively with the hologram shader: the operations and forces tables' holograms, the
+     * console's screens and the boards, {@code intensity} as bright as they are when the room is in full view.
      */
     void drawHolograms(ShaderProgram shader, float intensity) {
         shader.setUniformf("u_haze", 0.07f);
@@ -396,6 +416,17 @@ final class HqStations implements Disposable {
         shader.setUniformf("u_intensity", intensity * (1 + 0.6f * hover[Station.OPERATIONS.ordinal()]));
         for (int layer = 0; layer < LAYERS; layer++) {
             model.set(sandPlace).translate(sandSource.anchor()).translate(0, 0.003f + layer * LAYER_STEP, 0);
+            shader.setUniformMatrix("u_model", model);
+            shader.setUniformf("u_layer", layer);
+            plateQuad.render(shader, GL20.GL_TRIANGLES);
+        }
+
+        shader.setUniformi("u_mode", 5);
+        shader.setUniformf("u_colour", CYAN);
+        shader.setUniformf("u_layers", FORCES_LAYERS);
+        shader.setUniformf("u_intensity", intensity * (1 + 0.6f * hover[Station.FORCES.ordinal()]));
+        for (int layer = 0; layer < FORCES_LAYERS; layer++) {
+            model.set(forcesPlace).translate(sandSource.anchor()).translate(0, 0.003f + layer * FORCES_STEP, 0);
             shader.setUniformMatrix("u_model", model);
             shader.setUniformf("u_layer", layer);
             plateQuad.render(shader, GL20.GL_TRIANGLES);

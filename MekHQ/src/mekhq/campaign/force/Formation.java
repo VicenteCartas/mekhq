@@ -112,6 +112,8 @@ public class Formation {
     private Formation parentFormation;
     private final Vector<Formation> subFormations;
     private final Vector<UUID> units;
+    /** The places the formation is authorized, in the order the player set them; none authorizes nothing. */
+    private final List<FormationSlot> slots = new ArrayList<>();
     private int scenarioId;
     private UUID formationCommanderID;
     private UUID overrideFormationCommanderID;
@@ -553,6 +555,16 @@ public class Formation {
         return units;
     }
 
+    /** The places the formation is authorized, in order; empty when it authorizes nothing. */
+    public List<FormationSlot> getSlots() {
+        return List.copyOf(slots);
+    }
+
+    public void setSlots(List<FormationSlot> slots) {
+        this.slots.clear();
+        this.slots.addAll(slots);
+    }
+
     /**
      * @param standardFormationsOnly to only include combat formations or to also include support formations
      *
@@ -786,6 +798,8 @@ public class Formation {
                     formation.formationCommanderID = UUID.fromString(wn2.getTextContent());
                 } else if (wn2.getNodeName().equalsIgnoreCase("units")) {
                     processUnitNodes(formation, wn2, version);
+                } else if (wn2.getNodeName().equalsIgnoreCase("slots")) {
+                    processSlotNodes(formation, wn2);
                 } else if (wn2.getNodeName().equalsIgnoreCase("subFormations") || wn2.getNodeName().equalsIgnoreCase(
                       "subForces")) {
                     NodeList nl2 = wn2.getChildNodes();
@@ -989,6 +1003,13 @@ public class Formation {
             }
             MHQXMLUtility.writeSimpleXMLCloseTag(pw1, --indent, "units");
         }
+        if (!slots.isEmpty()) {
+            MHQXMLUtility.writeSimpleXMLOpenTag(pw1, indent++, "slots");
+            for (FormationSlot slot : slots) {
+                MHQXMLUtility.writeSimpleXMLTag(pw1, indent, "slot", slot.code());
+            }
+            MHQXMLUtility.writeSimpleXMLCloseTag(pw1, --indent, "slots");
+        }
 
         if (!subFormations.isEmpty()) {
             MHQXMLUtility.writeSimpleXMLOpenTag(pw1, indent++, "subFormations");
@@ -1069,6 +1090,22 @@ public class Formation {
             Node classNameNode = attrs.getNamedItem("id");
             String idString = classNameNode.getTextContent();
             retVal.addUnit(UUID.fromString(idString));
+        }
+    }
+
+    private static void processSlotNodes(Formation formation, Node wn) {
+        NodeList nl = wn.getChildNodes();
+        for (int x = 0; x < nl.getLength(); x++) {
+            Node wn2 = nl.item(x);
+            if (wn2.getNodeType() != Node.ELEMENT_NODE || !wn2.getNodeName().equalsIgnoreCase("slot")) {
+                continue;
+            }
+            FormationSlot slot = FormationSlot.parse(wn2.getTextContent());
+            if (slot == null) {
+                LOGGER.error("Unknown formation slot not loaded: " + wn2.getTextContent());
+            } else {
+                formation.slots.add(slot);
+            }
         }
     }
 

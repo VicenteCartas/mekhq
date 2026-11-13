@@ -52,6 +52,7 @@ import java.util.Objects;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.Vector;
+import java.util.function.Consumer;
 import javax.swing.JOptionPane;
 
 import jakarta.annotation.Nullable;
@@ -896,6 +897,15 @@ public abstract class AbstractForce {
      * Add unit to an existing formation. This method will also assign that formation's id to the unit.
      */
     public void addUnitToFormation(@Nullable Unit unit, int id, Campaign campaign) {
+        addUnitToFormation(unit, id, campaign,
+              warning -> JOptionPane.showMessageDialog(null, warning, "Warning", JOptionPane.WARNING_MESSAGE));
+    }
+
+    /**
+     * Add unit to an existing formation, as {@link #addUnitToFormation(Unit, int, Campaign)} does, handing
+     * {@code warn} the warning to show if the formation's tech can't maintain the unit.
+     */
+    public void addUnitToFormation(@Nullable Unit unit, int id, Campaign campaign, Consumer<String> warn) {
         if (unit == null) {
             return;
         }
@@ -941,7 +951,7 @@ public abstract class AbstractForce {
                                             unit.getName() +
                                             '\n' +
                                             "You will need to assign a tech manually.";
-                    JOptionPane.showMessageDialog(null, cantTech, "Warning", JOptionPane.WARNING_MESSAGE);
+                    warn.accept(cantTech);
                 }
             }
             formation.addUnit(campaign, unit.getId(), useTransfers, prevFormation);

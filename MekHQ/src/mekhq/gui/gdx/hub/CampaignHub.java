@@ -57,6 +57,7 @@ import megamek.client.ui.clientGUI.boardview.gpu.GpuSceneDialogs;
 import megamek.client.ui.clientGUI.boardview.gpu.GpuStartWindow;
 import megamek.client.ui.clientGUI.boardview.gpu.StartScreenContent.StarChart;
 import megamek.client.ui.gdx.DisplayScale;
+import megamek.common.event.MMEvent;
 import megamek.logging.MMLogger;
 import mekhq.MHQConstants;
 import mekhq.MekHQ;
@@ -68,15 +69,29 @@ import mekhq.campaign.digitalGM.stratCon.StratConCoords;
 import mekhq.campaign.digitalGM.stratCon.StratConRulesManager;
 import mekhq.campaign.digitalGM.stratCon.StratConTrackState;
 import mekhq.campaign.digitalGM.stratCon.deployment.StratConDeploymentService;
+import mekhq.campaign.events.DeploymentChangedEvent;
+import mekhq.campaign.events.LocationEvent;
+import mekhq.campaign.events.NetworkChangedEvent;
 import mekhq.campaign.events.NewDayEvent;
+import mekhq.campaign.events.OrganizationChangedEvent;
+import mekhq.campaign.events.RepairStatusChangedEvent;
 import mekhq.campaign.events.missions.MissionEvent;
+import mekhq.campaign.events.parts.PartEvent;
+import mekhq.campaign.events.persons.PersonEvent;
 import mekhq.campaign.events.scenarios.ScenarioEvent;
+import mekhq.campaign.events.scenarios.ScenarioResolvedEvent;
+import mekhq.campaign.events.units.UnitEvent;
+import mekhq.campaign.force.Formation;
+import mekhq.campaign.force.FormationSlot;
+import mekhq.campaign.force.PlayerForce;
 import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.unit.Unit;
 import mekhq.campaign.universe.PlanetarySystem;
 import mekhq.campaign.universe.Systems;
 import mekhq.gui.BeginTransit;
 import mekhq.gui.CampaignGUI;
 import mekhq.gui.StartStarChart;
+import mekhq.gui.adapter.TOEMouseAdapter;
 import mekhq.gui.enums.MHQTabType;
 import mekhq.gui.model.view.Borders;
 import mekhq.gui.model.view.CampaignSession;
@@ -85,6 +100,7 @@ import mekhq.gui.model.view.SystemDossier;
 import mekhq.gui.model.view.TopBar;
 import mekhq.gui.model.view.Transmission;
 import mekhq.gui.model.view.ViewModel;
+import mekhq.gui.utilities.StaticChecks;
 
 /**
  * The campaign's command post in the native window (docs/libgdx-ui-port-plan.md), which the start screen's HQ
@@ -101,6 +117,10 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
     private static final String FACTIONS = "data/universe/factions";
     /** The star map also takes in the mercenaries' hub, as the start screen's does. */
     private static final String FOCUS = "Galatea";
+    /** What may change the order of battle: its forces, their units and people, where they are and what they do. */
+    private static final List<Class<? extends MMEvent>> TOE_EVENTS = List.of(OrganizationChangedEvent.class,
+          DeploymentChangedEvent.class, NetworkChangedEvent.class, RepairStatusChangedEvent.class, LocationEvent.class,
+          UnitEvent.class, PersonEvent.class, PartEvent.class, ScenarioResolvedEvent.class, NewDayEvent.class);
 
     private final MekHQ app;
     private final Campaign campaign;
@@ -143,6 +163,8 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
     private @Nullable CampaignSession.Watch mapWatch;
     /** The war table's watch while the table is open. */
     private @Nullable CampaignSession.Watch tableWatch;
+    /** The order of battle's watch while it is open. */
+    private @Nullable CampaignSession.Watch toeWatch;
 
     private CampaignHub(MekHQ app, Campaign campaign, @Nullable StarChart chart, float scale) {
         this.app = app;
@@ -334,6 +356,37 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
     }
 
     @Override
+    public void toe() {
+        session.dispatch(current -> {
+            ToeSnapshot shown = ToeSnapshot.of(current);
+            GpuHost.post(() -> screen.toe(shown));
+        });
+    }
+
+    @Override
+    public void toeShown(boolean shown) {
+        CampaignSession.Watch watched;
+        synchronized (this) {
+            watched = toeWatch;
+            toeWatch = null;
+            if (shown) {
+                // As the war table's: the first comes as the watch starts, on what the table just opened on
+                boolean[] first = { true };
+                toeWatch = session.watch(ViewModel.of("Toe", ToeSnapshot::of, TOE_EVENTS), snapshot -> {
+                    if (first[0]) {
+                        first[0] = false;
+                    } else {
+                        screen.toeRefresh(snapshot);
+                    }
+                });
+            }
+        }
+        if (watched != null) {
+            watched.close();
+        }
+    }
+
+    @Override
     public void deploy(UUID contract, int sector, int x, int y, int force) {
         session.dispatch(current -> {
             StratConCampaignState state = stratCon(current, contract);
@@ -356,6 +409,72 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
             }
             refreshWarTable(current);
         });
+    }
+
+    /**
+     * Makes each move as the classic TO&amp;E's drag and drop and its Remove from Formation do, and by their rules:
+     * nothing locked by a deployment moves, nor into a formation that is, and no formation goes under itself. The
+     * watch on the TO&amp;E brings the forces back as they then are.
+     */
+    @Override
+    public void reorganize(List<ToeMoves.Move> moves) {
+        session.dispatch(current -> {
+            PlayerForce force = current.getPlayerForce();
+            for (ToeMoves.Move move : moves) {
+                Formation into = move.into() == ToeMoves.UNASSIGNED ? null : force.getFormation(move.into());
+                if (move.into() != ToeMoves.UNASSIGNED
+                      && (into == null || StaticChecks.isFormationLockedByDeployment(current, into))) {
+                    continue;
+                }
+                if (move.ofUnits()) {
+                    for (UUID id : move.units()) {
+                        Unit unit = current.getUnit(id);
+                        if (unit == null || StaticChecks.isUnitLockedByDeployment(unit)) {
+                            continue;
+                        }
+                        if (into == null) {
+                            unassign(current, unit);
+                        } else if (unit.getFormationId() != into.getId()) {
+                            force.addUnitToFormation(unit, into.getId(), current,
+                                  warning -> GpuHost.post(() -> screen.toeNotice(warning)));
+                        }
+                    }
+                } else {
+                    Formation formation = force.getFormation(move.formation());
+                    if (formation != null && into != null && formation.getParentFormation() != null
+                          && !formation.equals(into) && !formation.isAncestorOf(into)
+                          && !StaticChecks.isFormationLockedByDeployment(current, formation)) {
+                        force.moveFormation(formation, into, current);
+                        MekHQ.triggerEvent(new OrganizationChangedEvent(formation));
+                    }
+                }
+            }
+        });
+    }
+
+    @Override
+    public void authorize(int formation, List<FormationSlot> slots) {
+        session.dispatch(current -> {
+            Formation authorized = current.getPlayerForce().getFormation(formation);
+            if (authorized != null) {
+                authorized.setSlots(slots);
+                MekHQ.triggerEvent(new OrganizationChangedEvent(authorized));
+            }
+        });
+    }
+
+    /** Takes {@code unit} out of its formation as the classic TO&amp;E's Remove from Formation does. */
+    private static void unassign(Campaign campaign, Unit unit) {
+        Formation formation = campaign.getPlayerForce().getFormationFor(unit);
+        if (formation == null) {
+            return;
+        }
+        campaign.getPlayerForce().removeUnitFromFormation(unit, campaign);
+        if (formation.getTechID() != null) {
+            unit.removeTech();
+        }
+        TOEMouseAdapter.clearTransportAssignment(campaign, unit);
+        MekHQ.triggerEvent(new OrganizationChangedEvent(campaign, formation, unit));
     }
 
     private static @Nullable StratConCampaignState stratCon(Campaign campaign, UUID contract) {

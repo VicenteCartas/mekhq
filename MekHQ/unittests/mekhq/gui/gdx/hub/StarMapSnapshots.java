@@ -52,6 +52,7 @@ import com.badlogic.gdx.graphics.Pixmap;
 import com.badlogic.gdx.graphics.PixmapIO;
 import com.badlogic.gdx.utils.BufferUtils;
 import com.badlogic.gdx.utils.ScreenUtils;
+import mekhq.campaign.force.FormationSlot;
 import mekhq.campaign.universe.Factions;
 import mekhq.campaign.universe.PlanetarySystem;
 import mekhq.campaign.universe.Systems;
@@ -302,6 +303,22 @@ public final class StarMapSnapshots {
 
         @Override
         public void recall(UUID contract, int sector, int force) {
+        }
+
+        @Override
+        public void toe() {
+        }
+
+        @Override
+        public void toeShown(boolean shown) {
+        }
+
+        @Override
+        public void reorganize(List<ToeMoves.Move> moves) {
+        }
+
+        @Override
+        public void authorize(int formation, List<FormationSlot> slots) {
         }
 
         @Override

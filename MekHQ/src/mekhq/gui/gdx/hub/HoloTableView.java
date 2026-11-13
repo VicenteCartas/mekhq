@@ -144,6 +144,7 @@ final class HoloTableView extends ApplicationAdapter {
     private boolean dragged;
     private final Runnable mapClicked;
     private final Runnable operationsClicked;
+    private final Runnable forcesClicked;
     private final InputProcessor orbit = new InputAdapter() {
         @Override
         public boolean touchDown(int screenX, int screenY, int pointer, int button) {
@@ -194,14 +195,16 @@ final class HoloTableView extends ApplicationAdapter {
 
     /**
      * The table from the GLB file {@code glb}, with {@code chart} over it; none when null, and the stations' props
-     * beside it. A click on the map's disc runs {@code mapClicked}, and one on the operations table, with the camera at
-     * it, {@code operationsClicked}.
+     * beside it. A click on the map's disc runs {@code mapClicked}, one on the operations table, with the camera at it,
+     * {@code operationsClicked}, and one on the forces table, with the camera at it, {@code forcesClicked}.
      */
-    HoloTableView(Path glb, @Nullable StarChart chart, Runnable mapClicked, Runnable operationsClicked) {
+    HoloTableView(Path glb, @Nullable StarChart chart, Runnable mapClicked, Runnable operationsClicked,
+          Runnable forcesClicked) {
         this.glb = glb;
         this.chart = chart;
         this.mapClicked = mapClicked;
         this.operationsClicked = operationsClicked;
+        this.forcesClicked = forcesClicked;
         stations = new HqStations(glb);
     }
 
@@ -212,7 +215,8 @@ final class HoloTableView extends ApplicationAdapter {
 
     /** Whether the cursor is over something a click acts on: the map's disc, or a station. */
     boolean hovering() {
-        return overMap || overStation != null && (overStation != focus || overStation == Station.OPERATIONS);
+        return overMap || overStation != null && (overStation != focus || overStation == Station.OPERATIONS
+              || overStation == Station.FORCES);
     }
 
     /** The station the camera is at, or steps to. */
@@ -470,6 +474,8 @@ final class HoloTableView extends ApplicationAdapter {
             focus(station);
         } else if (station == Station.OPERATIONS) {
             operationsClicked.run();
+        } else if (station == Station.FORCES) {
+            forcesClicked.run();
         }
     }
 
