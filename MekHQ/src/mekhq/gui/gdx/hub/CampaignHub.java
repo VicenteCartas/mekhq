@@ -117,7 +117,7 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
     private static final String FACTIONS = "data/universe/factions";
     /** The star map also takes in the mercenaries' hub, as the start screen's does. */
     private static final String FOCUS = "Galatea";
-    /** What may change the order of battle: its forces, their units and people, where they are and what they do. */
+    /** What may change the TO&amp;E: its forces, their units and people, where they are and what they do. */
     private static final List<Class<? extends MMEvent>> TOE_EVENTS = List.of(OrganizationChangedEvent.class,
           DeploymentChangedEvent.class, NetworkChangedEvent.class, RepairStatusChangedEvent.class, LocationEvent.class,
           UnitEvent.class, PersonEvent.class, PartEvent.class, ScenarioResolvedEvent.class, NewDayEvent.class);
@@ -163,7 +163,7 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
     private @Nullable CampaignSession.Watch mapWatch;
     /** The war table's watch while the table is open. */
     private @Nullable CampaignSession.Watch tableWatch;
-    /** The order of battle's watch while it is open. */
+    /** The TO&amp;E's watch while it is open. */
     private @Nullable CampaignSession.Watch toeWatch;
 
     private CampaignHub(MekHQ app, Campaign campaign, @Nullable StarChart chart, float scale) {

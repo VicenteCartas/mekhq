@@ -62,7 +62,7 @@ import mekhq.gui.model.LocationDisplay;
 import mekhq.gui.utilities.StaticChecks;
 
 /**
- * The campaign's order of battle as the TO&amp;E table shows it, read on the campaign's thread: the formations' tree with
+ * The campaign's TO&amp;E as the table shows it, read on the campaign's thread: the formations' tree with
  * each one's units, the units in none, and the places the force is spread over (the main force and each of the
  * player's bases). Each unit carries what the table shows of it at a glance: its art, what it is, its condition, the
  * work on it, its crew and where it is.
@@ -240,7 +240,7 @@ record ToeSnapshot(String force, Group root, List<Card> unassigned, List<String>
         return all;
     }
 
-    /** Reads {@code campaign}'s order of battle. Campaign thread only. */
+    /** Reads {@code campaign}'s TO&amp;E. Campaign thread only. */
     static ToeSnapshot of(Campaign campaign) {
         Map<UUID, Integer> places = new HashMap<>();
         for (Unit unit : campaign.getPlayerForce().getHangar().getUnits()) {

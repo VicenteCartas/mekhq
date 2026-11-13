@@ -78,7 +78,7 @@ import mekhq.gui.gdx.hub.ToeSnapshot.Group;
 import mekhq.gui.gdx.hub.ToeSnapshot.Work;
 
 /**
- * The TO&amp;E table, seen from straight above: the order of battle laid out as nested slabs ({@link ToeLayout}), a
+ * The TO&amp;E table, seen from straight above: the formations laid out as nested slabs ({@link ToeLayout}), a
  * formation's block on its parent's, each unit a hexagonal counter with its art laid on it. What's going on with a unit
  * reads off its counter without a word: the ring round it green when it's ready, amber when it's damaged, red when it's
  * out of action; a wreck's art knocked askew, one under repair ringed by a turning dashed ring, one laid up drained of

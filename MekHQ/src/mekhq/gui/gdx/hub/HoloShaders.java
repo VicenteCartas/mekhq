@@ -260,7 +260,7 @@ final class HoloShaders {
      * hologram (uv the plate's metres, {@code u_half} its half size), its hexes and objectives on the first and a contour
      * of its relief on each above; 3 a screen {@code u_layer} of the comms console (uv 0 to 1, v down), a trace of the
      * traffic or, at {@code u_alert}, a blinking call; 4 a status board (uv 0 to 1, {@code u_half} its half size) with
-     * the text in {@code u_text}; 5 a layer {@code u_layer} of the forces table's order of battle (uv as for 2): its
+     * the text in {@code u_text}; 5 a layer {@code u_layer} of the forces table's TO&amp;E (uv as for 2): its
      * battalions' frames, their companies' over them, and their units' pips on top, a damaged one now and then in
      * {@code u_accent}.
      */

@@ -96,7 +96,7 @@ import mekhq.gui.gdx.hub.ToeSnapshot.Issue;
 import mekhq.gui.gdx.hub.ToeSnapshot.Work;
 
 /**
- * The order of battle: the force's TO&amp;E raised on the command post's display ({@link ToeView}), with its strength
+ * The TO&amp;E: the force's formations raised on the command post's display ({@link ToeView}), with its strength
  * over it, tabs to light only what's at one of the places the force is spread over, pins naming its formations and
  * units, and a card for the unit pointed at.
  *

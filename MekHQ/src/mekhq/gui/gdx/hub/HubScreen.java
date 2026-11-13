@@ -194,11 +194,11 @@ final class HubScreen extends ApplicationAdapter {
         /** Recalls force {@code force} off sector {@code sector} of contract {@code contract}'s operation, likewise. */
         void recall(UUID contract, int sector, int force);
 
-        /** Reads the campaign's forces for the order of battle, which come back through {@link HubScreen#toe}. */
+        /** Reads the campaign's forces for the TO&amp;E, which come back through {@link HubScreen#toe}. */
         void toe();
 
         /**
-         * The order of battle opened or closed: while it's open, a change to the forces, their units or their people
+         * The TO&amp;E opened or closed: while it's open, a change to the forces, their units or their people
          * comes back through {@link HubScreen#toeRefresh}.
          */
         void toeShown(boolean shown);
@@ -2021,7 +2021,7 @@ final class HubScreen extends ApplicationAdapter {
         dropped = false;
     }
 
-    /** Takes the player to the order of battle, once the campaign's forces are read. */
+    /** Takes the player to the TO&amp;E, once the campaign's forces are read. */
     private void openToe() {
         if (flyout.isVisible()) {
             flyout.cancel();
@@ -2032,7 +2032,7 @@ final class HubScreen extends ApplicationAdapter {
         hub.toe();
     }
 
-    /** The campaign's forces came: the order of battle rises over them. */
+    /** The campaign's forces came: the TO&amp;E rises over them. */
     void toe(ToeSnapshot shown) {
         toe.open(shown);
         hub.toeShown(true);
@@ -2041,7 +2041,7 @@ final class HubScreen extends ApplicationAdapter {
         handCursor = false;
     }
 
-    /** The forces changed while the order of battle is up: it shows them as they now are. */
+    /** The forces changed while the TO&amp;E is up: it shows them as they now are. */
     void toeRefresh(ToeSnapshot shown) {
         toe.refresh(shown);
     }
@@ -2266,7 +2266,7 @@ final class HubScreen extends ApplicationAdapter {
                           () -> openWarTable(null));
                     first = first == null ? table : first;
                 } else if (tab == MHQTabType.TOE) {
-                    UiButton table = flyoutList.item(getText("HqHub.orderOfBattle"), null, null, false, true,
+                    UiButton table = flyoutList.item(getText("HqHub.toe"), null, null, false, true,
                           this::openToe);
                     first = first == null ? table : first;
                 }

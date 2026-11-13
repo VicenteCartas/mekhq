@@ -70,7 +70,7 @@ import mekhq.gui.gdx.hub.ToeSnapshot.Kind;
 import mekhq.gui.gdx.hub.ToeSnapshot.Work;
 
 /**
- * A developer's look at the order of battle without a campaign: a mercenary regiment of three BattleMek battalions with
+ * A developer's look at the TO&amp;E without a campaign: a mercenary regiment of three BattleMek battalions with
  * armour, aerospace, infantry and DropShips, spread over its main force and two bases, some of it deployed, some on the
  * move, damaged, under repair, mothballed or uncrewed, opened on the TO&amp;E table in a window. Run through the
  * toeDemo task; {@code -Pcapture} instead writes a few shots to build/toe and exits; {@code small} shows a lone
