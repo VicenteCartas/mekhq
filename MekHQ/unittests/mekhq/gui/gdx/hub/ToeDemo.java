@@ -297,6 +297,8 @@ public final class ToeDemo {
                         }
                     }
                     case 1895 -> shot(prefix + "slotEditor");
+                    case 1896 -> table.shape(ToeSlots.Template.LEVEL_II);
+                    case 1899 -> shot(prefix + "slotTemplate");
                     // Closes the editor and clicks the vacant slot instead: the picker, then the first unit it offers
                     case 1900 -> table.input().keyDown(Input.Keys.ESCAPE);
                     case 1905 -> {

@@ -68,7 +68,47 @@ final class ToeSlots {
         MISFITS
     }
 
+    /** A formation's usual strength as the Inner Sphere, the Clans and ComStar count it. */
+    enum Template {
+        LANCE(4), STAR(5), LEVEL_II(6);
+
+        final int size;
+
+        Template(int size) {
+            this.size = size;
+        }
+    }
+
     private ToeSlots() {
+    }
+
+    /**
+     * {@code slots} brought to {@code template}'s strength: those set already keep their kind and weight class, so a
+     * lance of lights and mediums made a star keeps them, and any more are for whichever kind most of {@code slots}
+     * are, else most of {@code units}, else Meks, of any weight.
+     */
+    static List<FormationSlot> template(Template template, List<FormationSlot> slots, List<Card> units) {
+        List<FormationSlot> shaped = new ArrayList<>(slots.subList(0, Math.min(slots.size(), template.size)));
+        FormationSlot more = new FormationSlot(mostly(slots.isEmpty() ? units.stream().map(Card::fit).toList()
+              : slots), FormationSlot.Weight.ANY);
+        while (shaped.size() < template.size) {
+            shaped.add(more);
+        }
+        return List.copyOf(shaped);
+    }
+
+    private static FormationSlot.Kind mostly(List<FormationSlot> slots) {
+        int[] counts = new int[FormationSlot.Kind.values().length];
+        FormationSlot.Kind most = FormationSlot.Kind.MEK;
+        for (FormationSlot slot : slots) {
+            counts[slot.kind().ordinal()]++;
+        }
+        for (FormationSlot.Kind kind : FormationSlot.Kind.values()) {
+            if (counts[kind.ordinal()] > counts[most.ordinal()]) {
+                most = kind;
+            }
+        }
+        return most;
     }
 
     /** How {@code group}'s own units sit in its slots. */

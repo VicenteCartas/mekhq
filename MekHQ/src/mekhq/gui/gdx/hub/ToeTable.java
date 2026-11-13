@@ -940,8 +940,8 @@ final class ToeTable implements Disposable {
 
     /**
      * The slot editor: a row for each slot the formation is authorized, its kind and weight class each a selector, and
-     * a button that strikes it; under them, adding one, taking the units it has now as its slots, and clearing them;
-     * then applying it.
+     * a button that strikes it; under them, the usual strengths to shape it to, then adding one, taking the units it
+     * has now as its slots, and clearing them; then applying it.
      */
     private void buildEditor() {
         ToeSnapshot.Group group = Objects.requireNonNull(editing);
@@ -980,6 +980,16 @@ final class ToeTable implements Disposable {
             rows.add(strike).row();
         }
         dialog.add(rows).padTop(space("md")).row();
+        Table shapes = new Table();
+        shapes.add(ui.label(getText("Toe.slot.template"), "hud-body", 13, UiTheme.tokenColor("text.muted")))
+              .padRight(space("md"));
+        for (ToeSlots.Template template : ToeSlots.Template.values()) {
+            UiButton shape = ui.button("button-secondary" + UiTheme.COMPACT, null,
+                  getFormattedText("Toe.slot.template." + template.name(), template.size), null);
+            UiKit.onChange(shape, () -> shape(template));
+            shapes.add(shape).padRight(space("sm"));
+        }
+        dialog.add(shapes).padTop(space("lg")).row();
         Table tools = new Table();
         UiButton add = ui.button("button-secondary" + UiTheme.COMPACT, "add", getText("Toe.slot.add"), null);
         add.setDisabled(draft.size() >= MOST_SLOTS);
@@ -1004,7 +1014,7 @@ final class ToeTable implements Disposable {
             buildEditorLater();
         });
         tools.add(clear);
-        dialog.add(tools).padTop(space("lg")).row();
+        dialog.add(tools).padTop(space("sm")).row();
         Table foot = ui.footer(dialog, true);
         foot.right();
         UiButton cancel = ui.button("button-quiet", null, getText("Toe.slot.cancel"), null);
@@ -1014,6 +1024,18 @@ final class ToeTable implements Disposable {
         UiKit.onChange(apply, this::applyEditor);
         foot.add(apply);
         editorLayer.add(dialog);
+    }
+
+    /** Brings the slots being edited to {@code template}'s strength, as its button in the editor does. */
+    void shape(ToeSlots.Template template) {
+        ToeSnapshot.Group group = editing;
+        if (group == null) {
+            return;
+        }
+        List<FormationSlot> shaped = ToeSlots.template(template, draft, group.units());
+        draft.clear();
+        draft.addAll(shaped);
+        buildEditorLater();
     }
 
     /** Builds the editor again once the event that changed it is done with its buttons. */

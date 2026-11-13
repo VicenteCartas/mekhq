@@ -43,6 +43,7 @@ import java.util.UUID;
 import mekhq.campaign.force.FormationSlot;
 import mekhq.gui.gdx.hub.ToeSlots.Fill;
 import mekhq.gui.gdx.hub.ToeSlots.Fit;
+import mekhq.gui.gdx.hub.ToeSlots.Template;
 import mekhq.gui.gdx.hub.ToeSnapshot.Card;
 import mekhq.gui.gdx.hub.ToeSnapshot.Condition;
 import mekhq.gui.gdx.hub.ToeSnapshot.Crew;
@@ -105,6 +106,20 @@ class ToeSlotsTest {
         Group lance = lance(List.of(heavy), List.of(HEAVY, LIGHT));
 
         assertEquals(Fit.FITS, ToeSlots.fit(lance, List.of(heavy)));
+    }
+
+    @Test
+    void aTemplateKeepsTheSlotsSetAndAddsOpenOnesOfTheUsualKind() {
+        FormationSlot anyMek = new FormationSlot(FormationSlot.Kind.MEK, FormationSlot.Weight.ANY);
+        FormationSlot anyTank = new FormationSlot(FormationSlot.Kind.VEHICLE, FormationSlot.Weight.ANY);
+        FormationSlot tank = new FormationSlot(FormationSlot.Kind.VEHICLE, FormationSlot.Weight.HEAVY);
+        List<FormationSlot> lance = List.of(LIGHT, MEDIUM, HEAVY, HEAVY);
+
+        assertEquals(List.of(LIGHT, MEDIUM, HEAVY, HEAVY, anyMek), ToeSlots.template(Template.STAR, lance, List.of()));
+        assertEquals(List.of(LIGHT, MEDIUM, HEAVY, HEAVY),
+              ToeSlots.template(Template.LANCE, List.of(LIGHT, MEDIUM, HEAVY, HEAVY, anyMek), List.of()));
+        assertEquals(List.of(anyTank, anyTank, anyTank, anyTank, anyTank, anyTank),
+              ToeSlots.template(Template.LEVEL_II, List.of(), List.of(card(tank), card(tank), card(LIGHT))));
     }
 
     private static Group lance(List<Card> units, List<FormationSlot> slots) {
