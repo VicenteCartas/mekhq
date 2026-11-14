@@ -228,10 +228,21 @@ public final class ToeDemo {
                         }
                     }
                     case 1380 -> shot(prefix + "cardOpened");
+                    // Opens a second card, the one nearest the middle now, where it stands too
+                    case 1385 -> {
+                        Block next = cardNear();
+                        if (next != null) {
+                            Vector2 at = table.onScreen(next, 0.5f, 0.25f);
+                            table.input().mouseMoved(Math.round(at.x), Math.round(at.y));
+                            table.input().touchDown(Math.round(at.x), Math.round(at.y), 0, Input.Buttons.LEFT);
+                            table.input().touchUp(Math.round(at.x), Math.round(at.y), 0, Input.Buttons.LEFT);
+                        }
+                    }
+                    case 1480 -> shot(prefix + "cardOpened2");
                     // Steps in until the units show, carries one over the formations it may go to and one it may
                     // not, then drops it
-                    case 1385 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, -10);
-                    case 1480 -> {
+                    case 1485 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, -10);
+                    case 1580 -> {
                         carried = slotNear();
                         if (carried != null) {
                             goal = blockNear(carried, false);
@@ -240,50 +251,50 @@ public final class ToeDemo {
                             table.input().touchDown(Math.round(at.x), Math.round(at.y), 0, Input.Buttons.LEFT);
                         }
                     }
-                    case 1481, 1483, 1485, 1487, 1489 -> {
+                    case 1581, 1583, 1585, 1587, 1589 -> {
                         if (carried != null && goal != null) {
-                            dragToward(carried, goal, (frames - 1479) / 10f);
+                            dragToward(carried, goal, (frames - 1579) / 10f);
                         }
                     }
-                    case 1495 -> shot(prefix + "dragTarget");
-                    case 1500 -> {
+                    case 1595 -> shot(prefix + "dragTarget");
+                    case 1600 -> {
                         if (refused != null) {
                             Vector2 at = table.onScreen(refused);
                             table.input().touchDragged(Math.round(at.x), Math.round(at.y), 0);
                         }
                     }
-                    case 1510 -> {
+                    case 1610 -> {
                         if (refused != null) {
                             shot(prefix + "dragRefused");
                         }
                     }
-                    case 1515 -> {
+                    case 1615 -> {
                         if (goal != null) {
                             Vector2 at = table.onScreen(goal);
                             table.input().touchDragged(Math.round(at.x), Math.round(at.y), 0);
                             table.input().touchUp(Math.round(at.x), Math.round(at.y), 0, Input.Buttons.LEFT);
                         }
                     }
-                    case 1615 -> shot(prefix + "dropped");
+                    case 1715 -> shot(prefix + "dropped");
                     // Steps back, then in on a formation short of what it's authorized: its vacant slots, one
                     // pointed at, a unit carried toward one it would fill, and the formation's slot editor
-                    case 1620 -> table.input().keyDown(Input.Keys.HOME);
-                    case 1720 -> {
+                    case 1720 -> table.input().keyDown(Input.Keys.HOME);
+                    case 1820 -> {
                         Block lacking = shortNear();
                         if (lacking != null) {
                             slotted = table.onScreen(lacking);
                             zoom(Math.round(slotted.x), Math.round(slotted.y), -10);
                         }
                     }
-                    case 1830 -> {
+                    case 1930 -> {
                         Vacancy vacancy = slotted == null ? null : vacancyNear(slotted);
                         if (vacancy != null) {
                             slotted = table.onScreen(vacancy);
                             table.input().mouseMoved(Math.round(slotted.x), Math.round(slotted.y));
                         }
                     }
-                    case 1840 -> shot(prefix + "vacancy");
-                    case 1845 -> {
+                    case 1940 -> shot(prefix + "vacancy");
+                    case 1945 -> {
                         Vacancy vacancy = slotted == null ? null : vacancyNear(slotted);
                         carried = vacancy == null ? null : filler(vacancy);
                         filling = vacancy == null ? null : vacancy.block();
@@ -292,13 +303,13 @@ public final class ToeDemo {
                             table.input().touchDown(Math.round(at.x), Math.round(at.y), 0, Input.Buttons.LEFT);
                         }
                     }
-                    case 1846, 1848, 1850, 1852, 1854 -> {
+                    case 1946, 1948, 1950, 1952, 1954 -> {
                         if (carried != null && filling != null) {
-                            dragToward(carried, filling, (frames - 1844) / 10f);
+                            dragToward(carried, filling, (frames - 1944) / 10f);
                         }
                     }
-                    case 1870 -> shot(prefix + "dragFits");
-                    case 1875 -> {
+                    case 1970 -> shot(prefix + "dragFits");
+                    case 1975 -> {
                         table.view().cancelDrag();
                         if (filling != null) {
                             Vector2 at = table.onScreen(filling);
@@ -306,12 +317,12 @@ public final class ToeDemo {
                             table.input().touchUp(Math.round(at.x), Math.round(at.y), 0, Input.Buttons.RIGHT);
                         }
                     }
-                    case 1895 -> shot(prefix + "slotEditor");
-                    case 1896 -> table.shape(ToeSlots.Template.LEVEL_II);
-                    case 1899 -> shot(prefix + "slotTemplate");
+                    case 1995 -> shot(prefix + "slotEditor");
+                    case 1996 -> table.shape(ToeSlots.Template.LEVEL_II);
+                    case 1999 -> shot(prefix + "slotTemplate");
                     // Closes the editor and clicks the vacant slot instead: the picker, then the first unit it offers
-                    case 1900 -> table.input().keyDown(Input.Keys.ESCAPE);
-                    case 1905 -> {
+                    case 2000 -> table.input().keyDown(Input.Keys.ESCAPE);
+                    case 2005 -> {
                         Vacancy vacancy = slotted == null ? null : vacancyNear(slotted);
                         if (vacancy != null) {
                             Vector2 at = table.onScreen(vacancy);
@@ -319,14 +330,14 @@ public final class ToeDemo {
                             table.input().touchUp(Math.round(at.x), Math.round(at.y), 0, Input.Buttons.LEFT);
                         }
                     }
-                    case 1930 -> shot(prefix + "fillPicker");
-                    case 1935 -> {
+                    case 2030 -> shot(prefix + "fillPicker");
+                    case 2035 -> {
                         ToeTable.Filling picker = table.filling();
                         if (picker != null && !picker.candidates().isEmpty()) {
                             table.fillWith(picker.candidates().get(0));
                         }
                     }
-                    case 1990 -> {
+                    case 2090 -> {
                         shot(prefix + "filled");
                         Gdx.app.exit();
                     }

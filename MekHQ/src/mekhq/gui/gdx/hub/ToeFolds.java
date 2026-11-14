@@ -50,6 +50,10 @@ import mekhq.gui.gdx.hub.ToeSnapshot.Group;
  * formation with others under it as well, folded apart into a card of their own ({@link #attached}), and the units
  * in no formation. The force itself never folds.</p>
  *
+ * <p>Any one card can be opened where it stands, or any open formation folded, by hand ({@link #toggle}), without
+ * stepping: the rest of the table stays as the step has it. Stepping out forgets that; stepping in keeps what was
+ * opened.</p>
+ *
  * <p>Each step has its own scale, so everything on the table is drawn at one size on screen there, whatever the
  * force. Plain Java, so it can be tested without GL.</p>
  */
@@ -67,6 +71,8 @@ final class ToeFolds {
     private final Map<Integer, Integer> depths = new HashMap<>();
     /** The keys that hold only units, which stay cards until the units show. */
     private final Set<Integer> leaves = new HashSet<>();
+    /** The formations and cards opened (false) or folded (true) by hand, whatever the step has them. */
+    private final Map<Integer, Boolean> chosen = new HashMap<>();
     /** How many tiers of formations stand under the force. */
     private int tiers;
     private int step;
@@ -113,11 +119,37 @@ final class ToeFolds {
         return step;
     }
 
-    /** Goes to step {@code to}, kept within those there are; whether that's a different step. */
+    /**
+     * Goes to step {@code to}, kept within those there are; whether that's a different step. Stepping out forgets
+     * what was opened or folded by hand; stepping in keeps what was opened.
+     */
     boolean step(int to) {
         int was = step;
         step = Math.max(0, Math.min(to, steps() - 1));
+        if (step < was) {
+            chosen.clear();
+        } else if (step > was) {
+            chosen.values().removeIf(folded -> folded);
+        }
         return step != was;
+    }
+
+    /** Forgets what was opened or folded by hand, everything as the step has it. */
+    void forget() {
+        chosen.clear();
+    }
+
+    /**
+     * Takes up the step {@code from} was at and what was opened or folded by hand on it that's still on the table, as
+     * the force comes back changed.
+     */
+    void carry(ToeFolds from) {
+        step = Math.max(0, Math.min(from.step, steps() - 1));
+        from.chosen.forEach((key, folded) -> {
+            if (depths.containsKey(key)) {
+                chosen.put(key, folded);
+            }
+        });
     }
 
     /** The first step every unit shows at, nothing folded. */
@@ -140,18 +172,33 @@ final class ToeFolds {
         return at < tiers ? CARDS_PIXELS : at == tiers ? UNITS_PIXELS : CLOSE_PIXELS;
     }
 
-    /** Whether the formation or card keyed {@code key} is folded at the step it's at. */
+    /** Whether the formation or card keyed {@code key} is folded at the step it's at, or as it was chosen by hand. */
     boolean folded(int key) {
+        Boolean chose = chosen.get(key);
+        return chose != null ? chose : stepFolds(key);
+    }
+
+    /** Whether the step it's at folds what's keyed {@code key}. */
+    private boolean stepFolds(int key) {
         Integer depth = depths.get(key);
         return depth != null && !units() && (leaves.contains(key) || depth > step);
     }
 
-    /** The farthest-out step at which what's keyed {@code key} is open; the step it's at if it's not on the table. */
-    int opening(int key) {
+    /**
+     * Opens what's keyed {@code key} if it's folded, or folds it if it's open, by hand, leaving everything else as it
+     * is; whether it could. The force itself never folds.
+     */
+    boolean toggle(int key) {
         Integer depth = depths.get(key);
-        if (depth == null) {
-            return step;
+        if (depth == null || depth == 0) {
+            return false;
         }
-        return leaves.contains(key) ? tiers : depth;
+        boolean fold = !folded(key);
+        if (fold == stepFolds(key)) {
+            chosen.remove(key);
+        } else {
+            chosen.put(key, fold);
+        }
+        return true;
     }
 }

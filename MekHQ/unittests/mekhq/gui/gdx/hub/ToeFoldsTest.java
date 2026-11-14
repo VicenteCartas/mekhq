@@ -78,19 +78,65 @@ class ToeFoldsTest {
 
         assertTrue(folds.folded(replacements.id()), "a formation with none under it, a tier up");
         assertTrue(folds.folded(ToeFolds.UNASSIGNED));
-        assertEquals(folds.unitsStep(), folds.opening(replacements.id()));
-        assertEquals(folds.unitsStep(), folds.opening(ToeFolds.UNASSIGNED));
     }
 
     @Test
-    void aCardOpensAtTheStepOfItsTier() {
+    void aCardOpensByHandWhereItStandsAndItsSiblingsStayFolded() {
+        ToeSnapshot snapshot = ToeLayoutTest.regiment();
+        ToeFolds folds = new ToeFolds(snapshot);
+        Group first = snapshot.root().children().get(0);
+        Group second = snapshot.root().children().get(1);
+
+        assertTrue(folds.toggle(first.id()));
+        assertEquals(0, folds.step(), "opening a card leaves the step where it is");
+        assertFalse(folds.folded(first.id()));
+        assertTrue(folds.folded(second.id()));
+        assertTrue(folds.folded(first.children().get(0).id()), "what's under it opens a tier at a time");
+
+        assertTrue(folds.toggle(first.id()));
+        assertTrue(folds.folded(first.id()), "a second click folds it back");
+        assertFalse(folds.toggle(snapshot.root().id()), "the force itself never folds");
+        assertFalse(folds.toggle(12345));
+    }
+
+    @Test
+    void steppingOutForgetsWhatWasOpenedByHandAndSteppingInKeepsIt() {
         ToeSnapshot snapshot = ToeLayoutTest.regiment();
         ToeFolds folds = new ToeFolds(snapshot);
         Group battalion = snapshot.root().children().get(0);
+        Group company = battalion.children().get(0);
+        Group other = battalion.children().get(1);
+        folds.step(1);
+        folds.toggle(company.id());
+        folds.toggle(other.id());
+        folds.toggle(other.id());
+        folds.toggle(battalion.id());
 
-        assertEquals(1, folds.opening(battalion.id()));
-        assertEquals(2, folds.opening(battalion.children().get(0).id()));
-        assertEquals(0, folds.opening(12345), "off the table, it stays where it is");
+        assertTrue(folds.folded(battalion.id()), "an open formation folds by hand too");
+        folds.step(2);
+        assertFalse(folds.folded(battalion.id()), "stepping in drops what was folded by hand");
+        assertFalse(folds.folded(company.id()));
+        folds.toggle(company.children().get(0).id());
+        folds.step(1);
+        assertTrue(folds.folded(company.id()), "stepping out forgets what was opened by hand");
+        assertTrue(folds.folded(battalion.children().get(1).id()));
+
+        folds.toggle(company.id());
+        folds.forget();
+        assertTrue(folds.folded(company.id()));
+    }
+
+    @Test
+    void whatWasOpenedByHandCarriesOverToTheForceAsItComesBack() {
+        ToeSnapshot snapshot = ToeLayoutTest.regiment();
+        ToeFolds folds = new ToeFolds(snapshot);
+        Group battalion = snapshot.root().children().get(0);
+        folds.toggle(battalion.id());
+
+        ToeFolds next = new ToeFolds(snapshot);
+        next.carry(folds);
+        assertFalse(next.folded(battalion.id()));
+        assertTrue(next.folded(snapshot.root().children().get(1).id()));
     }
 
     @Test

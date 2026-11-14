@@ -42,10 +42,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
@@ -517,7 +519,7 @@ final class ToeTable implements Disposable {
 
     private void show(ToeSnapshot shown, boolean opening) {
         String previous = placeIndex < places.size() ? places.get(placeIndex).name() : null;
-        int step = folds == null ? 0 : folds.step();
+        ToeFolds was = folds;
         snapshot = shown;
         force.setText(shown.force());
         folds = new ToeFolds(shown);
@@ -544,10 +546,10 @@ final class ToeTable implements Disposable {
             tabs.add(segments);
         }
         view.filter(places.get(placeIndex).units());
-        if (opening) {
+        if (opening || was == null) {
             frameShown(true, true);
         } else {
-            folds.step(step);
+            folds.carry(was);
             relayout(false);
         }
         strength(shown);
@@ -594,6 +596,7 @@ final class ToeTable implements Disposable {
             return;
         }
         folds.step(0);
+        folds.forget();
         relayout(false);
         view.frame(litBounds(Objects.requireNonNull(layout)), folds.cellPixels() * scale, false);
     }
@@ -615,21 +618,27 @@ final class ToeTable implements Disposable {
     }
 
     /**
-     * Opens the folded formation {@code card}, at the step it opens at, gliding in on it as it opens; if a unit's run
-     * of its strip was clicked, that unit is picked out once it's on the table.
+     * Opens the folded formation {@code card} where it stands, or folds the open one whose name strip was clicked,
+     * leaving the rest of the table as it is: what was clicked stays under the pointer, the camera gliding only as
+     * far as it takes to bring what opened on screen. If a unit's run of a card's strip was clicked, that unit is
+     * picked out once it's on the table.
      */
     private void openCard(Block card) {
-        if (folds == null || layout == null) {
+        if (folds == null || layout == null || !folds.toggle(card.key())) {
             return;
         }
         Card unit = view.hoveredUnit();
-        folds.step(folds.opening(card.key()));
         relayout(false);
-        Block opened = layout.holder(card.key());
-        float[] at = opened == null ? null : layout.reach(opened.key());
-        view.frame(at != null ? at
-                    : new float[] { card.x(), card.z(), card.x() + card.width(), card.z() + card.depth() },
-              folds.cellPixels() * scale, false);
+        if (folds.folded(card.key())) {
+            return;
+        }
+        // Units folded apart from the formations beside them open onto their formation's plate, with no node of their own
+        Set<UUID> units = card.units().stream().map(Card::id).collect(Collectors.toSet());
+        float[] at = layout.block(card.key()) != null ? layout.reach(card.key())
+              : layout.bounds(shown -> units.contains(shown.id()));
+        if (at != null) {
+            view.reveal(at);
+        }
         Slot slot = unit == null ? null : slotOf(unit);
         if (slot != null) {
             view.select(slot);

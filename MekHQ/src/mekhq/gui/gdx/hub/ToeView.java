@@ -126,7 +126,13 @@ final class ToeView implements Disposable {
     private static final float NEAR_FROM = 22;
     private static final float NEAR_TO = 32;
     /** How long a formation takes to fold into its card or open out of it, in seconds. */
-    private static final float MORPH_SECONDS = 0.45f;
+    private static final float MORPH_SECONDS = 0.3f;
+    /** How far out to either side what's framed may stand on screen, as the screen's half-width. */
+    private static final float SIDE_EDGE = 0.92f;
+    /** How high what's framed may stand on screen, under the header, from -1 at the bottom to 1 at the top. */
+    private static final float TOP_EDGE = 0.56f;
+    /** How low what's framed may stand on screen, above the hint and the minimap. */
+    private static final float BOTTOM_EDGE = -0.86f;
     /** How long the table takes to rise when it opens, and the camera to glide somewhere, in seconds. */
     private static final float RISE_SECONDS = 0.8f;
     private static final float GLIDE_RATE = 6;
@@ -360,8 +366,11 @@ final class ToeView implements Disposable {
                 return true;
             }
             if (!dragged && button == Input.Buttons.LEFT) {
-                Block card = cardAt(screenX, screenY);
+                Block card = namedAt(screenX, screenY);
                 if (card != null) {
+                    pointerX = screenX;
+                    pointerY = screenY;
+                    pointerZoom = true;
                     pickedCard.accept(card);
                     return true;
                 }
@@ -405,9 +414,9 @@ final class ToeView implements Disposable {
     };
 
     /**
-     * A click hands the unit under it to {@code picked}, or null for none, a folded formation to {@code card} and a
-     * vacant slot to {@code fill}; a right click a formation's block or card to {@code edit}; {@code drags} is told
-     * what a drag picks up and where it's put down.
+     * A click hands the unit under it to {@code picked}, or null for none, a folded formation or the name strip of an
+     * open one to {@code card} and a vacant slot to {@code fill}; a right click a formation's block or card to
+     * {@code edit}; {@code drags} is told what a drag picks up and where it's put down.
      */
     ToeView(Consumer<Slot> picked, Consumer<Block> card, Consumer<Vacancy> fill, Consumer<Block> edit, Drags drags) {
         this.picked = picked;
@@ -932,6 +941,53 @@ final class ToeView implements Disposable {
         }
     }
 
+    /**
+     * Glides the least way that brings all of {@code bounds} on screen under the header, the camera as far off as it's
+     * going; as much of it as fits from its top left if it's too big.
+     */
+    void reveal(float[] bounds) {
+        Vector3 corner = new Vector3();
+        Vector3 along = new Vector3();
+        Vector3 down = new Vector3();
+        Vector3 middle = new Vector3();
+        // The camera looks down at a slant, so a few goes bring it on screen
+        for (int pass = 0; pass < 4; pass++) {
+            aim(probe, wantFocus, wantDistance);
+            float left = Float.MAX_VALUE;
+            float right = -Float.MAX_VALUE;
+            float bottom = Float.MAX_VALUE;
+            float top = -Float.MAX_VALUE;
+            for (int k = 0; k < 4; k++) {
+                corner.set(bounds[(k & 1) == 0 ? 0 : 2], 0.3f, bounds[(k & 2) == 0 ? 1 : 3]).prj(probe.combined);
+                left = Math.min(left, corner.x);
+                right = Math.max(right, corner.x);
+                bottom = Math.min(bottom, corner.y);
+                top = Math.max(top, corner.y);
+            }
+            float sx = right - left > 2 * SIDE_EDGE || left < -SIDE_EDGE ? -SIDE_EDGE - left
+                  : right > SIDE_EDGE ? SIDE_EDGE - right : 0;
+            float sy = top - bottom > TOP_EDGE - BOTTOM_EDGE || top > TOP_EDGE ? TOP_EDGE - top
+                  : bottom < BOTTOM_EDGE ? BOTTOM_EDGE - bottom : 0;
+            if (Math.abs(sx) < 1e-3f && Math.abs(sy) < 1e-3f) {
+                break;
+            }
+            middle.set(wantFocus.x, 0.3f, wantFocus.z).prj(probe.combined);
+            along.set(wantFocus.x + 1, 0.3f, wantFocus.z).prj(probe.combined).sub(middle);
+            down.set(wantFocus.x, 0.3f, wantFocus.z + 1).prj(probe.combined).sub(middle);
+            float det = along.x * down.y - down.x * along.y;
+            if (Math.abs(det) < 1e-6f) {
+                break;
+            }
+            // What's on screen moving by (sx, sy) is the camera moving the other way
+            wantFocus.x -= (sx * down.y - down.x * sy) / det;
+            wantFocus.z -= (along.x * sy - sx * along.y) / det;
+        }
+        keepOnTable(wantFocus);
+        if (still) {
+            focus.set(wantFocus);
+        }
+    }
+
     /** How many pixels a cell takes on screen with all of {@code bounds} framed under the header, as {@link #frame}. */
     float fitCellPixels(float[] bounds) {
         return cellPixelsAt(fitDistance(bounds, new Vector3()));
@@ -1085,7 +1141,7 @@ final class ToeView implements Disposable {
             for (int k = 0; k < 4 && fits; k++) {
                 corner.set(bounds[(k & 1) == 0 ? 0 : 2], 0.3f, bounds[(k & 2) == 0 ? 1 : 3]);
                 corner.prj(probe.combined);
-                fits = Math.abs(corner.x) <= 0.92f && corner.y >= -0.86f && corner.y <= 0.56f;
+                fits = Math.abs(corner.x) <= SIDE_EDGE && corner.y >= BOTTOM_EDGE && corner.y <= TOP_EDGE;
             }
             if (fits) {
                 high = middle;
@@ -1143,12 +1199,6 @@ final class ToeView implements Disposable {
             }
         }
         return null;
-    }
-
-    /** The folded formation under the pointer; null if it's not on one. */
-    private @Nullable Block cardAt(int screenX, int screenY) {
-        Block block = seen(screenX, screenY, new Vector3());
-        return block != null && block.card() ? block : null;
     }
 
     /** The folded formation under the pointer, or the formation whose head strip it's on; null for neither. */
