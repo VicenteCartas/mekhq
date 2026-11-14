@@ -40,6 +40,7 @@ import java.util.UUID;
 
 import jakarta.annotation.Nullable;
 import mekhq.campaign.force.FormationSlot;
+import mekhq.campaign.force.FormationTemplate;
 import mekhq.gui.gdx.hub.ToeSnapshot.Card;
 import mekhq.gui.gdx.hub.ToeSnapshot.Group;
 
@@ -70,12 +71,12 @@ final class ToeSlots {
 
     /** A formation's usual strength as the Inner Sphere, the Clans and ComStar count it. */
     enum Template {
-        LANCE(4), STAR(5), LEVEL_II(6);
+        LANCE(FormationTemplate.LANCE), STAR(FormationTemplate.STAR), LEVEL_II(FormationTemplate.LEVEL_II);
 
         final int size;
 
-        Template(int size) {
-            this.size = size;
+        Template(FormationTemplate model) {
+            size = model.size();
         }
     }
 

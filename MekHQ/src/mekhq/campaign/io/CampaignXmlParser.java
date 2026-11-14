@@ -2374,6 +2374,8 @@ public record CampaignXmlParser(InputStream is, MekHQ app) {
                     processForces(campaign, workingNode, version);
                 } else if (nodeName.equalsIgnoreCase("formations")) {
                     processFormations(campaign, workingNode, version);
+                } else if (nodeName.equalsIgnoreCase("formationTemplates")) {
+                    campaign.getPlayerForce().getFormationTemplates().fillFromXML(workingNode);
                 } else if (nodeName.equalsIgnoreCase("finances")) {
                     processFinances(campaign, workingNode);
                 } else if (nodeName.equalsIgnoreCase("locations")) {

@@ -114,6 +114,10 @@ public class Formation {
     private final Vector<UUID> units;
     /** The places the formation is authorized, in the order the player set them; none authorizes nothing. */
     private final List<FormationSlot> slots = new ArrayList<>();
+    /** The name of the template the formation was last shaped by, null when none was. */
+    private @Nullable String templateName;
+    /** The MegaMek formation rule ({@code FormationType} name) it's meant to meet, null for none. */
+    private @Nullable String formationRule;
     private int scenarioId;
     private UUID formationCommanderID;
     private UUID overrideFormationCommanderID;
@@ -565,6 +569,26 @@ public class Formation {
         this.slots.addAll(slots);
     }
 
+    /** The name of the template the formation was last shaped by, null when none was. */
+    public @Nullable String getTemplateName() {
+        return templateName;
+    }
+
+    /** The MegaMek formation rule ({@code FormationType} name) the formation is meant to meet, null for none. */
+    public @Nullable String getFormationRule() {
+        return formationRule;
+    }
+
+    /**
+     * Shapes the formation by {@code template}: it takes a copy of the template's slots, name and rule, and keeps them
+     * however the template changes afterwards. A null template clears all three.
+     */
+    public void applyTemplate(@Nullable FormationTemplate template) {
+        setSlots(template == null ? List.of() : template.slots());
+        templateName = template == null ? null : template.name();
+        formationRule = template == null ? null : template.rule();
+    }
+
     /**
      * @param standardFormationsOnly to only include combat formations or to also include support formations
      *
@@ -799,7 +823,11 @@ public class Formation {
                 } else if (wn2.getNodeName().equalsIgnoreCase("units")) {
                     processUnitNodes(formation, wn2, version);
                 } else if (wn2.getNodeName().equalsIgnoreCase("slots")) {
-                    processSlotNodes(formation, wn2);
+                    formation.slots.addAll(FormationSlot.parseAll(wn2));
+                } else if (wn2.getNodeName().equalsIgnoreCase("templateName")) {
+                    formation.templateName = FormationTemplate.text(wn2.getTextContent());
+                } else if (wn2.getNodeName().equalsIgnoreCase("formationRule")) {
+                    formation.formationRule = FormationTemplate.text(wn2.getTextContent());
                 } else if (wn2.getNodeName().equalsIgnoreCase("subFormations") || wn2.getNodeName().equalsIgnoreCase(
                       "subForces")) {
                     NodeList nl2 = wn2.getChildNodes();
@@ -1003,12 +1031,12 @@ public class Formation {
             }
             MHQXMLUtility.writeSimpleXMLCloseTag(pw1, --indent, "units");
         }
-        if (!slots.isEmpty()) {
-            MHQXMLUtility.writeSimpleXMLOpenTag(pw1, indent++, "slots");
-            for (FormationSlot slot : slots) {
-                MHQXMLUtility.writeSimpleXMLTag(pw1, indent, "slot", slot.code());
-            }
-            MHQXMLUtility.writeSimpleXMLCloseTag(pw1, --indent, "slots");
+        FormationSlot.writeToXML(pw1, indent, slots);
+        if (templateName != null) {
+            MHQXMLUtility.writeSimpleXMLTag(pw1, indent, "templateName", templateName);
+        }
+        if (formationRule != null) {
+            MHQXMLUtility.writeSimpleXMLTag(pw1, indent, "formationRule", formationRule);
         }
 
         if (!subFormations.isEmpty()) {
@@ -1090,22 +1118,6 @@ public class Formation {
             Node classNameNode = attrs.getNamedItem("id");
             String idString = classNameNode.getTextContent();
             retVal.addUnit(UUID.fromString(idString));
-        }
-    }
-
-    private static void processSlotNodes(Formation formation, Node wn) {
-        NodeList nl = wn.getChildNodes();
-        for (int x = 0; x < nl.getLength(); x++) {
-            Node wn2 = nl.item(x);
-            if (wn2.getNodeType() != Node.ELEMENT_NODE || !wn2.getNodeName().equalsIgnoreCase("slot")) {
-                continue;
-            }
-            FormationSlot slot = FormationSlot.parse(wn2.getTextContent());
-            if (slot == null) {
-                LOGGER.error("Unknown formation slot not loaded: " + wn2.getTextContent());
-            } else {
-                formation.slots.add(slot);
-            }
         }
     }
 

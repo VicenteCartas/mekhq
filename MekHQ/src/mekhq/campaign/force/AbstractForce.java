@@ -151,6 +151,7 @@ public abstract class AbstractForce {
     private int repairBaysRented = 0;
     // Table of Organisation & Equipment (TO&E) and StratCon combat teams
     private Formation formations;
+    private final FormationTemplates formationTemplates = new FormationTemplates();
     private int lastFormationId;
     /**
      * Id of the Support Command formation built by {@code SupportPersonnelToTOE}, or {@link Formation#FORMATION_NONE}
@@ -578,6 +579,11 @@ public abstract class AbstractForce {
 
     public int getTemporaryPrisonerCapacity() {
         return temporaryPrisonerCapacity;
+    }
+
+    /** The formation templates the force keeps besides the standard ones. */
+    public FormationTemplates getFormationTemplates() {
+        return formationTemplates;
     }
 
     public void setTemporaryPrisonerCapacity(int temporaryPrisonerCapacity) {

@@ -32,6 +32,8 @@
  */
 package mekhq.campaign.force;
 
+import java.io.PrintWriter;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -41,6 +43,10 @@ import jakarta.annotation.Nullable;
 import megamek.common.units.Entity;
 import megamek.common.units.EntityWeightClass;
 import megamek.common.units.UnitType;
+import megamek.logging.MMLogger;
+import mekhq.utilities.MHQXMLUtility;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
 /**
  * One place a formation is authorized: the kind of unit it calls for and its weight class, either of which may be left
@@ -53,6 +59,8 @@ import megamek.common.units.UnitType;
  * names matches it.</p>
  */
 public record FormationSlot(Kind kind, Weight weight) {
+    private static final MMLogger LOGGER = MMLogger.create(FormationSlot.class);
+
     /** A slot open to any unit. */
     public static final FormationSlot OPEN = new FormationSlot(Kind.ANY, Weight.ANY);
 
@@ -169,5 +177,36 @@ public record FormationSlot(Kind kind, Weight weight) {
         } catch (IllegalArgumentException ex) {
             return null;
         }
+    }
+
+    /** Writes {@code slots} as a {@code <slots>} element, or nothing when there are none. */
+    static void writeToXML(PrintWriter pw, int indent, List<FormationSlot> slots) {
+        if (slots.isEmpty()) {
+            return;
+        }
+        MHQXMLUtility.writeSimpleXMLOpenTag(pw, indent++, "slots");
+        for (FormationSlot slot : slots) {
+            MHQXMLUtility.writeSimpleXMLTag(pw, indent, "slot", slot.code());
+        }
+        MHQXMLUtility.writeSimpleXMLCloseTag(pw, --indent, "slots");
+    }
+
+    /** The slots saved in {@code slotsNode}, a {@code <slots>} element, leaving out any it can't read. */
+    static List<FormationSlot> parseAll(Node slotsNode) {
+        List<FormationSlot> slots = new ArrayList<>();
+        NodeList nodes = slotsNode.getChildNodes();
+        for (int i = 0; i < nodes.getLength(); i++) {
+            Node node = nodes.item(i);
+            if (node.getNodeType() != Node.ELEMENT_NODE || !node.getNodeName().equalsIgnoreCase("slot")) {
+                continue;
+            }
+            FormationSlot slot = parse(node.getTextContent());
+            if (slot == null) {
+                LOGGER.error("Unknown formation slot not loaded: " + node.getTextContent());
+            } else {
+                slots.add(slot);
+            }
+        }
+        return slots;
     }
 }
