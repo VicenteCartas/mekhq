@@ -41,6 +41,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -158,18 +159,55 @@ class ToeLayoutTest {
     }
 
     @Test
-    void aCompanysLancesStandSideBySideEvenDeepInARegiment() {
-        ToeSnapshot snapshot = regiment();
-        ToeLayout layout = ToeLayout.of(snapshot, "Unassigned");
-
-        Map<Group, Block> byGroup = byGroup(layout);
-        for (Group battalion : snapshot.root().children()) {
-            for (Group company : battalion.children()) {
-                List<Group> lances = company.children();
-                for (int l = 1; l < lances.size(); l++) {
-                    assertEquals(byGroup.get(lances.get(0)).z(), byGroup.get(lances.get(l)).z(), EPSILON);
-                    assertTrue(byGroup.get(lances.get(l)).x() > byGroup.get(lances.get(l - 1)).x());
+    void aTierLaysOutWhatsUnderItOneWayAndNeverSpreadsBelowOneThatLists() {
+        // A headquarters' sections beside a section of teams of its own, as a company's lances stand beside another
+        List<Group> sections = new ArrayList<>();
+        int id = 1;
+        for (int s = 0; s < 3; s++) {
+            sections.add(new Group(id++, "Section " + s, null, List.of(), List.of(card("Clerk " + s, 0)), false,
+                  List.of()));
+        }
+        List<Group> teams = new ArrayList<>();
+        for (int t = 0; t < 4; t++) {
+            teams.add(new Group(id++, "Team " + t, null, List.of(), List.of(card("Crane " + t, 0)), false, List.of()));
+        }
+        sections.add(new Group(id++, "Recovery", null, teams, List.of(), false, List.of()));
+        List<Group> companies = new ArrayList<>();
+        for (int c = 0; c < 2; c++) {
+            List<Group> lances = new ArrayList<>();
+            for (int l = 0; l < 5; l++) {
+                List<Card> units = new ArrayList<>();
+                for (int u = 0; u < 4; u++) {
+                    units.add(card("Tank " + c + l + u, 0));
                 }
+                lances.add(new Group(id++, "Lance " + c + l, null, List.of(), units, false, List.of()));
+            }
+            companies.add(new Group(id++, "Company " + c, null, lances, List.of(), false, List.of()));
+        }
+        Group headquarters = new Group(id++, "Headquarters", null, sections, List.of(), false, List.of());
+        Group armour = new Group(id++, "Armour", null, companies, List.of(), false, List.of());
+        Group root = new Group(id, "Force", null, List.of(headquarters, armour), List.of(), false, List.of());
+
+        for (ToeSnapshot snapshot : List.of(new ToeSnapshot("Force", root, List.of(), List.of()), regiment())) {
+            ToeLayout layout = ToeLayout.of(snapshot, "Unassigned");
+
+            Map<Group, Block> byGroup = byGroup(layout);
+            Map<Integer, Boolean> spreads = new HashMap<>();
+            for (Block parent : layout.blocks()) {
+                if (parent.group() == null || parent.group().children().size() < 2) {
+                    continue;
+                }
+                List<Block> under = parent.group().children().stream().map(byGroup::get).toList();
+                boolean side = under.stream().allMatch(block -> Math.abs(block.z() - under.get(0).z()) < EPSILON);
+                boolean listed = under.stream().allMatch(block -> Math.abs(block.x() - under.get(0).x()) < EPSILON);
+                assertTrue(side != listed, parent.name() + " neither spreads nor lists what's under it");
+                Boolean tier = spreads.putIfAbsent(parent.level(), side);
+                assertTrue(tier == null || tier == side, parent.name() + " lays out its tier another way");
+            }
+            boolean listing = false;
+            for (int level = 0; spreads.containsKey(level); level++) {
+                assertFalse(listing && spreads.get(level), "tier " + level + " spreads below one that lists");
+                listing |= !spreads.get(level);
             }
         }
     }

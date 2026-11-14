@@ -291,7 +291,7 @@ final class ToeTable implements Disposable {
         tabs = new Table();
         Table top = new Table();
         top.add(header).top().left();
-        top.add(tabs).top().left().padLeft(space("sm")).expandX();
+        top.add(tabs).top().left().padLeft(space("xl")).expandX();
         UiButton home = ui.button("hud-utility", "locate", getText("Toe.home"), null);
         UiKit.onChange(home, this::home);
         top.add(home).top().right().padRight(space("sm"));
@@ -915,6 +915,7 @@ final class ToeTable implements Disposable {
 
     private static String issueIcon(Issue issue) {
         return switch (issue) {
+            case DEPLOYED -> "flag";
             case OUT_OF_ACTION -> "dangerous";
             case DAMAGED -> "warn";
             case REPAIR -> "build";
@@ -944,7 +945,7 @@ final class ToeTable implements Disposable {
             case NO_CREW -> ISSUE_CREW;
             case FATIGUED -> ISSUE_TIRED;
             case MOTHBALLED -> ISSUE_LAID_UP;
-            case TRANSIT -> ISSUE_AWAY;
+            case DEPLOYED, TRANSIT -> ISSUE_AWAY;
         };
     }
 

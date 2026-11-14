@@ -48,11 +48,11 @@ import mekhq.gui.gdx.hub.ToeSnapshot.Group;
  * Where everything stands on the TO&amp;E table, laid out as an org chart: each formation a node, its name and icon
  * at its head and its own units in rows under that, with lines of command running down from it to the formations under
  * it. The upper tiers spread out side by side under their commands, a line dropping to a bar across them and down to
- * each; the lower tiers are listed one under another, indented, a line down their left to each. As many tiers spread
- * as brings the whole nearest a wide screen's proportions, so a company spreads its lances where a regiment spreads its
- * battalions and lists their companies' lances. Where some of a formation's spread formations have others under them,
- * the ones beside them with none are listed together in a column, as a manual's chart lists a headquarters' sections.
- * The units in no formation get a node of their own beside the force.
+ * each; the lower tiers are listed one under another, indented, a line down their left to each. Every formation on a
+ * tier lays out the ones under it the same way, so the chart never turns from listing back to spreading. As many tiers
+ * spread as still fit a wide screen, or take little more room than listing them, so a company spreads its lances where
+ * a regiment spreads its battalions and lists their companies' lances. The units in no formation get a node of their
+ * own beside the force.
  *
  * <p>A formation folded ({@link ToeFolds}) is a card in place of its node and everything under it, sized to stand a
  * set number of pixels across where it folds, so cards are born the same size on screen whatever they hold. A
@@ -81,6 +81,10 @@ final class ToeLayout {
     static final int ROW = 6;
     /** The proportions, width over depth, the chart is laid out towards. */
     static final float ASPECT = 16 / 9f;
+    /** How much more room than the smallest layout one spread further may take and still be chosen. */
+    private static final double SPREAD_ROOM = 1.25;
+    /** How wide, in the interface's pixels, a layout may stand and still be spread further: a wide screen's chart. */
+    private static final double FIT_PIXELS = 1400;
     /**
      * The sizes on screen, in the interface's pixels, of what carries a name, the same at every zoom step: the strip
      * at a node's or a card's head; a card, the same for every one, so a box's size never says anything its name or
@@ -94,10 +98,6 @@ final class ToeLayout {
     static final float CARD_STRIP_FROM = (HEAD_PIXELS + 3) / CARD_DEEP_PIXELS;
     static final float CARD_STRIP_TO = (HEAD_PIXELS + 11) / CARD_DEEP_PIXELS;
     static final float NODE_WIDE_PIXELS = 240;
-    /** How many cards at most a long run of them under a formation stacks into a column, to try. */
-    private static final int[] WRAPS = { 8, 6, 4, 3, 2, 1 };
-    /** The longest run of formations with none under them that stands side by side unwrapped. */
-    private static final int SIDE_BY_SIDE = 4;
 
     /**
      * A formation's node: its key ({@link ToeFolds}: its group's id, or {@link ToeFolds#UNASSIGNED} or an
@@ -192,17 +192,24 @@ final class ToeLayout {
                   unassignedRow(unassigned.size()), true, null, folding);
         }
         Map<Integer, Node> nodes = new HashMap<>();
-        Tree best = null;
-        double bestScore = Double.MAX_VALUE;
+        // How big each way of laying it out stands on a wide screen, the most tiers spread last
+        List<Tree> trees = new ArrayList<>();
+        List<Double> sizes = new ArrayList<>();
+        double smallest = Double.MAX_VALUE;
         for (int spread = 0; spread <= height(snapshot.root()); spread++) {
-            for (int wrap : WRAPS) {
-                Tree tree = tree(snapshot.root(), 0, folding, spread, wrap, nodes);
-                double score = Math.abs(Math.log(width(tree, spare) / depth(tree, spare) / ASPECT));
-                // Of two as near, the one spread further and in fewer rows, which reads more plainly
-                if (best == null || score <= bestScore + 1e-6) {
-                    bestScore = score;
-                    best = tree;
-                }
+            Tree tree = tree(snapshot.root(), 0, folding, spread, nodes);
+            double size = Math.max(width(tree, spare), depth(tree, spare) * ASPECT);
+            trees.add(tree);
+            sizes.add(size);
+            smallest = Math.min(smallest, size);
+        }
+        // The most spread that still fits a wide screen, or takes little more room than the least, which reads more
+        // plainly, but never one so much bigger that the whole force can't be seen at once
+        double fits = FIT_PIXELS / folding.cell();
+        Tree best = null;
+        for (int i = 0; i < trees.size(); i++) {
+            if (sizes.get(i) <= fits || sizes.get(i) <= smallest * SPREAD_ROOM + 1e-6) {
+                best = trees.get(i);
             }
         }
         ToeLayout layout = new ToeLayout();
@@ -398,10 +405,10 @@ final class ToeLayout {
     }
 
     /**
-     * {@code group} and everything under it, the tiers above {@code spread} spread out and the rest listed, runs of
-     * {@code wrap} or more cards side by side under a formation stacked in columns of that many.
+     * {@code group} and everything under it, the formations on the tiers above {@code spread} spreading those under
+     * them side by side and the rest listing them.
      */
-    private static Tree tree(Group group, int level, Folding folding, int spread, int wrap, Map<Integer, Node> nodes) {
+    private static Tree tree(Group group, int level, Folding folding, int spread, Map<Integer, Node> nodes) {
         if (level > 0 && folding.folded(group.id())) {
             return new Tree(nodes.computeIfAbsent(group.id(),
                   id -> folding.card(id, group, group.name(), level, group.allUnits())), List.of());
@@ -409,15 +416,14 @@ final class ToeLayout {
         Node node = nodes.computeIfAbsent(group.id(), id -> node(group, level, folding));
         List<Tree> children = new ArrayList<>();
         for (Group child : group.children()) {
-            children.add(tree(child, level + 1, folding, spread, wrap, nodes));
+            children.add(tree(child, level + 1, folding, spread, nodes));
         }
         if (children.isEmpty()) {
             return new Tree(node, children);
         }
-        // Formations with none under them, or folded, stand side by side under theirs at any depth, a long run of
-        // them wrapping into columns, rather than trailing down the screen one under another
-        boolean leaves = children.stream().allMatch(child -> child.children.isEmpty());
-        return level < spread || leaves ? spread(node, children, wrap) : stack(node, children);
+        // A tier lays out what's under it one way throughout, so going down the chart never turns from listing back
+        // to spreading, and formations side by side are always of the same tier
+        return level < spread ? spread(node, children) : stack(node, children);
     }
 
     private static Node node(Group group, int level, Folding folding) {
@@ -465,10 +471,9 @@ final class ToeLayout {
 
     /**
      * {@code node} with {@code children} side by side below it, a line dropping from it to a bar across them and down
-     * to each, runs of those with none under them listed together in columns of up to {@code wrap}; {@code node}
-     * stands over the middle of them.
+     * to each; {@code node} stands over the middle of them.
      */
-    private static Tree spread(Node node, List<Tree> children, int wrap) {
+    private static Tree spread(Node node, List<Tree> children) {
         Tree tree = new Tree(node, children);
         float bar = node.depth + DROP / 2;
         float top = node.depth + DROP;
@@ -476,45 +481,18 @@ final class ToeLayout {
         float below = 0;
         float first = 0;
         float last = 0;
-        int i = 0;
-        int wrapping = 0;
-        while (i < children.size()) {
-            int end = i + 1;
-            if (children.get(i).children.isEmpty()) {
-                if (i >= wrapping) {
-                    int run = end;
-                    while (run < children.size() && children.get(run).children.isEmpty()) {
-                        run++;
-                    }
-                    // A short run, a company's lances, stands side by side; a long one wraps into columns
-                    wrapping = run - i > SIDE_BY_SIDE ? run : i;
-                }
-                if (i < wrapping) {
-                    end = Math.min(wrapping, i + wrap);
-                }
-            }
-            float attach;
-            float wide;
-            if (end - i == 1) {
-                Tree child = children.get(i);
-                tree.at[i * 2] = x;
-                tree.at[i * 2 + 1] = top;
-                attach = x + child.attach();
-                tree.links.add(new float[] { attach, bar, attach, top });
-                wide = child.width;
-                below = Math.max(below, child.depth);
-            } else {
-                attach = x + INDENT / 2;
-                float[] size = list(tree, i, end, x, top, bar);
-                wide = size[0];
-                below = Math.max(below, size[1]);
-            }
+        for (int i = 0; i < children.size(); i++) {
+            Tree child = children.get(i);
+            tree.at[i * 2] = x;
+            tree.at[i * 2 + 1] = top;
+            float attach = x + child.attach();
+            tree.links.add(new float[] { attach, bar, attach, top });
+            below = Math.max(below, child.depth);
             if (i == 0) {
                 first = attach;
             }
             last = attach;
-            x += wide + SPREAD_GAP;
-            i = end;
+            x += child.width + SPREAD_GAP;
         }
         // Shifted right if the node over the middle of them would stand out past the first of them
         float shift = Math.max(0, node.width / 2 - (first + last) / 2);

@@ -1305,16 +1305,17 @@ final class ToeView implements Disposable {
         for (int i = 0; i < posedBlocks.size(); i++) {
             Block block = posedBlocks.get(i);
             float bright = blockLit(block) ? 1 : 0.45f;
-            // A card stands a shade lighter than a formation laid open, so it reads as a thing in itself
-            float shade = 0.034f + block.level() * 0.011f + (block.card() ? 0.018f : 0);
+            // A box stands out from the table as a panel of its own, a card a shade lighter than a formation laid
+            // open, so it reads as a thing in itself
+            float shade = 0.062f + block.level() * 0.008f + (block.card() ? 0.014f : 0);
             float top = top(block.level()) * blockRise.get(i);
             set(propShader, "u_dim", bright);
             set(propShader, "u_emissive", 0, 0, 0);
-            drawBox(block.x(), 0, block.z(), block.width(), top, block.depth(), shade, shade * 1.15f, shade * 1.35f);
+            drawBox(block.x(), 0, block.z(), block.width(), top, block.depth(), shade, shade * 1.2f, shade * 1.45f);
             // The head strip, a shade lighter, carries the formation's name and icon
             float inset = Math.min(0.04f, block.depth() * 0.04f);
             drawBox(block.x() + inset, top, block.z() + inset, block.width() - inset * 2, 0.006f,
-                  block.head() - inset * 2, shade * 1.6f, shade * 1.8f, shade * 2.1f);
+                  block.head() - inset * 2, shade * 1.45f, shade * 1.65f, shade * 1.95f);
         }
         set(propShader, "u_textured", 1f);
         set(propShader, "u_alpha", 1f);
@@ -1602,7 +1603,9 @@ final class ToeView implements Disposable {
         float y = top(block.level()) * rise + 0.002f;
         float strength = (block.level() == 0 ? 0.5f : block.card() ? 0.42f : 0.34f) * (lit ? 1 : 0.35f) * open
               * (pointed ? 2.2f : 1);
-        float[] colour = pointed ? PICKED : block.group() == null ? SPARE : EDGE;
+        boolean deployed = block.group() != null && block.group().deployed();
+        // A deployed formation's edge runs in dashes in the colour its units are away in
+        float[] colour = pointed ? PICKED : block.group() == null ? SPARE : deployed ? AWAY : EDGE;
         Verdict verdict = verdict(block);
         if (verdict != null && verdict.moves()) {
             // Where the load may go breathes; where it would go now is lit
@@ -1612,7 +1615,7 @@ final class ToeView implements Disposable {
             colour = SPARE;
             strength *= 0.3f;
         }
-        float speed = block.group() != null && block.group().deployed() ? 0.6f : 0;
+        float speed = deployed ? 0.6f : 0;
         float half = Math.max(0.02f, LINE_HALF_PIXELS * pixel);
         float x0 = block.x();
         float z0 = block.z();

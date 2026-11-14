@@ -145,10 +145,11 @@ record ToeSnapshot(String force, Group root, List<Card> unassigned, List<String>
 
     /** What a folded formation counts against its units, the most pressing first. */
     enum Issue {
-        OUT_OF_ACTION, DAMAGED, REPAIR, NO_CREW, FATIGUED, MOTHBALLED, TRANSIT;
+        DEPLOYED, OUT_OF_ACTION, DAMAGED, REPAIR, NO_CREW, FATIGUED, MOTHBALLED, TRANSIT;
 
         boolean of(Card card) {
             return switch (this) {
+                case DEPLOYED -> card.deployed();
                 case OUT_OF_ACTION -> !card.condition().fights();
                 case DAMAGED -> card.condition().fights() && card.condition() != Condition.SOUND;
                 case REPAIR -> card.work() == Work.REPAIR || card.work() == Work.REFIT;

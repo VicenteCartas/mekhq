@@ -156,6 +156,16 @@ class ToeSnapshotTest {
               .reckonedEchelon());
     }
 
+    @Test
+    void aDeployedUnitCountsAsAwayRatherThanFitToFight() {
+        Card deployed = card(Condition.SOUND, Work.NONE, Crew.FULL, true, false, 0);
+
+        assertEquals(ToeSnapshot.Issue.DEPLOYED, ToeSnapshot.Issue.first(deployed));
+        assertEquals(2, ToeSnapshot.Issue.tally(List.of(deployed, deployed, sound(0)))[ToeSnapshot.Issue.DEPLOYED
+              .ordinal()]);
+        assertNull(ToeSnapshot.Issue.first(sound(0)));
+    }
+
     private static ToeSnapshot snapshot(List<String> bases, Card... units) {
         Group lance = new Group(2, "Lance", null, List.of(), List.of(units), false, List.of());
         Group root = new Group(1, "Force", null, List.of(lance), List.of(), false, List.of());
