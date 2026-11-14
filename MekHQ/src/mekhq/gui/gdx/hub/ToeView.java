@@ -182,6 +182,8 @@ final class ToeView implements Disposable {
     /** The order a card's readiness strip runs in: ready first, then what keeps the rest out, worst last. */
     private static final float[][] STRIP_ORDER = { READY, AWAY, DAMAGED, HEAVY, REPAIRING, REFITTING, SPARE, LAID_UP,
                                                    WRECKED };
+    /** The most units a card's readiness strip parts one from the next for. */
+    private static final int STRIP_PARTED_MOST = 12;
 
     /** Something leaving the table as a formation folds: where it showed, and where it goes as it sinks away. */
     private record Leaving(@Nullable Block block, @Nullable Slot slot, float[] from, float[] to) {
@@ -232,6 +234,8 @@ final class ToeView implements Disposable {
     private @Nullable Slot hovered;
     private @Nullable Slot selected;
     private @Nullable Block hoveredCard;
+    /** The unit whose run of a card's readiness strip is pointed at; null if none is. */
+    private @Nullable Card hoveredUnit;
     private @Nullable Vacancy hoveredVacancy;
     /**
      * Where each block and unit shows this frame, mid-way through a fold if one's under way: the layout's own first,
@@ -377,7 +381,9 @@ final class ToeView implements Disposable {
             pointerX = screenX;
             pointerY = screenY;
             hovered = pick(screenX, screenY);
-            hoveredCard = hovered == null ? cardAt(screenX, screenY) : null;
+            hoveredCard = hovered == null ? namedAt(screenX, screenY) : null;
+            hoveredUnit = hoveredCard == null || !hoveredCard.card() ? null
+                  : stripUnitAt(hoveredCard, screenX, screenY);
             hoveredVacancy = hovered == null && hoveredCard == null ? vacancyAt(screenX, screenY) : null;
             return false;
         }
@@ -440,6 +446,7 @@ final class ToeView implements Disposable {
         }
         hovered = null;
         hoveredCard = null;
+        hoveredUnit = null;
         hoveredVacancy = null;
         aimDrop();
     }
@@ -627,6 +634,7 @@ final class ToeView implements Disposable {
         hovered = rebind(hovered);
         selected = rebind(selected);
         hoveredCard = null;
+        hoveredUnit = null;
         if (opening) {
             clock = still ? RISE_SECONDS : 0;
         }
@@ -951,9 +959,14 @@ final class ToeView implements Disposable {
         return selected;
     }
 
-    /** The folded formation pointed at; null if none is. */
+    /** The folded formation pointed at, or the open one whose head is; null if none is. */
     @Nullable Block hoveredCard() {
         return hoveredCard;
+    }
+
+    /** The unit whose run of the pointed-at card's readiness strip the pointer is on; null if it's on none. */
+    @Nullable Card hoveredUnit() {
+        return hoveredUnit;
     }
 
     /** The vacant slot pointed at; null if none is. */
@@ -1136,6 +1149,16 @@ final class ToeView implements Disposable {
     private @Nullable Block cardAt(int screenX, int screenY) {
         Block block = seen(screenX, screenY, new Vector3());
         return block != null && block.card() ? block : null;
+    }
+
+    /** The folded formation under the pointer, or the formation whose head strip it's on; null for neither. */
+    private @Nullable Block namedAt(int screenX, int screenY) {
+        Vector3 hit = new Vector3();
+        Block block = seen(screenX, screenY, hit);
+        if (block == null || block.card()) {
+            return block;
+        }
+        return hit.z <= block.z() + block.head() ? block : null;
     }
 
     /** The block the pointer sees, where on it going in {@code hit}; null for none. */
@@ -1527,20 +1550,22 @@ final class ToeView implements Disposable {
 
     /**
      * A folded formation's readiness strip across its card under its head: a run for each unit in its state's colour,
-     * the ready first and the worst off last, so how much of the strip is green reads as how ready it is.
+     * the ready first and the worst off last, so how much of the strip is green reads as how ready it is. Up to
+     * {@link #STRIP_PARTED_MOST} units each run is parted from the next; past that the strip runs on unbroken, where
+     * the partings would only blur. The unit pointed at on it is lit.
      */
     private void strip(Block card, float y, float strength) {
-        List<Card> units = new ArrayList<>(card.units());
+        List<Card> units = stripUnits(card);
         int count = units.size();
         if (count == 0 || strength <= 0.001f) {
             return;
         }
-        units.sort(Comparator.comparingInt(ToeView::stripRank).thenComparing(unit -> !lit(unit)));
-        float inset = ToeView.iconInset(card);
-        float x0 = card.x() + inset;
-        float x1 = card.x() + card.width() - inset;
-        float z0 = card.z() + card.head() + card.depth() * 0.1f;
-        float z1 = z0 + card.depth() * 0.13f;
+        boolean parted = count <= STRIP_PARTED_MOST;
+        float[] span = stripSpan(card);
+        float x0 = span[0];
+        float x1 = span[1];
+        float z0 = span[2];
+        float z1 = span[3];
         int first = 0;
         for (int k = 1; k <= count; k++) {
             Card start = units.get(first);
@@ -1549,10 +1574,54 @@ final class ToeView implements Disposable {
             }
             float xa = x0 + (x1 - x0) * first / count;
             float xb = x0 + (x1 - x0) * k / count;
-            quad(holo, xa, y, z0, first, 1, xb, y, z0, k, 1, xb, y, z1, k, -1, xa, y, z1, first, -1, state(start),
+            float ua = parted ? first : 0.5f;
+            float ub = parted ? k : 0.5f;
+            quad(holo, xa, y, z0, ua, 1, xb, y, z0, ub, 1, xb, y, z1, ub, -1, xa, y, z1, ua, -1, state(start),
                   strength * (lit(start) ? 1 : 0.2f), STRIP, 0);
             first = k;
         }
+        int pointed = hoveredUnit == null || hoveredCard == null || hoveredCard.key() != card.key() ? -1
+              : units.indexOf(hoveredUnit);
+        if (pointed >= 0) {
+            float xa = x0 + (x1 - x0) * pointed / count;
+            float xb = x0 + (x1 - x0) * (pointed + 1) / count;
+            float grow = (z1 - z0) * 0.35f;
+            quad(holo, xa, y + 0.001f, z0 - grow, 0.5f, 1, xb, y + 0.001f, z0 - grow, 0.5f, 1, xb, y + 0.001f,
+                  z1 + grow, 0.5f, -1, xa, y + 0.001f, z1 + grow, 0.5f, -1, state(hoveredUnit), strength * 0.45f, STRIP,
+                  0);
+        }
+    }
+
+    /** A card's units in the order its readiness strip runs. */
+    private List<Card> stripUnits(Block card) {
+        List<Card> units = new ArrayList<>(card.units());
+        units.sort(Comparator.comparingInt(ToeView::stripRank).thenComparing(unit -> !lit(unit)));
+        return units;
+    }
+
+    /** Where a card's readiness strip runs on it: its left and right, and its far and near edge. */
+    private static float[] stripSpan(Block card) {
+        float inset = ToeView.iconInset(card);
+        return new float[] { card.x() + inset, card.x() + card.width() - inset,
+                             card.z() + card.depth() * ToeLayout.CARD_STRIP_FROM,
+                             card.z() + card.depth() * ToeLayout.CARD_STRIP_TO };
+    }
+
+    /** The unit whose run of {@code card}'s readiness strip is under the pointer; null if it's not on the strip. */
+    private @Nullable Card stripUnitAt(Block card, int screenX, int screenY) {
+        Vector3 hit = onTable(screenX, screenY, top(card.level()), new Vector3());
+        List<Card> units = stripUnits(card);
+        if (hit == null || units.isEmpty()) {
+            return null;
+        }
+        float[] span = stripSpan(card);
+        // A little more than the strip itself, so a thin strip far out can still be pointed at
+        float slack = card.depth() * 0.08f;
+        if (hit.x < span[0] || hit.x >= span[1] || hit.z < span[2] - slack || hit.z > span[3] + slack) {
+            return null;
+        }
+        int index = (int) ((hit.x - span[0]) / (span[1] - span[0]) * units.size());
+        return units.get(MathUtils.clamp(index, 0, units.size() - 1));
     }
 
     private static int stripRank(Card card) {

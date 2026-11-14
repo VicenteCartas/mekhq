@@ -206,11 +206,20 @@ public final class ToeDemo {
                     case 1265 -> {
                         pointed = cardNear();
                         if (pointed != null) {
-                            Vector2 at = table.onScreen(pointed);
+                            Vector2 at = table.onScreen(pointed, 0.5f, 0.85f);
                             table.input().mouseMoved(Math.round(at.x), Math.round(at.y));
                         }
                     }
                     case 1275 -> shot(prefix + "cardHover");
+                    // On a unit's run of the card's readiness strip, that unit's own card shows
+                    case 1276 -> {
+                        if (pointed != null) {
+                            Vector2 at = table.onScreen(pointed, 0.5f,
+                                  (ToeLayout.CARD_STRIP_FROM + ToeLayout.CARD_STRIP_TO) / 2);
+                            table.input().mouseMoved(Math.round(at.x), Math.round(at.y));
+                        }
+                    }
+                    case 1279 -> shot(prefix + "stripHover");
                     case 1280 -> {
                         if (pointed != null) {
                             Vector2 at = table.onScreen(pointed);

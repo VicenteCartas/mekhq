@@ -131,7 +131,6 @@ final class ToeTable implements Disposable {
     /** The fewest pixels a formation's name is cut to before its label hides instead. */
     private static final float NAME_LEAST = 40;
     private static final String PIN_NAME = "name";
-    private static final int CHIPS_A_ROW = 5;
 
     /** Keeps a click on a panel from reaching the table under it. */
     private static final InputListener SWALLOW = new InputListener() {
@@ -274,7 +273,8 @@ final class ToeTable implements Disposable {
         header.addListener(SWALLOW);
         tabs = new Table();
         Table top = new Table();
-        top.add(header).top().left().expandX();
+        top.add(header).top().left();
+        top.add(tabs).top().left().padLeft(space("sm")).expandX();
         UiButton home = ui.button("hud-utility", "locate", getText("Toe.home"), null);
         UiKit.onChange(home, this::home);
         top.add(home).top().right().padRight(space("sm"));
@@ -285,7 +285,6 @@ final class ToeTable implements Disposable {
         UiKit.onChange(back, leave::run);
         top.add(back).top().right();
         root.add(top).growX().row();
-        root.add(tabs).left().padTop(space("sm")).row();
         root.add().grow();
         empty = ui.label(getText("Toe.none"), "hud-body", 16, UiTheme.tokenColor("text.secondary"));
         empty.setVisible(false);
@@ -460,14 +459,13 @@ final class ToeTable implements Disposable {
         plate.toFront();
     }
 
+    /** The force's name and its strength in a single row, so the table under it keeps as much of the screen as it can. */
     private Table header() {
         Table panel = ui.panel(true);
-        panel.defaults().left();
-        panel.add(ui.caption(getText("Toe.overline"), true)).row();
         force = ui.roleTypeLabel("title", "", "text.primary");
-        panel.add(force).padTop(space("xxs")).row();
+        panel.add(force).left();
         strength = new Table();
-        panel.add(strength).padTop(space("sm")).row();
+        panel.add(strength).left().padLeft(space("lg"));
         return panel;
     }
 
@@ -616,11 +614,15 @@ final class ToeTable implements Disposable {
         view.zoomTo(folds.cellPixels() * scale);
     }
 
-    /** Opens the folded formation {@code card}, at the step it opens at, gliding in on it as it opens. */
+    /**
+     * Opens the folded formation {@code card}, at the step it opens at, gliding in on it as it opens; if a unit's run
+     * of its strip was clicked, that unit is picked out once it's on the table.
+     */
     private void openCard(Block card) {
         if (folds == null || layout == null) {
             return;
         }
+        Card unit = view.hoveredUnit();
         folds.step(folds.opening(card.key()));
         relayout(false);
         Block opened = layout.holder(card.key());
@@ -628,6 +630,10 @@ final class ToeTable implements Disposable {
         view.frame(at != null ? at
                     : new float[] { card.x(), card.z(), card.x() + card.width(), card.z() + card.depth() },
               folds.cellPixels() * scale, false);
+        Slot slot = unit == null ? null : slotOf(unit);
+        if (slot != null) {
+            view.select(slot);
+        }
     }
 
     /** The places to narrow the table to: all of it, then, if the force is spread out, each place it's at. */
@@ -698,24 +704,27 @@ final class ToeTable implements Disposable {
             noCrew += card.crew() == Crew.NONE ? 1 : 0;
             fatigued += card.fatigued() ? 1 : 0;
         }
-        chip("Toe.count.units", units, UiKit.Tone.NORMAL, true);
-        chip("Toe.count.ready", ready, UiKit.Tone.OK, true);
-        chip("Toe.count.damaged", damaged, UiKit.Tone.WARN, false);
-        chip("Toe.count.wrecked", wrecked, UiKit.Tone.BAD, false);
-        chip("Toe.count.repair", repair, UiKit.Tone.WARN, false);
-        chip("Toe.count.laidUp", laidUp, UiKit.Tone.NORMAL, false);
-        chip("Toe.count.deployed", deployed, UiKit.Tone.NORMAL, false);
-        chip("Toe.count.transit", transit, UiKit.Tone.NORMAL, false);
-        chip("Toe.count.noCrew", noCrew, UiKit.Tone.BAD, false);
-        chip("Toe.count.fatigued", fatigued, UiKit.Tone.WARN, false);
+        chip("Toe.count.units", "unit", LABEL_INK, units, true);
+        chip("Toe.count.ready", "check-circle", ALL_READY, ready, true);
+        chip("Toe.count.damaged", "warn", ISSUE_WARN, damaged, false);
+        chip("Toe.count.wrecked", "dangerous", ISSUE_BAD, wrecked, false);
+        chip("Toe.count.repair", "build", ISSUE_WARN, repair, false);
+        chip("Toe.count.laidUp", "inventory", ISSUE_LAID_UP, laidUp, false);
+        chip("Toe.count.deployed", "flag", ISSUE_AWAY, deployed, false);
+        chip("Toe.count.transit", "rocket", ISSUE_AWAY, transit, false);
+        chip("Toe.count.noCrew", "person-off", ISSUE_CREW, noCrew, false);
+        chip("Toe.count.fatigued", "bedtime", ISSUE_TIRED, fatigued, false);
     }
 
-    private void chip(String key, int count, UiKit.Tone tone, boolean always) {
+    /** A count in the header: its mark and number, what it counts in words when pointed at. */
+    private void chip(String key, String icon, Color tone, int count, boolean always) {
         if (count > 0 || always) {
-            if (strength.getCells().size == CHIPS_A_ROW) {
-                strength.row().padTop(space("xs"));
-            }
-            strength.add(ui.chip(getFormattedText(key, count), tone, true)).left().padRight(space("xs"));
+            Table chip = new Table();
+            chip.setTouchable(Touchable.enabled);
+            chip.add(ui.icon(icon, 16, tone)).size(16);
+            chip.add(ui.label(Integer.toString(count), "hud-button", 14, tone)).padLeft(4);
+            ui.tip(chip, true).getActor().setText(getFormattedText(key, count));
+            strength.add(chip).padRight(space("md"));
         }
     }
 
@@ -752,16 +761,13 @@ final class ToeTable implements Disposable {
             Color countTone = srgb(ToeView.readiness(lit.isEmpty() ? 1 : ready / (float) lit.size()));
             Pin pin;
             if (block.card()) {
-                Table plate = plate(LABEL_FORMATION, true);
-                Label name = ui.label(UiTheme.upper(block.name()), "hud-button", 12, LABEL_INK);
-                name.setEllipsis(true);
+                Table plate = pin(block.name(), LABEL_FORMATION, count, countTone, true);
+                Label name = plate.findActor(PIN_NAME);
                 float nameWide = name.getPrefWidth();
-                Cell<Label> nameCell = plate.add(name).padLeft(7).padRight(8).padTop(3).padBottom(3).left();
-                plate.pack();
-                pins.addActor(plate);
+                Cell<Label> nameCell = plate.getCell(name);
                 int[] slots = slotTally(block);
-                Actor badges = badges(lit, count, countTone, BADGES, slots);
-                Actor compact = badges(lit, count, countTone, 1, null);
+                Actor badges = badges(lit, BADGES, slots);
+                Actor compact = badges(lit, 1, null);
                 pins.addActor(badges);
                 pins.addActor(compact);
                 pin = new Pin(plate, block, null, nameCell, nameWide, plate.getWidth() - nameWide, badges, compact);
@@ -800,16 +806,12 @@ final class ToeTable implements Disposable {
     }
 
     /**
-     * A folded formation's state in a row: how many of its units are ready ({@code ready}, in {@code readyTone}),
-     * then what's keeping the rest out of the field, the worst first: each trouble's mark and how many have it, past
-     * {@code most} how many more troubles there are; a check if they're all fit to fight; then, if {@code slots} are
-     * given, how many slots are vacant and how many units fit none.
+     * A folded formation's state in a row: what's keeping its units out of the field, the worst first: each trouble's
+     * mark and how many have it, past {@code most} how many more troubles there are; a check if they're all fit to
+     * fight; then, if {@code slots} are given, how many slots are vacant and how many units fit none.
      */
-    private Actor badges(List<Card> units, @Nullable String ready, Color readyTone, int most, @Nullable int[] slots) {
+    private Actor badges(List<Card> units, int most, @Nullable int[] slots) {
         Table row = new Table();
-        if (ready != null) {
-            row.add(ui.label(ready, "hud-button", 12, readyTone)).padRight(9);
-        }
         int[] counts = Issue.tally(units);
         int shown = 0;
         int more = 0;
@@ -1562,12 +1564,14 @@ final class ToeTable implements Disposable {
         at.set(card.x() + left, view.top(card.level()), card.z() + card.head() / 2);
         place(plate, named, 0, plate.getHeight() / 2, fade);
         float body = (card.width() - inset * 2) * cell;
-        boolean deep = card.depth() * 0.47f * cell >= badges.getHeight();
+        float under = 1 - ToeLayout.CARD_STRIP_TO;
+        boolean deep = card.depth() * under * cell >= badges.getHeight() * 0.85f;
         boolean full = labelled && deep && badges.getWidth() <= body;
         boolean brief = labelled && deep && !full && compact.getWidth() <= body;
-        at.set(card.x() + inset, view.top(card.level()), card.z() + card.depth() * 0.765f);
+        float middle = card.z() + card.depth() * (1 - under / 2);
+        at.set(card.x() + inset, view.top(card.level()), middle);
         place(badges, full, 0, badges.getHeight() / 2, fade);
-        at.set(card.x() + inset, view.top(card.level()), card.z() + card.depth() * 0.765f);
+        at.set(card.x() + inset, view.top(card.level()), middle);
         place(compact, brief, 0, compact.getHeight() / 2, fade);
     }
 
@@ -1608,10 +1612,15 @@ final class ToeTable implements Disposable {
             hoverCard.setVisible(false);
             return;
         }
+        Card stripUnit = view.hoveredUnit();
         if (vacancy != null) {
             hoverName.setText(getFormattedText("Toe.slot.vacant", slotName(vacancy.slot())));
             hoverCrew.setText(vacancy.block().name());
             hoverDetail.setText(getText("Toe.slot.vacantHint"));
+        } else if (slot == null && stripUnit != null) {
+            hoverName.setText(stripUnit.name());
+            hoverCrew.setText(crewText(stripUnit));
+            hoverDetail.setText(detail(stripUnit, snapshot) + "  \u00b7  " + card.name());
         } else if (slot == null) {
             List<Card> lit = card.units().stream().filter(view::lit).toList();
             hoverName.setText(card.name());
@@ -1681,8 +1690,13 @@ final class ToeTable implements Disposable {
 
     /** Where the middle of {@code block} is on screen, in input coordinates, for the demo to point at. */
     Vector2 onScreen(Block block) {
+        return onScreen(block, 0.5f, 0.5f);
+    }
+
+    /** Where the point {@code across} and {@code down} of the way over {@code block} is on screen, as above. */
+    Vector2 onScreen(Block block, float across, float down) {
         Block posed = view.posed(block);
-        at.set(posed.centreX(), view.top(posed.level()), posed.centreZ());
+        at.set(posed.x() + posed.width() * across, view.top(posed.level()), posed.z() + posed.depth() * down);
         view.project(at);
         return new Vector2(at.x, Gdx.graphics.getHeight() - at.y);
     }

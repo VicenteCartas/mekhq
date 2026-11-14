@@ -158,15 +158,19 @@ class ToeLayoutTest {
     }
 
     @Test
-    void aRegimentListsItsLancesUnderTheirCompanies() {
+    void aCompanysLancesStandSideBySideEvenDeepInARegiment() {
         ToeSnapshot snapshot = regiment();
         ToeLayout layout = ToeLayout.of(snapshot, "Unassigned");
 
         Map<Group, Block> byGroup = byGroup(layout);
-        List<Group> lances = snapshot.root().children().get(0).children().get(0).children();
-        for (int l = 1; l < lances.size(); l++) {
-            assertEquals(byGroup.get(lances.get(0)).x(), byGroup.get(lances.get(l)).x(), EPSILON);
-            assertTrue(byGroup.get(lances.get(l)).z() > byGroup.get(lances.get(l - 1)).z());
+        for (Group battalion : snapshot.root().children()) {
+            for (Group company : battalion.children()) {
+                List<Group> lances = company.children();
+                for (int l = 1; l < lances.size(); l++) {
+                    assertEquals(byGroup.get(lances.get(0)).z(), byGroup.get(lances.get(l)).z(), EPSILON);
+                    assertTrue(byGroup.get(lances.get(l)).x() > byGroup.get(lances.get(l - 1)).x());
+                }
+            }
         }
     }
 

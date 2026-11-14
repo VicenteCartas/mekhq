@@ -65,7 +65,7 @@ final class ToeLayout {
     /** A unit's slot, across. */
     static final float CELL = 1;
     /** The margin inside a node, and the strip at its head that carries its name and icon where no scale's given. */
-    static final float PAD = 0.3f;
+    static final float PAD = 0.2f;
     static final float HEAD = 0.55f;
     /** How far below a formation the ones it spreads out stand, the bar across them halfway down. */
     static final float DROP = 1.4f;
@@ -83,20 +83,17 @@ final class ToeLayout {
     static final float ASPECT = 16 / 9f;
     /**
      * The sizes on screen, in the interface's pixels, of what carries a name, the same at every zoom step: the strip
-     * at a node's or a card's head; a card, at the least, and the most it widens for a long name; a node, at the least,
-     * and the most; and what a name takes beside its letters (its icon, its edge bar, its margins) and each letter.
+     * at a node's or a card's head; a card, the same for every one, so a box's size never says anything its name or
+     * count doesn't, a long name cut short; and a node, unless its units take more.
      */
     static final float HEAD_PIXELS = 30;
-    static final float CARD_WIDE_PIXELS = 200;
-    static final float CARD_WIDE_MOST_PIXELS = 300;
-    static final float CARD_DEEP_PIXELS = 84;
+    static final float CARD_WIDE_PIXELS = 220;
+    static final float CARD_DEEP_PIXELS = 60;
     static final float CARD_HEAD = HEAD_PIXELS / CARD_DEEP_PIXELS;
-    static final float NODE_WIDE_PIXELS = 200;
-    static final float NODE_WIDE_MOST_PIXELS = 360;
-    static final float NAME_PIXELS = 64;
-    static final float LETTER_PIXELS = 11;
-    /** What a node's count of its ready units takes beside its name, in the interface's pixels. */
-    static final float COUNT_PIXELS = 64;
+    /** Where down a card its readiness strip runs from and to, its badges in the rest under it. */
+    static final float CARD_STRIP_FROM = (HEAD_PIXELS + 3) / CARD_DEEP_PIXELS;
+    static final float CARD_STRIP_TO = (HEAD_PIXELS + 11) / CARD_DEEP_PIXELS;
+    static final float NODE_WIDE_PIXELS = 240;
     /** How many cards at most a long run of them under a formation stacks into a column, to try. */
     private static final int[] WRAPS = { 8, 6, 4, 3, 2, 1 };
     /** The longest run of formations with none under them that stands side by side unwrapped. */
@@ -395,15 +392,9 @@ final class ToeLayout {
         Node card(int key, @Nullable Group group, String name, int level, List<Card> units) {
             float cell = cell();
             float depth = CARD_DEEP_PIXELS / cell;
-            float wide = Math.max(CARD_WIDE_PIXELS, Math.min(CARD_WIDE_MOST_PIXELS, named(name, false)));
-            return new Node(key, group, name, level, List.of(), List.of(), units, 0, wide / cell, depth, true, group,
-                  null, HEAD_PIXELS / cell);
+            return new Node(key, group, name, level, List.of(), List.of(), units, 0, CARD_WIDE_PIXELS / cell, depth,
+                  true, group, null, HEAD_PIXELS / cell);
         }
-    }
-
-    /** How wide, in the interface's pixels, a heading holding {@code name}, and a count if {@code counted}, stands. */
-    static float named(String name, boolean counted) {
-        return NAME_PIXELS + name.length() * LETTER_PIXELS + (counted ? COUNT_PIXELS : 0);
     }
 
     /**
@@ -423,7 +414,10 @@ final class ToeLayout {
         if (children.isEmpty()) {
             return new Tree(node, children);
         }
-        return level < spread ? spread(node, children, wrap) : stack(node, children);
+        // Formations with none under them, or folded, stand side by side under theirs at any depth, a long run of
+        // them wrapping into columns, rather than trailing down the screen one under another
+        boolean leaves = children.stream().allMatch(child -> child.children.isEmpty());
+        return level < spread || leaves ? spread(node, children, wrap) : stack(node, children);
     }
 
     private static Node node(Group group, int level, Folding folding) {
@@ -455,8 +449,7 @@ final class ToeLayout {
         float plateDepth = inner == null ? rows * CELL : inner.depth;
         float cell = folding.cell();
         float head = HEAD_PIXELS / cell;
-        float named = Math.max(NODE_WIDE_PIXELS, Math.min(NODE_WIDE_MOST_PIXELS, named(name, !all.isEmpty())));
-        float width = Math.max(plateWidth + 2 * PAD, named / cell);
+        float width = Math.max(plateWidth + 2 * PAD, NODE_WIDE_PIXELS / cell);
         float depth = plateDepth > 0 ? head + plateDepth + PAD : head;
         return new Node(key, group, name, level, units, vacant, all, columns, width, depth, false, null, inner, head);
     }
