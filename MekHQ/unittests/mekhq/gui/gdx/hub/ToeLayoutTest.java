@@ -87,33 +87,86 @@ class ToeLayoutTest {
     }
 
     @Test
-    void formationsNestInsideTheirParentsWithoutOverlapping() {
+    void formationsStandBelowTheirParentsWithoutOverlapping() {
         ToeLayout layout = ToeLayout.of(regiment(), "Unassigned");
-        Map<Group, Block> byGroup = new IdentityHashMap<>();
-        for (Block block : layout.blocks()) {
-            if (block.group() != null) {
-                byGroup.put(block.group(), block);
-            }
-        }
+        Map<Group, Block> byGroup = byGroup(layout);
 
         for (Block parent : layout.blocks()) {
             if (parent.group() == null) {
                 continue;
             }
-            List<Block> children = new ArrayList<>();
+            float[] reach = layout.reach(parent.key());
+            assertNotNull(reach);
             for (Group child : parent.group().children()) {
                 Block block = byGroup.get(child);
-                assertNotNull(block, child.name() + " has no block");
+                assertNotNull(block, child.name() + " has no node");
                 assertEquals(parent.level() + 1, block.level());
-                assertTrue(inside(block, parent), child.name() + " spills out of " + parent.name());
-                children.add(block);
+                assertTrue(block.z() >= parent.z() + parent.depth() - EPSILON,
+                      child.name() + " stands above " + parent.name());
+                float[] under = layout.reach(block.key());
+                assertNotNull(under);
+                assertTrue(under[0] >= reach[0] - EPSILON && under[1] >= reach[1] - EPSILON
+                      && under[2] <= reach[2] + EPSILON && under[3] <= reach[3] + EPSILON,
+                      child.name() + " spills out of " + parent.name());
             }
-            for (int i = 0; i < children.size(); i++) {
-                for (int j = i + 1; j < children.size(); j++) {
-                    assertFalse(overlap(children.get(i), children.get(j)),
-                          children.get(i).name() + " overlaps " + children.get(j).name());
-                }
+        }
+        List<Block> blocks = layout.blocks();
+        for (int i = 0; i < blocks.size(); i++) {
+            for (int j = i + 1; j < blocks.size(); j++) {
+                assertFalse(overlap(blocks.get(i), blocks.get(j)),
+                      blocks.get(i).name() + " overlaps " + blocks.get(j).name());
             }
+        }
+    }
+
+    @Test
+    void aLineRunsDownToEveryFormation() {
+        ToeLayout layout = ToeLayout.of(regiment(), "Unassigned");
+
+        for (Block block : layout.blocks()) {
+            if (block.group() == null || block.level() == 0) {
+                continue;
+            }
+            boolean reached = layout.links().stream().anyMatch(link ->
+                  Math.abs(link.z1() - block.z()) < EPSILON && link.x1() >= block.x() - EPSILON
+                        && link.x1() <= block.x() + block.width() + EPSILON
+                        || Math.abs(link.x1() - block.x()) < EPSILON && link.z1() >= block.z() - EPSILON
+                        && link.z1() <= block.z() + block.depth() + EPSILON);
+            assertTrue(reached, "no line runs down to " + block.name());
+        }
+    }
+
+    @Test
+    void aCompanySpreadsItsLancesSideBySide() {
+        List<Group> lances = new ArrayList<>();
+        for (int l = 0; l < 3; l++) {
+            List<Card> units = new ArrayList<>();
+            for (int u = 0; u < 4; u++) {
+                units.add(card("Unit " + l + u, 0));
+            }
+            lances.add(new Group(l + 1, "Lance " + l, null, List.of(), units, false, List.of()));
+        }
+        Group root = new Group(9, "Company", null, lances, List.of(), false, List.of());
+
+        ToeLayout layout = ToeLayout.of(new ToeSnapshot("Company", root, List.of(), List.of()), "Unassigned");
+
+        Map<Group, Block> byGroup = byGroup(layout);
+        for (int l = 1; l < lances.size(); l++) {
+            assertEquals(byGroup.get(lances.get(0)).z(), byGroup.get(lances.get(l)).z(), EPSILON);
+            assertTrue(byGroup.get(lances.get(l)).x() > byGroup.get(lances.get(l - 1)).x());
+        }
+    }
+
+    @Test
+    void aRegimentListsItsLancesUnderTheirCompanies() {
+        ToeSnapshot snapshot = regiment();
+        ToeLayout layout = ToeLayout.of(snapshot, "Unassigned");
+
+        Map<Group, Block> byGroup = byGroup(layout);
+        List<Group> lances = snapshot.root().children().get(0).children().get(0).children();
+        for (int l = 1; l < lances.size(); l++) {
+            assertEquals(byGroup.get(lances.get(0)).x(), byGroup.get(lances.get(l)).x(), EPSILON);
+            assertTrue(byGroup.get(lances.get(l)).z() > byGroup.get(lances.get(l - 1)).z());
         }
     }
 
@@ -338,6 +391,16 @@ class ToeLayoutTest {
     static Card card(String name, int place) {
         return new Card(UUID.randomUUID(), name, "", Kind.MEK, 50, null, null, Condition.SOUND, Work.NONE, Crew.FULL,
               false, true, false, false, place, MEDIUM_MEK);
+    }
+
+    private static Map<Group, Block> byGroup(ToeLayout layout) {
+        Map<Group, Block> byGroup = new IdentityHashMap<>();
+        for (Block block : layout.blocks()) {
+            if (block.group() != null) {
+                byGroup.put(block.group(), block);
+            }
+        }
+        return byGroup;
     }
 
     private static boolean inside(Block inner, Block outer) {

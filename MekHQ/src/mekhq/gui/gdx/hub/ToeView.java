@@ -42,6 +42,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -67,6 +68,7 @@ import com.badlogic.gdx.utils.Disposable;
 import com.badlogic.gdx.utils.FloatArray;
 import jakarta.annotation.Nullable;
 import mekhq.gui.gdx.hub.ToeLayout.Block;
+import mekhq.gui.gdx.hub.ToeLayout.Link;
 import mekhq.gui.gdx.hub.ToeLayout.Slot;
 import mekhq.gui.gdx.hub.ToeLayout.Vacancy;
 import mekhq.gui.gdx.hub.ToeMoves.Load;
@@ -78,8 +80,9 @@ import mekhq.gui.gdx.hub.ToeSnapshot.Group;
 import mekhq.gui.gdx.hub.ToeSnapshot.Work;
 
 /**
- * The TO&amp;E table, seen from straight above: the formations laid out as nested slabs ({@link ToeLayout}), a
- * formation's block on its parent's, each unit a hexagonal counter with its art laid on it. What's going on with a unit
+ * The TO&amp;E table, seen from straight above: the formations laid out as an org chart ({@link ToeLayout}), each a
+ * node joined to the one over it by a line of command, each unit a hexagonal counter with its art laid on it. What's
+ * going on with a unit
  * reads off its counter without a word: the ring round it green when it's ready, amber when it's damaged, red when it's
  * out of action; a wreck's art knocked askew, one under repair ringed by a turning dashed ring, one laid up drained of
  * colour under a hatched cover, one nobody crews a hollow hologram of itself, one deployed an empty counter pinging
@@ -628,12 +631,17 @@ final class ToeView implements Disposable {
             float scale = settledSlots > 0 ? slotScale.get(i) : 1;
             slotsWere.put(slot.card().id(), new float[] { slot.x(), slot.z(), scale, 1 });
         }
-        anchor(oldBlocks, blocksWere, next);
+        // What opens out of a node or folds into one maps between the extents of everything under it, before and after
+        Map<Integer, float[]> reachWere = new HashMap<>();
+        for (Block block : old.blocks()) {
+            reachWere.put(block.key(), span(Objects.requireNonNull(old.reach(block.key()))));
+        }
+        anchor(old.blocks(), reachWere, next);
         clearMorph();
         for (Block block : next.blocks()) {
             float[] from = blocksWere.get(block.key());
             if (from == null) {
-                float[][] frame = within(old.holder(block.key()), next, blocksWere);
+                float[][] frame = within(old.holder(block.key()), next, reachWere);
                 from = frame == null ? new float[] { block.centreX(), block.centreZ(), 0, 0 }
                       : mapRect(rect(block), frame[0], frame[1]);
                 from = new float[] { from[0], from[1], from[2], from[3], 0 };
@@ -647,7 +655,7 @@ final class ToeView implements Disposable {
             staying.add(slot.card().id());
             float[] from = slotsWere.get(slot.card().id());
             if (from == null) {
-                float[][] frame = within(old.holder(slot.card().id()), next, blocksWere);
+                float[][] frame = within(old.holder(slot.card().id()), next, reachWere);
                 if (frame == null) {
                     from = new float[] { slot.x(), slot.z(), 0, 0 };
                 } else {
@@ -660,9 +668,9 @@ final class ToeView implements Disposable {
         for (Block block : oldBlocks) {
             if (next.block(block.key()) == null) {
                 Block holder = next.holder(block.key());
-                float[] was = holder == null ? null : blocksWere.get(holder.key());
+                float[] was = holder == null ? null : reachWere.get(holder.key());
                 float[] to = was == null ? new float[] { block.centreX(), block.centreZ(), 0, 0 }
-                      : mapRect(rect(block), was, rect(holder));
+                      : mapRect(rect(block), was, reach(next, holder));
                 leaving.add(new Leaving(block, null, rect(block), to));
             }
         }
@@ -673,13 +681,14 @@ final class ToeView implements Disposable {
             }
             float scale = settledSlots > 0 ? slotScale.get(i) : 1;
             Block holder = next.holder(slot.card().id());
-            float[] was = holder == null ? null : blocksWere.get(holder.key());
+            float[] was = holder == null ? null : reachWere.get(holder.key());
             float[] to;
             if (was == null) {
                 to = new float[] { slot.x(), slot.z(), 0 };
             } else {
-                float[] at = mapPoint(slot.x(), slot.z(), was, rect(holder));
-                to = new float[] { at[0], at[1], scale * holder.width() / was[2] };
+                float[] now = reach(next, holder);
+                float[] at = mapPoint(slot.x(), slot.z(), was, now);
+                to = new float[] { at[0], at[1], scale * now[2] / Math.max(was[2], 1e-4f) };
             }
             leaving.add(new Leaving(null, slot, new float[] { slot.x(), slot.z(), scale }, to));
         }
@@ -688,7 +697,8 @@ final class ToeView implements Disposable {
 
     /**
      * Where something new comes from: within what it was folded into on the table before ({@code holder}), as it
-     * stands within that now; the rect it now has, then the one it had; null if it wasn't on the table.
+     * stands within that now; the extent of that and what's under it now, then before; null if it wasn't on the
+     * table.
      */
     private static @Nullable float[][] within(@Nullable Block holder, ToeLayout next, Map<Integer, float[]> were) {
         if (holder == null) {
@@ -696,12 +706,23 @@ final class ToeView implements Disposable {
         }
         Block now = next.holder(holder.key());
         float[] was = were.get(holder.key());
-        return now == null || was == null ? null : new float[][] { rect(now), was };
+        return now == null || was == null ? null : new float[][] { reach(next, now), was };
+    }
+
+    /** The extent of {@code block} and everything under it in {@code layout}, as a rect. */
+    private static float[] reach(ToeLayout layout, Block block) {
+        float[] reach = layout.reach(block.key());
+        return reach == null ? rect(block) : span(reach);
+    }
+
+    /** {@code bounds}, min x, min z, max x, max z, as a rect: its corner, then its size. */
+    private static float[] span(float[] bounds) {
+        return new float[] { bounds[0], bounds[1], bounds[2] - bounds[0], bounds[3] - bounds[1] };
     }
 
     /**
      * Keeps the camera on what it was looking at: the point under the pointer for the wheel, the middle of the
-     * screen otherwise. Where the innermost block about it goes, the camera goes, easing there as the table does.
+     * screen otherwise. Where the innermost formation about it goes, the camera goes, easing there as the table does.
      */
     private void anchor(List<Block> oldBlocks, Map<Integer, float[]> were, ToeLayout next) {
         float lag = 1 - ease();
@@ -711,7 +732,9 @@ final class ToeView implements Disposable {
         if (point != null) {
             Block inner = null;
             for (Block block : oldBlocks) {
-                if (block.contains(point.x, point.z) && (inner == null || block.level() > inner.level())) {
+                float[] reach = were.get(block.key());
+                if (reach != null && point.x >= reach[0] && point.x <= reach[0] + reach[2] && point.z >= reach[1]
+                      && point.z <= reach[1] + reach[3] && (inner == null || block.level() > inner.level())) {
                     inner = block;
                 }
             }
@@ -720,7 +743,7 @@ final class ToeView implements Disposable {
                 now = next.holder(inner.key());
             }
             if (now != null) {
-                float[] at = mapPoint(point.x, point.z, were.get(inner.key()), rect(now));
+                float[] at = mapPoint(point.x, point.z, were.get(inner.key()), reach(next, now));
                 moved.set(at[0] - point.x, 0, at[1] - point.z);
             }
         }
@@ -1313,6 +1336,7 @@ final class ToeView implements Disposable {
         holo.clear();
         float open = risen(0);
         float pixel = 1 / cellPixels();
+        links(open, pixel);
         for (int i = 0; i < posedBlocks.size(); i++) {
             Block block = posedBlocks.get(i);
             float rise = blockRise.get(i);
@@ -1419,7 +1443,31 @@ final class ToeView implements Disposable {
         return carriedUnits.contains(card.id()) ? 0.3f : 1;
     }
 
-    /** A block's edge round its top, never thinner than a pixel and a half; running dashes while it's deployed. */
+    /**
+     * The lines of command down from each formation to those under it, on the table between the nodes, a pixel and a
+     * half across whatever the zoom; they settle in where they now run as a fold finishes.
+     */
+    private void links(float open, float pixel) {
+        float settle = morph >= 1 ? 1 : MathUtils.clamp((ease() - 0.6f) / 0.4f, 0, 1);
+        float strength = 0.42f * open * settle;
+        if (strength <= 0.001f) {
+            return;
+        }
+        float half = Math.max(0.02f, LINE_HALF_PIXELS * pixel);
+        for (Link link : layout.links()) {
+            float length = (float) Math.hypot(link.x1() - link.x0(), link.z1() - link.z0());
+            if (length < 1e-4f) {
+                continue;
+            }
+            // Run on half a core's width past each end, so where two meet they join in a clean corner
+            float ex = (link.x1() - link.x0()) / length * half * 0.25f;
+            float ez = (link.z1() - link.z0()) / length * half * 0.25f;
+            line(holo, link.x0() - ex, link.z0() - ez, link.x1() + ex, link.z1() + ez, 0.003f, half, EDGE,
+                  strength * (link.level() == 0 ? 1.2f : 1), 0);
+        }
+    }
+
+    /** A node's edge round its top, never thinner than a pixel and a half; running dashes while it's deployed. */
     private void outline(Block block, float open, float pixel, float rise) {
         boolean lit = blockLit(block);
         boolean pointed = hoveredCard != null && block.card() && block.key() == hoveredCard.key();

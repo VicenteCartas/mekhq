@@ -128,6 +128,9 @@ final class ToeTable implements Disposable {
     private static final int BADGES = 3;
     /** How many pixels a cell must take on screen before units' pins show. */
     private static final float UNIT_PINS_FROM = 110;
+    /** The fewest pixels a formation's name is cut to before its label hides instead. */
+    private static final float NAME_LEAST = 40;
+    private static final String PIN_NAME = "name";
     private static final int CHIPS_A_ROW = 5;
 
     /** Keeps a click on a panel from reaching the table under it. */
@@ -619,8 +622,9 @@ final class ToeTable implements Disposable {
         folds.reset(cell);
         relayout(false);
         Block opened = layout.holder(card.key());
-        Block at = opened == null ? card : opened;
-        view.frame(new float[] { at.x(), at.z(), at.x() + at.width(), at.z() + at.depth() }, cell, false);
+        float[] at = opened == null ? null : layout.reach(opened.key());
+        view.frame(at != null ? at
+              : new float[] { card.x(), card.z(), card.x() + card.width(), card.z() + card.depth() }, cell, false);
     }
 
     /** The places to narrow the table to: all of it, then, if the force is spread out, each place it's at. */
@@ -759,7 +763,10 @@ final class ToeTable implements Disposable {
                 pins.addActor(compact);
                 pin = new Pin(plate, block, null, nameCell, nameWide, plate.getWidth() - nameWide, badges, compact);
             } else {
-                pin = new Pin(pin(block.name(), LABEL_FORMATION, count, countTone), block, null);
+                Table chip = pin(block.name(), LABEL_FORMATION, count, countTone);
+                Label name = chip.findActor(PIN_NAME);
+                float nameWide = name.getPrefWidth();
+                pin = new Pin(chip, block, null, chip.getCell(name), nameWide, chip.getWidth() - nameWide, null, null);
             }
             pin.actor().getColor().a = blockFade.getOrDefault(block.key(), 0f);
             if (pin.badges() != null && pin.compact() != null) {
@@ -883,10 +890,12 @@ final class ToeTable implements Disposable {
      * A pin: an opaque plate so it reads over the table, its edge bar in {@code tone}, its text in upper case, and
      * after it {@code count}, if any, in {@code countTone}.
      */
-    private Actor pin(String text, Color tone, @Nullable String count, @Nullable Color countTone) {
+    private Table pin(String text, Color tone, @Nullable String count, @Nullable Color countTone) {
         Table chip = plate(tone);
-        chip.add(ui.label(UiTheme.upper(text), "hud-button", 12, LABEL_INK)).padLeft(7).padRight(8).padTop(3)
-              .padBottom(3);
+        Label name = ui.label(UiTheme.upper(text), "hud-button", 12, LABEL_INK);
+        name.setEllipsis(true);
+        name.setName(PIN_NAME);
+        chip.add(name).padLeft(7).padRight(8).padTop(3).padBottom(3).left();
         if (count != null && countTone != null) {
             chip.add(ui.label(count, "hud-button", 12, countTone)).padRight(8).padTop(3).padBottom(3);
         }
@@ -1417,11 +1426,17 @@ final class ToeTable implements Disposable {
             if (pin.block() != null) {
                 Block block = view.posed(pin.block());
                 // Zoomed out, a head is too short for its label, which would cover the units under it
-                boolean cramped = cell * ToeLayout.HEAD < actor.getHeight() * 0.6f;
-                show = labels != Labels.NONE && cell * block.width() > actor.getWidth() + 24
+                boolean cramped = cell * block.head() < actor.getHeight() * 0.6f;
+                float left = ToeView.iconInset(block) + block.head() * 0.9f;
+                float nameRoom = Math.min(pin.nameWide(),
+                      (block.width() - left - ToeView.iconInset(block)) * cell - pin.rest());
+                show = labels != Labels.NONE && nameRoom >= NAME_LEAST
                       && (block.units().isEmpty() || blockLit(block)) && (!cramped || block.level() == 0);
-                at.set(block.x() + ToeView.iconInset(block) + ToeLayout.HEAD * 0.9f, view.top(block.level()),
-                      cramped ? block.z() : block.z() + ToeLayout.HEAD / 2);
+                if (show) {
+                    fit(pin, nameRoom);
+                }
+                at.set(block.x() + left, view.top(block.level()),
+                      cramped ? block.z() : block.z() + block.head() / 2);
                 anchor = 0;
                 above = cramped;
             } else {
@@ -1508,17 +1523,14 @@ final class ToeTable implements Disposable {
         Table plate = (Table) pin.actor();
         Actor badges = Objects.requireNonNull(pin.badges());
         Actor compact = Objects.requireNonNull(pin.compact());
-        Cell<Label> name = Objects.requireNonNull(pin.name());
-        boolean labelled = labels != Labels.NONE && blockLit(card);
+        boolean labelled = labels != Labels.NONE && (card.units().isEmpty() || blockLit(card));
         float inset = ToeView.iconInset(card);
         float left = inset + (card.group() != null ? card.head() * 0.9f : 0);
         float nameRoom = Math.min(pin.nameWide(), (card.width() - left - inset) * cell - pin.rest());
         boolean named = labelled && !card.attached() && nameRoom >= 24
               && card.head() * cell >= plate.getHeight() * 0.6f;
-        if (named && Math.abs(plate.getWidth() - pin.rest() - nameRoom) > 0.5f) {
-            name.width(nameRoom);
-            plate.invalidate();
-            plate.pack();
+        if (named) {
+            fit(pin, nameRoom);
         }
         at.set(card.x() + left, view.top(card.level()), card.z() + card.head() / 2);
         place(plate, named, 0, plate.getHeight() / 2, fade);
@@ -1530,6 +1542,16 @@ final class ToeTable implements Disposable {
         place(badges, full, 0, badges.getHeight() / 2, fade);
         at.set(card.x() + inset, view.top(card.level()), card.z() + card.depth() * 0.765f);
         place(compact, brief, 0, compact.getHeight() / 2, fade);
+    }
+
+    /** Cuts the name on {@code pin}'s plate to {@code room} pixels across, or lets it out to its whole length. */
+    private static void fit(Pin pin, float room) {
+        Table plate = (Table) pin.actor();
+        if (Math.abs(plate.getWidth() - pin.rest() - room) > 0.5f) {
+            Objects.requireNonNull(pin.name()).width(room);
+            plate.invalidate();
+            plate.pack();
+        }
     }
 
     /**

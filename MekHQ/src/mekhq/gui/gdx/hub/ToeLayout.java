@@ -45,28 +45,43 @@ import mekhq.gui.gdx.hub.ToeSnapshot.Card;
 import mekhq.gui.gdx.hub.ToeSnapshot.Group;
 
 /**
- * Where everything stands on the TO&amp;E table: each formation a block, its own units in rows on a plate at its head
- * and its sub-formations packed under them, so the shape of the force reads from the table as the tree reads from an
- * org chart. Blocks pack row by row, as many to a row as brings their parent nearest a wide screen's proportions; the
- * units in no formation get a block of their own beside the force.
+ * Where everything stands on the TO&amp;E table, laid out as an org chart: each formation a node, its name and icon
+ * at its head and its own units in rows under that, with lines of command running down from it to the formations under
+ * it. The upper tiers spread out side by side under their commands, a line dropping to a bar across them and down to
+ * each; the lower tiers are listed one under another, indented, a line down their left to each. As many tiers spread
+ * as brings the whole nearest a wide screen's proportions, so a company spreads its lances where a regiment spreads its
+ * battalions and lists their companies' lances. Where some of a formation's spread formations have others under them,
+ * the ones beside them with none are listed together in a column, as a manual's chart lists a headquarters' sections.
+ * The units in no formation get a node of their own beside the force.
  *
- * <p>A formation folded ({@link ToeFolds}) is a card in place of its block, sized to stand a set number of pixels
- * across where it folds, so cards are born the same size on screen whatever they hold.</p>
+ * <p>A formation folded ({@link ToeFolds}) is a card in place of its node and everything under it, sized to stand a
+ * set number of pixels across where it folds, so cards are born the same size on screen whatever they hold. A
+ * formation's own units folded apart are a card on its node, under its name.</p>
  *
  * <p>The table's plane is x across and z towards the viewer, a unit's slot {@link #CELL} square. Plain Java, so the
- * packing can be tested without GL.</p>
+ * layout can be tested without GL.</p>
  */
 final class ToeLayout {
     /** A unit's slot, across. */
     static final float CELL = 1;
-    /** The margin inside a block, and the strip at its head that carries its name and icon. */
+    /** The margin inside a node, and the strip at its head that carries its name and icon. */
     static final float PAD = 0.3f;
     static final float HEAD = 0.55f;
-    /** The space between blocks packed side by side or one under another. */
-    static final float GAP = 0.35f;
+    /** The narrowest a node's plate stands, in cells, so its name has room. */
+    static final float NODE_CELLS = 4;
+    /** How far below a formation the ones it spreads out stand, the bar across them halfway down. */
+    static final float DROP = 1.4f;
+    /** The space between formations spread side by side. */
+    static final float SPREAD_GAP = 1;
+    /** How far in formations listed under another stand, the line down to them running halfway in. */
+    static final float INDENT = 1;
+    /** The space between formations listed one under another. */
+    static final float STACK_GAP = 0.45f;
+    /** The space between the force and the units in no formation. */
+    static final float APART = 2.5f;
     /** The most units a formation's plate holds in a row before starting another. */
     static final int ROW = 6;
-    /** The proportions, width over depth, that blocks are packed towards. */
+    /** The proportions, width over depth, the chart is laid out towards. */
     static final float ASPECT = 16 / 9f;
     /**
      * A lance's card's size on screen where it folds, in pixels, how much more each tier of formations folded into a
@@ -77,15 +92,30 @@ final class ToeLayout {
     static final float CARD_TIER_WIDE = 0.35f;
     static final float CARD_TIER_DEEP = 0.15f;
     static final float CARD_HEAD = 0.3f;
+    /**
+     * A formation's node's size on screen at the farthest out it shows before it folds, in pixels, at the least: wide
+     * enough for its name and with a head tall enough for it, so the chart's headings read however far out it is. Its
+     * head stands no deeper than {@link #HEAD_MOST}, close in.
+     */
+    static final float NODE_WIDE_PIXELS = 200;
+    static final float NODE_HEAD_PIXELS = 22;
+    static final float HEAD_MOST = 2 * HEAD;
 
     /**
-     * A formation's block: its key ({@link ToeFolds}: its group's id, or {@link ToeFolds#UNASSIGNED} or an
+     * A formation's node: its key ({@link ToeFolds}: its group's id, or {@link ToeFolds#UNASSIGNED} or an
      * {@link ToeFolds#attached} card's), its corner nearest the table's far left ({@code x}, {@code z}) and its size,
-     * how deep in the tree it is (0 for the force), the units in it and under it, and whether it's folded into a card.
-     * The unassigned units' block and an attached card have no group.
+     * how deep in the tree it is (0 for the force), the units in it and under it, whether it's folded into a card, and
+     * how deep the strip at its head that carries its name is. The unassigned units' node and an attached card have
+     * no group.
      */
     record Block(int key, @Nullable Group group, String name, float x, float z, float width, float depth, int level,
-          List<Card> units, boolean card) {
+          List<Card> units, boolean card, float head) {
+        /** A node with a head of the usual depth for it. */
+        Block(int key, @Nullable Group group, String name, float x, float z, float width, float depth, int level,
+              List<Card> units, boolean card) {
+            this(key, group, name, x, z, width, depth, level, units, card, card ? depth * CARD_HEAD : HEAD);
+        }
+
         boolean contains(float px, float pz) {
             return px >= x && px <= x + width && pz >= z && pz <= z + depth;
         }
@@ -98,19 +128,15 @@ final class ToeLayout {
             return z + depth / 2;
         }
 
-        /** Whether it's a formation's own units folded apart, in its block and under its name. */
+        /** Whether it's a formation's own units folded apart, on its node and under its name. */
         boolean attached() {
             return card && group == null && key != ToeFolds.UNASSIGNED;
         }
 
-        /** How deep the strip at its head is. */
-        float head() {
-            return card ? depth * CARD_HEAD : HEAD;
-        }
-
-        /** The same block at ({@code toX}, {@code toZ}), {@code toWidth} by {@code toDepth}. */
+        /** The same node at ({@code toX}, {@code toZ}), {@code toWidth} by {@code toDepth}. */
         Block moved(float toX, float toZ, float toWidth, float toDepth) {
-            return new Block(key, group, name, toX, toZ, toWidth, toDepth, level, units, card);
+            return new Block(key, group, name, toX, toZ, toWidth, toDepth, level, units, card,
+                  card ? toDepth * CARD_HEAD : head);
         }
     }
 
@@ -120,17 +146,26 @@ final class ToeLayout {
 
     /**
      * A slot the formation of {@code block} is authorized that nobody fills: the middle of where it shows on the
-     * plate, after the units, as {@code dx}, {@code dz} from the block's corner, so it keeps its place on the block as
-     * the block moves.
+     * plate, after the units, as {@code dx}, {@code dz} from the node's corner, so it keeps its place on the node as
+     * the node moves.
      */
     record Vacancy(FormationSlot slot, float dx, float dz, Block block) {
+    }
+
+    /**
+     * A straight run of a line of command, from ({@code x0}, {@code z0}) to ({@code x1}, {@code z1}), down from a
+     * formation {@code level} deep in the tree to those under it.
+     */
+    record Link(float x0, float z0, float x1, float z1, int level) {
     }
 
     private final List<Block> blocks = new ArrayList<>();
     private final List<Slot> slots = new ArrayList<>();
     private final List<Vacancy> vacancies = new ArrayList<>();
+    private final List<Link> links = new ArrayList<>();
     private final Map<Integer, Block> holders = new HashMap<>();
     private final Map<UUID, Block> cardHolders = new HashMap<>();
+    private final Map<Integer, float[]> reaches = new HashMap<>();
     private float minX = Float.MAX_VALUE;
     private float minZ = Float.MAX_VALUE;
     private float maxX = -Float.MAX_VALUE;
@@ -139,34 +174,62 @@ final class ToeLayout {
     private ToeLayout() {
     }
 
-    /** Lays {@code snapshot} out with nothing folded, the force's block and the unassigned units' about the origin. */
+    /** Lays {@code snapshot} out with nothing folded, the force and the unassigned units about the origin. */
     static ToeLayout of(ToeSnapshot snapshot, String unassignedName) {
         return of(snapshot, unassignedName, null);
     }
 
     /**
-     * Lays {@code snapshot} out, what {@code folds} has folded as cards, the force's block and the unassigned units'
-     * packed together about the origin. A formation's own units folded apart take its name.
+     * Lays {@code snapshot} out, what {@code folds} has folded as cards, the force and the unassigned units side by
+     * side about the origin. A formation's own units folded apart take its name.
      */
     static ToeLayout of(ToeSnapshot snapshot, String unassignedName, @Nullable ToeFolds folds) {
         Folding folding = new Folding(folds);
-        List<Measure> top = new ArrayList<>();
-        top.add(measure(snapshot.root(), 0, folding));
         List<Card> unassigned = snapshot.unassigned();
+        Node spare = null;
         if (!unassigned.isEmpty()) {
-            top.add(folding.folded(ToeFolds.UNASSIGNED)
+            spare = folding.folded(ToeFolds.UNASSIGNED)
                   ? folding.card(ToeFolds.UNASSIGNED, null, unassignedName, 0, unassigned)
-                  : measureUnits(ToeFolds.UNASSIGNED, null, unassignedName, unassigned, List.of(), unassigned, 0,
-                  unassignedRow(unassigned.size()), List.of()));
+                  : plate(ToeFolds.UNASSIGNED, null, unassignedName, unassigned, List.of(), unassigned, 0,
+                  unassignedRow(unassigned.size()), true, null, folding.farthest(ToeFolds.UNASSIGNED));
         }
-        Packing packing = pack(top);
+        Map<Integer, Node> nodes = new HashMap<>();
+        Tree best = null;
+        double bestScore = Double.MAX_VALUE;
+        for (int spread = 0; spread <= height(snapshot.root()); spread++) {
+            Tree tree = tree(snapshot.root(), 0, folding, spread, nodes);
+            double score = Math.abs(Math.log(width(tree, spare) / depth(tree, spare) / ASPECT));
+            // Of two as near, the one spread further, which reads more plainly
+            if (best == null || score <= bestScore + 1e-6) {
+                bestScore = score;
+                best = tree;
+            }
+        }
         ToeLayout layout = new ToeLayout();
-        float x = -packing.width / 2;
-        float z = -packing.depth / 2;
-        for (int i = 0; i < top.size(); i++) {
-            layout.place(top.get(i), x + packing.at[i * 2], z + packing.at[i * 2 + 1]);
+        float x = -width(best, spare) / 2;
+        float z = -depth(best, spare) / 2;
+        layout.place(best, x, z);
+        if (spare != null) {
+            layout.place(new Tree(spare, List.of()), x + best.width + APART, z);
         }
         return layout;
+    }
+
+    private static float width(Tree tree, @Nullable Node spare) {
+        return tree.width + (spare == null ? 0 : APART + spare.width);
+    }
+
+    private static float depth(Tree tree, @Nullable Node spare) {
+        return Math.max(tree.depth, spare == null ? 0 : spare.depth);
+    }
+
+    /** How many tiers of formations stand under {@code group}. */
+    private static int height(Group group) {
+        int height = 0;
+        for (Group child : group.children()) {
+            height = Math.max(height, 1 + height(child));
+        }
+        return height;
     }
 
     /** As many unassigned units to a row as keeps a long list of them from trailing off in a line. */
@@ -187,18 +250,23 @@ final class ToeLayout {
         return vacancies;
     }
 
-    /** The block keyed {@code key} if it's on the table, a card or not; null if it's folded into another. */
+    /** The lines of command between the nodes. */
+    List<Link> links() {
+        return links;
+    }
+
+    /** The node keyed {@code key} if it's on the table, a card or not; null if it's folded into another. */
     @Nullable Block block(int key) {
         Block holder = holders.get(key);
         return holder != null && holder.key() == key ? holder : null;
     }
 
-    /** The block showing what's keyed {@code key}: its own, or the card of what it's folded into; null for none. */
+    /** The node showing what's keyed {@code key}: its own, or the card of what it's folded into; null for none. */
     @Nullable Block holder(int key) {
         return holders.get(key);
     }
 
-    /** The block unit {@code card} shows on, or the card it's folded into; null if it's not on the table. */
+    /** The node unit {@code card} shows on, or the card it's folded into; null if it's not on the table. */
     @Nullable Block holder(UUID card) {
         return cardHolders.get(card);
     }
@@ -206,6 +274,21 @@ final class ToeLayout {
     /** The table's extent: min x, min z, max x, max z. */
     float[] bounds() {
         return new float[] { minX, minZ, maxX, maxZ };
+    }
+
+    /**
+     * The extent of the node keyed {@code key} and everything laid out under it, as {@link #bounds}; null if it's not
+     * on the table.
+     */
+    @Nullable
+    float[] reach(int key) {
+        float[] reach = reaches.get(key);
+        if (reach != null) {
+            return reach.clone();
+        }
+        Block block = block(key);
+        return block == null ? null
+              : new float[] { block.x(), block.z(), block.x() + block.width(), block.z() + block.depth() };
     }
 
     /**
@@ -248,7 +331,7 @@ final class ToeLayout {
         return null;
     }
 
-    /** The innermost block under ({@code x}, {@code z}), null for none. */
+    /** The node under ({@code x}, {@code z}), an attached card over the node it's on; null for none. */
     @Nullable Block blockAt(float x, float z) {
         Block found = null;
         for (Block block : blocks) {
@@ -260,16 +343,40 @@ final class ToeLayout {
     }
 
     /**
-     * A block measured before it's placed: its size, and where its units and children go within it. A card's
-     * {@code contents} is the formation folded into it, if it's one, its {@code all} every unit it holds.
+     * A node measured before it's placed: its size and its units' rows. A card's {@code contents} is the formation
+     * folded into it, if it's one, its {@code all} every unit it holds; {@code inner} is the card a formation's own
+     * units are folded apart into, on its node.
      */
-    private record Measure(int key, @Nullable Group group, String name, int level, List<Card> units,
-          List<FormationSlot> vacant, List<Card> all, int columns, List<Measure> children, Packing packing, float width, float depth, boolean card,
-          @Nullable Group contents) {
+    private record Node(int key, @Nullable Group group, String name, int level, List<Card> units,
+          List<FormationSlot> vacant, List<Card> all, int columns, float width, float depth, boolean card,
+          @Nullable Group contents, @Nullable Node inner, float head) {
     }
 
-    /** Blocks packed together: their bounds and each one's corner within them, x and z by turns. */
-    private record Packing(float width, float depth, float[] at) {
+    /**
+     * A node and everything under it laid out about it, measured from the corner of its extent: where each of the
+     * formations under it stands, where its node stands across, and the lines between them.
+     */
+    private static final class Tree {
+        private final Node node;
+        private final List<Tree> children;
+        private final float[] at;
+        private final List<float[]> links = new ArrayList<>();
+        private float nodeX;
+        private float width;
+        private float depth;
+
+        Tree(Node node, List<Tree> children) {
+            this.node = node;
+            this.children = children;
+            at = new float[children.size() * 2];
+            width = node.width;
+            depth = node.depth;
+        }
+
+        /** Where the line down to it comes in, across: the middle of its node's top. */
+        float attach() {
+            return nodeX + node.width / 2;
+        }
     }
 
     /** What's folded. */
@@ -278,13 +385,25 @@ final class ToeLayout {
             return folds != null && folds.folded(key);
         }
 
-        Measure card(int key, @Nullable Group group, String name, int level, List<Card> units) {
+        Node card(int key, @Nullable Group group, String name, int level, List<Card> units) {
             float threshold = folds == null ? ToeFolds.UNITS_FOLD : Math.max(1, folds.threshold(key));
             int tiers = tiers(group) - 1;
-            return new Measure(key, group, name, level, List.of(), List.of(), units, 0, List.of(),
-                  new Packing(0, 0, new float[0]),
-                  CARD_WIDE_PIXELS * (1 + CARD_TIER_WIDE * tiers) / threshold,
-                  CARD_DEEP_PIXELS * (1 + CARD_TIER_DEEP * tiers) / threshold, true, group);
+            float depth = CARD_DEEP_PIXELS * (1 + CARD_TIER_DEEP * tiers) / threshold;
+            return new Node(key, group, name, level, List.of(), List.of(), units, 0,
+                  CARD_WIDE_PIXELS * (1 + CARD_TIER_WIDE * tiers) / threshold, depth, true, group, null,
+                  depth * CARD_HEAD);
+        }
+
+        /**
+         * How many pixels a cell takes on screen at the farthest out the node keyed {@code key} shows: where it folds,
+         * or for the force, which never does, a step further out than anything else; with no folds, no limit.
+         */
+        float farthest(int key) {
+            if (folds == null) {
+                return Float.POSITIVE_INFINITY;
+            }
+            float threshold = folds.threshold(key);
+            return threshold > 0 ? threshold : folds.lowest() * ToeFolds.STEP;
         }
 
         /** How many tiers of formations fold into {@code group}'s card: 1 for a lance, 2 for a company of lances. */
@@ -299,130 +418,202 @@ final class ToeLayout {
         }
     }
 
-    private static Measure measure(Group group, int level, Folding folding) {
+    /** {@code group} and everything under it, the tiers above {@code spread} spread out and the rest listed. */
+    private static Tree tree(Group group, int level, Folding folding, int spread, Map<Integer, Node> nodes) {
         if (level > 0 && folding.folded(group.id())) {
-            return folding.card(group.id(), group, group.name(), level, group.allUnits());
+            return new Tree(nodes.computeIfAbsent(group.id(),
+                  id -> folding.card(id, group, group.name(), level, group.allUnits())), List.of());
         }
-        List<Measure> children = new ArrayList<>();
+        Node node = nodes.computeIfAbsent(group.id(), id -> node(group, level, folding));
+        List<Tree> children = new ArrayList<>();
+        for (Group child : group.children()) {
+            children.add(tree(child, level + 1, folding, spread, nodes));
+        }
+        if (children.isEmpty()) {
+            return new Tree(node, children);
+        }
+        return level < spread ? spread(node, children) : stack(node, children);
+    }
+
+    private static Node node(Group group, int level, Folding folding) {
         List<Card> units = group.units();
         List<FormationSlot> vacant = ToeSlots.of(group).vacant();
+        Node inner = null;
         int attached = ToeFolds.attached(group.id());
         if (!units.isEmpty() && !group.children().isEmpty() && folding.folded(attached)) {
-            children.add(folding.card(attached, null, group.name(), level + 1, units));
+            inner = folding.card(attached, null, group.name(), level + 1, units);
             units = List.of();
             vacant = List.of();
         }
-        for (Group child : group.children()) {
-            children.add(measure(child, level + 1, folding));
-        }
-        return measureUnits(group.id(), group, group.name(), units, vacant, group.allUnits(), level,
-              Math.min(units.size() + vacant.size(), ROW), children);
+        return plate(group.id(), group, group.name(), units, vacant, group.allUnits(), level,
+              Math.min(units.size() + vacant.size(), ROW), group.children().isEmpty(), inner,
+              folding.farthest(group.id()));
     }
 
-    private static Measure measureUnits(int key, @Nullable Group group, String name, List<Card> units,
-          List<FormationSlot> vacant, List<Card> all, int level, int row, List<Measure> children) {
-        Packing packing = pack(children);
+    private static Node plate(int key, @Nullable Group group, String name, List<Card> units,
+          List<FormationSlot> vacant, List<Card> all, int level, int row, boolean leaf, @Nullable Node inner,
+          float farthest) {
         int cells = units.size() + vacant.size();
-        // A formation with nothing in it still shows a slot, to put units in
-        int columns = cells == 0 ? (children.isEmpty() ? 1 : 0) : row;
+        // A formation with nothing in it and none under it still shows a slot, to put units in
+        int columns = cells == 0 ? (leaf && inner == null ? 1 : 0) : row;
         int rows = cells == 0 ? columns : (cells + columns - 1) / columns;
-        float plateWidth = columns * CELL;
-        float plateDepth = rows * CELL;
-        float inner = Math.max(Math.max(plateWidth, packing.width), 2 * CELL);
-        float depth = HEAD + plateDepth + (plateDepth > 0 && !children.isEmpty() ? GAP : 0) + packing.depth;
-        return new Measure(key, group, name, level, units, vacant, all, columns, children, packing, inner + 2 * PAD,
-              depth + PAD, false, null);
+        float plateWidth = inner == null ? columns * CELL : inner.width;
+        float plateDepth = inner == null ? rows * CELL : inner.depth;
+        float head = Math.min(HEAD_MOST, Math.max(HEAD, NODE_HEAD_PIXELS / farthest));
+        float width = Math.max(Math.max(plateWidth, NODE_CELLS * CELL) + 2 * PAD, NODE_WIDE_PIXELS / farthest);
+        return new Node(key, group, name, level, units, vacant, all, columns, width, head + plateDepth + PAD, false,
+              null, inner, head);
+    }
+
+    /** {@code node} with {@code children} listed one under another below it, indented, a line down to each. */
+    private static Tree stack(Node node, List<Tree> children) {
+        Tree tree = new Tree(node, children);
+        float[] size = list(tree, 0, children.size(), 0, node.depth + STACK_GAP, node.depth);
+        tree.width = Math.max(node.width, size[0]);
+        tree.depth = node.depth + STACK_GAP + size[1];
+        return tree;
     }
 
     /**
-     * Packs {@code blocks} in rows, in their order: as many to a row as brings the whole nearest {@link #ASPECT},
-     * wasting least space between them.
+     * {@code node} with {@code children} side by side below it, a line dropping from it to a bar across them and down
+     * to each, those with none under them beside those with some listed together in a column; {@code node} stands
+     * over the middle of them.
      */
-    private static Packing pack(List<Measure> blocks) {
-        int count = blocks.size();
-        if (count == 0) {
-            return new Packing(0, 0, new float[0]);
-        }
-        Packing best = null;
-        double bestScore = Double.MAX_VALUE;
-        for (int columns = 1; columns <= count; columns++) {
-            Packing packing = rows(blocks, columns);
-            double area = 0;
-            for (Measure block : blocks) {
-                area += block.width * block.depth;
+    private static Tree spread(Node node, List<Tree> children) {
+        Tree tree = new Tree(node, children);
+        boolean mixed = children.stream().anyMatch(child -> !child.children.isEmpty());
+        float bar = node.depth + DROP / 2;
+        float top = node.depth + DROP;
+        float x = 0;
+        float below = 0;
+        float first = 0;
+        float last = 0;
+        int i = 0;
+        while (i < children.size()) {
+            int end = i + 1;
+            if (mixed && children.get(i).children.isEmpty()) {
+                while (end < children.size() && children.get(end).children.isEmpty()) {
+                    end++;
+                }
             }
-            double waste = 1 - area / (packing.width * packing.depth);
-            double score = Math.abs(Math.log(packing.width / packing.depth / ASPECT)) + waste;
-            if (score < bestScore - 1e-6) {
-                bestScore = score;
-                best = packing;
+            float attach;
+            float wide;
+            if (end - i == 1) {
+                Tree child = children.get(i);
+                tree.at[i * 2] = x;
+                tree.at[i * 2 + 1] = top;
+                attach = x + child.attach();
+                tree.links.add(new float[] { attach, bar, attach, top });
+                wide = child.width;
+                below = Math.max(below, child.depth);
+            } else {
+                attach = x + INDENT / 2;
+                float[] size = list(tree, i, end, x, top, bar);
+                wide = size[0];
+                below = Math.max(below, size[1]);
             }
+            if (i == 0) {
+                first = attach;
+            }
+            last = attach;
+            x += wide + SPREAD_GAP;
+            i = end;
         }
-        return best;
+        // Shifted right if the node over the middle of them would stand out past the first of them
+        float shift = Math.max(0, node.width / 2 - (first + last) / 2);
+        for (int k = 0; k < children.size(); k++) {
+            tree.at[k * 2] += shift;
+        }
+        for (float[] link : tree.links) {
+            link[0] += shift;
+            link[2] += shift;
+        }
+        first += shift;
+        last += shift;
+        float centre = (first + last) / 2;
+        tree.nodeX = centre - node.width / 2;
+        tree.links.add(new float[] { centre, node.depth, centre, bar });
+        if (last > first) {
+            tree.links.add(new float[] { first, bar, last, bar });
+        }
+        tree.width = Math.max(x - SPREAD_GAP + shift, tree.nodeX + node.width);
+        tree.depth = top + below;
+        return tree;
     }
 
-    private static Packing rows(List<Measure> blocks, int columns) {
-        float[] at = new float[blocks.size() * 2];
-        float width = 0;
-        float z = 0;
-        for (int first = 0; first < blocks.size(); first += columns) {
-            float x = 0;
-            float rowDepth = 0;
-            for (int i = first; i < Math.min(blocks.size(), first + columns); i++) {
-                Measure block = blocks.get(i);
-                at[i * 2] = x;
-                at[i * 2 + 1] = z;
-                x += block.width + GAP;
-                rowDepth = Math.max(rowDepth, block.depth);
-            }
-            width = Math.max(width, x - GAP);
-            z += rowDepth + GAP;
+    /**
+     * Lists {@code tree}'s children {@code from} up to {@code to} one under another, indented from {@code x}, the
+     * first at {@code z}, a line running down from {@code railTop} with a tick across to each; how wide and deep the
+     * list stands from {@code x} and {@code z}.
+     */
+    private static float[] list(Tree tree, int from, int to, float x, float z, float railTop) {
+        float rail = x + INDENT / 2;
+        float at = z;
+        float wide = 0;
+        float lastTick = railTop;
+        for (int k = from; k < to; k++) {
+            Tree child = tree.children.get(k);
+            tree.at[k * 2] = x + INDENT;
+            tree.at[k * 2 + 1] = at;
+            float tick = at + child.node.head() / 2;
+            tree.links.add(new float[] { rail, tick, x + INDENT + child.nodeX, tick });
+            lastTick = tick;
+            wide = Math.max(wide, INDENT + child.width);
+            at += child.depth + STACK_GAP;
         }
-        return new Packing(width, z - GAP, at);
+        tree.links.add(new float[] { rail, railTop, rail, lastTick });
+        return new float[] { wide, at - STACK_GAP - z };
     }
 
-    private void place(Measure measure, float x, float z) {
-        Block block = new Block(measure.key, measure.group, measure.name, x, z, measure.width, measure.depth,
-              measure.level, measure.all, measure.card);
+    private void place(Tree tree, float x, float z) {
+        Block block = place(tree.node, x + tree.nodeX, z);
+        for (float[] link : tree.links) {
+            links.add(new Link(x + link[0], z + link[1], x + link[2], z + link[3], tree.node.level));
+        }
+        for (int i = 0; i < tree.children.size(); i++) {
+            place(tree.children.get(i), x + tree.at[i * 2], z + tree.at[i * 2 + 1]);
+        }
+        reaches.put(block.key(), new float[] { x, z, x + tree.width, z + tree.depth });
+    }
+
+    private Block place(Node node, float x, float z) {
+        Block block = new Block(node.key, node.group, node.name, x, z, node.width, node.depth, node.level, node.all,
+              node.card, node.head);
         blocks.add(block);
-        holders.put(measure.key, block);
+        holders.put(node.key, block);
         minX = Math.min(minX, x);
         minZ = Math.min(minZ, z);
-        maxX = Math.max(maxX, x + measure.width);
-        maxZ = Math.max(maxZ, z + measure.depth);
-        if (measure.card) {
-            if (measure.contents != null) {
-                hold(measure.contents, block);
+        maxX = Math.max(maxX, x + node.width);
+        maxZ = Math.max(maxZ, z + node.depth);
+        if (node.card) {
+            if (node.contents != null) {
+                hold(node.contents, block);
             }
-            for (Card card : measure.all) {
+            for (Card card : node.all) {
                 cardHolders.put(card.id(), block);
             }
-            return;
-        }
-        if (measure.group != null && !measure.units.isEmpty() && !measure.children.isEmpty()) {
-            holders.put(ToeFolds.attached(measure.group.id()), block);
+            return block;
         }
         float plateX = x + PAD;
-        float plateZ = z + HEAD;
-        int columns = Math.max(1, measure.columns);
-        for (int i = 0; i < measure.units.size(); i++) {
-            Card card = measure.units.get(i);
+        float plateZ = z + node.head;
+        if (node.inner != null) {
+            place(node.inner, plateX, plateZ);
+        } else if (node.group != null && !node.units.isEmpty() && !node.group.children().isEmpty()) {
+            holders.put(ToeFolds.attached(node.group.id()), block);
+        }
+        int columns = Math.max(1, node.columns);
+        for (int i = 0; i < node.units.size(); i++) {
+            Card card = node.units.get(i);
             slots.add(new Slot(card, plateX + (i % columns + 0.5f) * CELL, plateZ + (i / columns + 0.5f) * CELL,
                   block));
             cardHolders.put(card.id(), block);
         }
-        for (int j = 0; j < measure.vacant.size(); j++) {
-            int i = measure.units.size() + j;
-            vacancies.add(new Vacancy(measure.vacant.get(j), PAD + (i % columns + 0.5f) * CELL,
-                  HEAD + (i / columns + 0.5f) * CELL, block));
+        for (int j = 0; j < node.vacant.size(); j++) {
+            int i = node.units.size() + j;
+            vacancies.add(new Vacancy(node.vacant.get(j), PAD + (i % columns + 0.5f) * CELL,
+                  node.head + (i / columns + 0.5f) * CELL, block));
         }
-        int cells = measure.units.size() + measure.vacant.size();
-        int rows = cells == 0 ? measure.columns : (cells + columns - 1) / columns;
-        float childrenZ = plateZ + rows * CELL + (rows > 0 && !measure.children.isEmpty() ? GAP : 0);
-        for (int i = 0; i < measure.children.size(); i++) {
-            place(measure.children.get(i), plateX + measure.packing.at[i * 2],
-                  childrenZ + measure.packing.at[i * 2 + 1]);
-        }
+        return block;
     }
 
     /** Everything folded into {@code card} under {@code group}, held by it. */
@@ -445,6 +636,6 @@ final class ToeLayout {
 
     /** The middle of an empty formation's slot, x then z. */
     static float[] emptySlot(Block block) {
-        return new float[] { block.x() + PAD + CELL / 2, block.z() + HEAD + CELL / 2 };
+        return new float[] { block.x() + PAD + CELL / 2, block.z() + block.head() + CELL / 2 };
     }
 }
