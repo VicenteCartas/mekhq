@@ -87,7 +87,6 @@ import megamek.client.ui.gdx.UiPopover;
 import megamek.client.ui.gdx.UiTheme;
 import megamek.common.Configuration;
 import mekhq.MHQConstants;
-import mekhq.campaign.force.FormationSlot;
 import mekhq.campaign.universe.eras.Eras;
 import mekhq.gui.enums.MHQTabType;
 import mekhq.gui.model.view.Borders;
@@ -211,10 +210,11 @@ final class HubScreen extends ApplicationAdapter {
         void reorganize(List<ToeMoves.Move> moves);
 
         /**
-         * Authorizes formation {@code formation} {@code slots}, the places in it for units of a kind and weight class,
-         * none for anything goes; the forces as they then are coming back through {@link HubScreen#toeRefresh}.
+         * Shapes a formation as its editor applies it: the places in it for units of a kind and weight class, none for
+         * anything goes, the template it's shaped by and the formation rule it's to meet, and keeps the template if
+         * asked; the forces as they then are coming back through {@link HubScreen#toeRefresh}.
          */
-        void authorize(int formation, List<FormationSlot> slots);
+        void authorize(ToeTable.Shaping shaping);
 
         /** The screen's listener is being disposed. */
         void disposed();
@@ -2055,8 +2055,8 @@ final class HubScreen extends ApplicationAdapter {
         hub.reorganize(moves);
     }
 
-    private void authorize(int formation, List<FormationSlot> slots) {
-        hub.authorize(formation, slots);
+    private void authorize(ToeTable.Shaping shaping) {
+        hub.authorize(shaping);
     }
 
     private void closeToe() {

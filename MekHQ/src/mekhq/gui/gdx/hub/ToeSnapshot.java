@@ -47,6 +47,8 @@ import javax.swing.ImageIcon;
 
 import jakarta.annotation.Nullable;
 import megamek.common.icons.Camouflage;
+import megamek.common.loaders.MekSummary;
+import megamek.common.loaders.MekSummaryCache;
 import megamek.common.units.Entity;
 import megamek.common.units.UnitType;
 import mekhq.campaign.Campaign;
@@ -55,6 +57,7 @@ import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.force.Formation;
 import mekhq.campaign.force.FormationLevel;
 import mekhq.campaign.force.FormationSlot;
+import mekhq.campaign.force.FormationTemplate;
 import mekhq.campaign.location.LocationUtils;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.turnoverAndRetention.Fatigue;
@@ -66,9 +69,11 @@ import mekhq.gui.utilities.StaticChecks;
  * The campaign's TO&amp;E as the table shows it, read on the campaign's thread: the formations' tree with
  * each one's units, the units in none, and the places the force is spread over (the main force and each of the
  * player's bases). Each unit carries what the table shows of it at a glance: its art, what it is, its condition, the
- * work on it, its crew and where it is.
+ * work on it, its crew and where it is. {@code templates} are the formation templates the campaign keeps, and
+ * {@code summaries} the units' designs as MegaMek's formation rules read them, by unit id, for those it knows.
  */
-record ToeSnapshot(String force, Group root, List<Card> unassigned, List<String> bases) {
+record ToeSnapshot(String force, Group root, List<Card> unassigned, List<String> bases,
+      List<FormationTemplate> templates, Map<UUID, MekSummary> summaries) {
     /** The largest a unit's art is kept, in pixels across, so its texture stays light. */
     private static final int ART_SIZE = 96;
     /** Unit art already camouflaged, by {@link #artKey}; it's costly to paint, and a regiment repeats much of it. */
@@ -82,19 +87,47 @@ record ToeSnapshot(String force, Group root, List<Card> unassigned, List<String>
     /** The effective fatigue at which a crew counts as tired, as {@link Fatigue} first reports it. */
     private static final int TIRED = 5;
 
+    /** A force that keeps no templates of its own and whose units' designs aren't known. */
+    ToeSnapshot(String force, Group root, List<Card> unassigned, List<String> bases) {
+        this(force, root, unassigned, bases, List.of(), Map.of());
+    }
+
+    /** This force with its formations and unassigned units as given, all else as it is. */
+    ToeSnapshot with(Group root, List<Card> unassigned) {
+        return new ToeSnapshot(force, root, unassigned, bases, templates, summaries);
+    }
+
     /**
      * A formation: its own units and its sub-formations, in the TO&amp;E's order; {@code deployed} whether it's out on
      * a scenario or a StratCon track, so it can't be reorganized until it's back; {@code slots} the places it's
      * authorized, none if it authorizes nothing; {@code echelon} how big a formation it stands for, as
      * {@link FormationLevel#getDepth}: 0 a team, 1 a lance, star or Level II, 2 a company, 3 a battalion and on up, -1
-     * if it's not known.
+     * if it's not known; {@code template} the name of the template it was last shaped by and {@code rule} the MegaMek
+     * formation rule it's meant to meet, each null for none.
      */
     record Group(int id, String name, @Nullable BufferedImage icon, List<Group> children, List<Card> units,
-          boolean deployed, List<FormationSlot> slots, int echelon) {
+          boolean deployed, List<FormationSlot> slots, int echelon, @Nullable String template,
+          @Nullable String rule) {
+        /** A formation shaped by no template. */
+        Group(int id, String name, @Nullable BufferedImage icon, List<Group> children, List<Card> units,
+              boolean deployed, List<FormationSlot> slots, int echelon) {
+            this(id, name, icon, children, units, deployed, slots, echelon, null, null);
+        }
+
         /** A formation whose echelon isn't known. */
         Group(int id, String name, @Nullable BufferedImage icon, List<Group> children, List<Card> units,
               boolean deployed, List<FormationSlot> slots) {
             this(id, name, icon, children, units, deployed, slots, -1);
+        }
+
+        /** This formation with the sub-formations and units given, all else as it is. */
+        Group with(List<Group> children, List<Card> units) {
+            return new Group(id, name, icon, children, units, deployed, slots, echelon, template, rule);
+        }
+
+        /** This formation shaped as given: its slots, its template's name and its rule. */
+        Group shaped(List<FormationSlot> slots, @Nullable String template, @Nullable String rule) {
+            return new Group(id, name, icon, children, units, deployed, slots, echelon, template, rule);
         }
 
         /**
@@ -293,7 +326,35 @@ record ToeSnapshot(String force, Group root, List<Card> unassigned, List<String>
                 addUnassigned(campaign, unit, places, placed, unassigned);
             }
         }
-        return new ToeSnapshot(campaign.getPlayerForce().getName(), root, unassigned, bases);
+        return new ToeSnapshot(campaign.getPlayerForce().getName(), root, unassigned, bases,
+              campaign.getPlayerForce().getFormationTemplates().getTemplates(), summaries(campaign, placed));
+    }
+
+    /**
+     * The designs of the units {@code ids} as the unit cache has them, for those it has; none until the cache is
+     * loaded, which this never waits for.
+     */
+    private static Map<UUID, MekSummary> summaries(Campaign campaign, Set<UUID> ids) {
+        MekSummaryCache cache = MekSummaryCache.getInstance();
+        if (!cache.isInitialized()) {
+            return Map.of();
+        }
+        Map<UUID, MekSummary> summaries = new HashMap<>();
+        for (UUID id : ids) {
+            Unit unit = campaign.getUnit(id);
+            Entity entity = unit == null ? null : unit.getEntity();
+            if (entity == null) {
+                continue;
+            }
+            MekSummary summary = cache.getMek(entity.getShortNameRaw());
+            if (summary == null) {
+                summary = cache.getMek(entity.getShortName());
+            }
+            if (summary != null) {
+                summaries.put(id, summary);
+            }
+        }
+        return Map.copyOf(summaries);
     }
 
     private static void addUnassigned(Campaign campaign, Unit unit, Map<UUID, Integer> places, Set<UUID> placed,
@@ -325,7 +386,8 @@ record ToeSnapshot(String force, Group root, List<Card> unassigned, List<String>
               : WarTableSnapshot.icon(formation.getFormationIcon().getBaseImage());
         return new Group(formation.getId(), formation.getName(), icon, children, units,
               StaticChecks.isFormationLockedByDeployment(campaign, formation), formation.getSlots(),
-              formation.getFormationLevel() == null ? -1 : formation.getFormationLevel().getDepth());
+              formation.getFormationLevel() == null ? -1 : formation.getFormationLevel().getDepth(),
+              formation.getTemplateName(), formation.getFormationRule());
     }
 
     private static @Nullable Card card(Campaign campaign, Unit unit, Map<UUID, Integer> places) {

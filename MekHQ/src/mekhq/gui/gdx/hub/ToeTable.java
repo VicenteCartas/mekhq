@@ -44,7 +44,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -71,6 +70,7 @@ import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
 import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
+import com.badlogic.gdx.scenes.scene2d.ui.TextField;
 import com.badlogic.gdx.scenes.scene2d.utils.ClickListener;
 import com.badlogic.gdx.utils.Align;
 import com.badlogic.gdx.utils.Disposable;
@@ -80,11 +80,14 @@ import megamek.client.ui.clientGUI.GUIPreferences;
 import megamek.client.ui.design.DesignTokens;
 import megamek.client.ui.gdx.UiButton;
 import megamek.client.ui.gdx.UiKit;
+import megamek.client.ui.gdx.UiSelect;
 import megamek.client.ui.gdx.UiStepper;
+import megamek.client.ui.gdx.UiTextField;
 import megamek.client.ui.gdx.UiTheme;
 import mekhq.campaign.force.FormationSlot;
 import mekhq.campaign.force.FormationSlot.Kind;
 import mekhq.campaign.force.FormationSlot.Weight;
+import mekhq.campaign.force.FormationTemplate;
 import mekhq.gui.gdx.hub.ToeLayout.Block;
 import mekhq.gui.gdx.hub.ToeLayout.Slot;
 import mekhq.gui.gdx.hub.ToeLayout.Vacancy;
@@ -239,7 +242,7 @@ final class ToeTable implements Disposable {
     });
     private final Runnable leave;
     private final Consumer<List<Move>> reorganize;
-    private final BiConsumer<Integer, List<FormationSlot>> authorize;
+    private final Consumer<Shaping> authorize;
     /** The moves that put back the last drop, none once undone. */
     private List<Move> undo = List.of();
     private final Group pins = new Group();
@@ -286,6 +289,16 @@ final class ToeTable implements Disposable {
     private Table editorLayer;
     private @Nullable ToeSnapshot.Group editing;
     private final List<FormationSlot> draft = new ArrayList<>();
+    /**
+     * What the editor's template select offers, which is chosen, the name the formation's shape is to have (blank for
+     * none), the rule it's to meet, and whether the campaign is to keep it as a template.
+     */
+    private List<ToeTemplates.Choice> choices = List.of();
+    private @Nullable List<ToeTemplates.Rule> formationRules;
+    private int chosen;
+    private String draftName = "";
+    private @Nullable String draftRule;
+    private boolean keep;
     /** The vacant slot the picker fills, on the same layer, and the place it's narrowed to. */
     private @Nullable Filling filling;
     private int fillPlace;
@@ -304,11 +317,19 @@ final class ToeTable implements Disposable {
     private int pointerY;
 
     /**
+     * A formation's new shape, as its editor applies it: its slots, the name of the template it's shaped by and the
+     * MegaMek formation rule it's to meet, each null for none, and whether the campaign keeps that shape as a template.
+     */
+    record Shaping(int formation, List<FormationSlot> slots, @Nullable String template, @Nullable String rule,
+          boolean keep) {
+    }
+
+    /**
      * {@code leave} steps back off the table to the command post; {@code reorganize} makes the moves a drag drops,
-     * and {@code authorize} gives a formation the slots its editor sets, the force coming back changed through
+     * and {@code authorize} gives a formation the shape its editor sets, the force coming back changed through
      * {@link #refresh}.
      */
-    ToeTable(Runnable leave, Consumer<List<Move>> reorganize, BiConsumer<Integer, List<FormationSlot>> authorize) {
+    ToeTable(Runnable leave, Consumer<List<Move>> reorganize, Consumer<Shaping> authorize) {
         this.leave = leave;
         this.reorganize = reorganize;
         this.authorize = authorize;
@@ -1079,6 +1100,14 @@ final class ToeTable implements Disposable {
         editing = group;
         draft.clear();
         draft.addAll(group.slots());
+        if (formationRules == null) {
+            formationRules = ToeTemplates.rules();
+        }
+        choices = ToeTemplates.choices(snapshot == null ? List.of() : snapshot.templates(), formationRules);
+        chosen = ToeTemplates.current(choices, group);
+        draftName = group.template() == null ? "" : group.template();
+        draftRule = group.rule();
+        keep = false;
         buildEditor();
         editorLayer.setVisible(true);
         editorLayer.toFront();
@@ -1107,9 +1136,10 @@ final class ToeTable implements Disposable {
     }
 
     /**
-     * The slot editor: a row for each slot the formation is authorized, its kind and weight class each a selector, and
-     * a button that strikes it; under them, the usual strengths to shape it to, then adding one, taking the units it
-     * has now as its slots, and clearing them; then applying it.
+     * The slot editor: the template the formation is shaped by, the name its shape goes by, the formation rule it's to
+     * meet and whether the campaign keeps the shape; then a row for each slot it's authorized, its kind and weight class
+     * each a selector and a button that strikes it; under them, adding one, taking the units it has now as its slots,
+     * and clearing them; then applying it.
      */
     private void buildEditor() {
         ToeSnapshot.Group group = Objects.requireNonNull(editing);
@@ -1119,6 +1149,7 @@ final class ToeTable implements Disposable {
         Label lead = ui.label(getText("Toe.slot.lead"), "hud-body", 13, UiTheme.tokenColor("text.secondary"));
         lead.setWrap(true);
         dialog.add(lead).width(EDITOR_WIDTH).row();
+        dialog.add(templateFields()).width(EDITOR_WIDTH).padTop(space("md")).row();
         Table rows = new Table();
         rows.defaults().left().padTop(space("xs"));
         if (draft.isEmpty()) {
@@ -1148,16 +1179,6 @@ final class ToeTable implements Disposable {
             rows.add(strike).row();
         }
         dialog.add(rows).padTop(space("md")).row();
-        Table shapes = new Table();
-        shapes.add(ui.label(getText("Toe.slot.template"), "hud-body", 13, UiTheme.tokenColor("text.muted")))
-              .padRight(space("md"));
-        for (ToeSlots.Template template : ToeSlots.Template.values()) {
-            UiButton shape = ui.button("button-secondary" + UiTheme.COMPACT, null,
-                  getFormattedText("Toe.slot.template." + template.name(), template.size), null);
-            UiKit.onChange(shape, () -> shape(template));
-            shapes.add(shape).padRight(space("sm"));
-        }
-        dialog.add(shapes).padTop(space("lg")).row();
         Table tools = new Table();
         UiButton add = ui.button("button-secondary" + UiTheme.COMPACT, "add", getText("Toe.slot.add"), null);
         add.setDisabled(draft.size() >= MOST_SLOTS);
@@ -1194,16 +1215,100 @@ final class ToeTable implements Disposable {
         editorLayer.add(dialog);
     }
 
-    /** Brings the slots being edited to {@code template}'s strength, as its button in the editor does. */
-    void shape(ToeSlots.Template template) {
+    /**
+     * The editor's template fields: the select of what to shape the formation by, the name its shape goes by, the
+     * formation rule it's to meet with what that asks for, and whether the campaign keeps the shape as a template.
+     */
+    private Table templateFields() {
+        Table fields = new Table();
+        fields.defaults().left();
+        Color caption = UiTheme.tokenColor("text.muted");
+        String[] labels = choices.stream().map(ToeTable::choiceLabel).toArray(String[]::new);
+        UiSelect select = ui.tokenSelect(true, labels);
+        select.select(chosen);
+        UiKit.onChange(select, () -> choose(select.getSelectedIndex()));
+        fields.add(ui.label(getText("Toe.template.select"), "hud-body", 13, caption)).padRight(space("md"));
+        fields.add(select).growX().row();
+        UiTextField name = ui.input(draftName, true);
+        name.setMessageText(getText("Toe.template.unnamed"));
+        fields.add(ui.label(getText("Toe.template.name"), "hud-body", 13, caption)).padRight(space("md"))
+              .padTop(space("sm"));
+        fields.add(name).growX().padTop(space("sm")).row();
+        String rule = draftRule;
+        if (rule != null) {
+            Label meets = ui.label(getFormattedText("Toe.template.meets", rule), "hud-body", 13, LABEL_FORMATION);
+            fields.add(meets).colspan(2).padTop(space("sm")).row();
+            String about = ToeTemplates.description(rule);
+            if (!about.isEmpty()) {
+                Label description = ui.label(about, "hud-body", 12, UiTheme.tokenColor("text.secondary"));
+                description.setWrap(true);
+                fields.add(description).colspan(2).growX().row();
+            }
+        }
+        UiKit.Checkbox keeper = ui.checkbox(getText("Toe.template.keep"), keep, true);
+        UiKit.onChange(keeper, () -> keep = keeper.isTicked());
+        keepable(keeper);
+        UiKit.onChange(name, () -> {
+            draftName = name.getText();
+            keepable(keeper);
+        });
+        fields.add(keeper).colspan(2).padTop(space("sm")).row();
+        return fields;
+    }
+
+    /** Lets {@code keeper} be ticked only while the name could be kept as a template, clearing it otherwise. */
+    private void keepable(UiKit.Checkbox keeper) {
+        boolean can = ToeTemplates.keepable(draftName);
+        if (!can && keeper.isTicked()) {
+            keeper.ticked(false);
+            keep = false;
+        }
+        keeper.setTouchable(can ? Touchable.enabled : Touchable.disabled);
+        keeper.getColor().a = can ? 1 : 0.4f;
+    }
+
+    private static String choiceLabel(ToeTemplates.Choice choice) {
+        return switch (choice.type()) {
+            case CUSTOM -> getText("Toe.template.custom");
+            case STANDARD, KEPT -> {
+                FormationTemplate template = Objects.requireNonNull(choice.template());
+                yield getFormattedText(choice.rule() == null ? "Toe.template.sized" : "Toe.template.sizedRule",
+                      choice.label(), template.size(), choice.rule());
+            }
+            case RULE -> getFormattedText("Toe.template.rule", choice.label());
+        };
+    }
+
+    /**
+     * Shapes the formation being edited by the editor's {@code index}th choice, as choosing it in the select does: its
+     * slots, then the name it goes by and the rule it's to meet; custom keeps the name and meets no rule.
+     */
+    void choose(int index) {
         ToeSnapshot.Group group = editing;
-        if (group == null) {
+        if (group == null || index < 0 || index >= choices.size()) {
             return;
         }
-        List<FormationSlot> shaped = ToeSlots.template(template, draft, group.units());
+        chosen = index;
+        ToeTemplates.Choice choice = choices.get(index);
+        List<FormationSlot> shaped = ToeTemplates.slots(choice, draft, group.units());
         draft.clear();
-        draft.addAll(shaped);
+        draft.addAll(shaped.subList(0, Math.min(shaped.size(), MOST_SLOTS)));
+        if (choice.type() != ToeTemplates.Type.CUSTOM) {
+            draftName = choice.name();
+        }
+        draftRule = choice.rule();
+        keep = keep && ToeTemplates.keepable(draftName);
         buildEditorLater();
+    }
+
+    /** The index of the editor's choice that reads {@code label} in its select, -1 if none does; for the demo. */
+    int choice(String label) {
+        for (int i = 0; i < choices.size(); i++) {
+            if (choiceLabel(choices.get(i)).equals(label) || choices.get(i).name().equals(label)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /** Builds the editor again once the event that changed it is done with its buttons. */
@@ -1220,9 +1325,14 @@ final class ToeTable implements Disposable {
         if (group == null) {
             return;
         }
-        authorize.accept(group.id(), List.copyOf(draft));
-        notice(getFormattedText(draft.isEmpty() ? "Toe.slot.cleared" : "Toe.slot.applied", group.name(),
-              draft.size()));
+        String name = draftName.isBlank() ? null : draftName.strip();
+        String rule = draftRule;
+        String template = name == null ? rule : name;
+        boolean kept = keep && ToeTemplates.keepable(template);
+        authorize.accept(new Shaping(group.id(), List.copyOf(draft), template, template == null ? null : rule, kept));
+        notice(kept ? getFormattedText("Toe.template.kept", group.name(), template)
+              : getFormattedText(draft.isEmpty() ? "Toe.slot.cleared" : "Toe.slot.applied", group.name(),
+                    draft.size()));
         closeEditor();
     }
 
@@ -1440,6 +1550,11 @@ final class ToeTable implements Disposable {
                     return false;
                 }
                 if (modal()) {
+                    // The editor's lists take keys first, so Escape closes an open list before the editor
+                    boolean typing = stage.getKeyboardFocus() instanceof TextField;
+                    if (!(typing && keycode == Input.Keys.ESCAPE) && stage.keyDown(keycode)) {
+                        return true;
+                    }
                     if (keycode == Input.Keys.ESCAPE) {
                         closeEditor();
                         return true;
@@ -1486,6 +1601,16 @@ final class ToeTable implements Disposable {
             }
         };
         InputProcessor controls = new InputAdapter() {
+            @Override
+            public boolean keyUp(int keycode) {
+                return shown && modal() && stage.keyUp(keycode);
+            }
+
+            @Override
+            public boolean keyTyped(char character) {
+                return shown && modal() && stage.keyTyped(character);
+            }
+
             @Override
             public boolean touchDown(int screenX, int screenY, int pointer, int button) {
                 return shown && stage.touchDown(screenX, screenY, pointer, button);

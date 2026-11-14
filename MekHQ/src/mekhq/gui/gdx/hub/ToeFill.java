@@ -118,8 +118,7 @@ final class ToeFill {
         }
         List<Card> rest = new ArrayList<>(from.units());
         rest.removeIf(unit -> unit.id().equals(card.id()));
-        Group without = new Group(from.id(), from.name(), from.icon(), from.children(), rest, from.deployed(),
-              from.slots(), from.echelon());
+        Group without = from.with(from.children(), rest);
         return ToeSlots.of(without).vacant().size() > ToeSlots.of(from).vacant().size();
     }
 

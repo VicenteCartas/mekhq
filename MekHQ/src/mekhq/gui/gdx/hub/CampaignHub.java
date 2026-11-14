@@ -82,7 +82,7 @@ import mekhq.campaign.events.scenarios.ScenarioEvent;
 import mekhq.campaign.events.scenarios.ScenarioResolvedEvent;
 import mekhq.campaign.events.units.UnitEvent;
 import mekhq.campaign.force.Formation;
-import mekhq.campaign.force.FormationSlot;
+import mekhq.campaign.force.FormationTemplate;
 import mekhq.campaign.force.PlayerForce;
 import mekhq.campaign.mission.contract.AbstractContract;
 import mekhq.campaign.unit.Unit;
@@ -453,13 +453,24 @@ public final class CampaignHub implements GpuHost.Scene, HubScreen.Hub {
     }
 
     @Override
-    public void authorize(int formation, List<FormationSlot> slots) {
+    public void authorize(ToeTable.Shaping shaping) {
         session.dispatch(current -> {
-            Formation authorized = current.getPlayerForce().getFormation(formation);
-            if (authorized != null) {
-                authorized.setSlots(slots);
-                MekHQ.triggerEvent(new OrganizationChangedEvent(authorized));
+            Formation authorized = current.getPlayerForce().getFormation(shaping.formation());
+            if (authorized == null) {
+                return;
             }
+            if (shaping.template() == null) {
+                authorized.applyTemplate(null);
+                authorized.setSlots(shaping.slots());
+            } else {
+                FormationTemplate template = new FormationTemplate(shaping.template(), shaping.slots(),
+                      shaping.rule());
+                authorized.applyTemplate(template);
+                if (shaping.keep()) {
+                    current.getPlayerForce().getFormationTemplates().save(template);
+                }
+            }
+            MekHQ.triggerEvent(new OrganizationChangedEvent(authorized));
         });
     }
 

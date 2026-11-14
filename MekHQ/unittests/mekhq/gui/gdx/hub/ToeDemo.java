@@ -59,6 +59,7 @@ import megamek.client.ui.gdx.UiKit;
 import megamek.client.ui.gdx.UiTheme;
 import megamek.common.Configuration;
 import mekhq.campaign.force.FormationSlot;
+import mekhq.campaign.force.FormationTemplate;
 import mekhq.gui.gdx.hub.ToeLayout.Block;
 import mekhq.gui.gdx.hub.ToeLayout.Slot;
 import mekhq.gui.gdx.hub.ToeLayout.Vacancy;
@@ -141,9 +142,14 @@ public final class ToeDemo {
                 table = new ToeTable(() -> Gdx.app.exit(), moves -> {
                     current = ToeMoves.applied(current, moves);
                     table.refresh(current);
-                }, (formation, slots) -> {
-                    current = new ToeSnapshot(current.force(), authorized(current.root(), formation, slots),
-                          current.unassigned(), current.bases());
+                }, shaping -> {
+                    List<FormationTemplate> kept = new ArrayList<>(current.templates());
+                    if (shaping.keep()) {
+                        kept.removeIf(template -> template.name().equalsIgnoreCase(shaping.template()));
+                        kept.add(new FormationTemplate(shaping.template(), shaping.slots(), shaping.rule()));
+                    }
+                    current = new ToeSnapshot(current.force(), authorized(current.root(), shaping), current.unassigned(),
+                          current.bases(), kept, current.summaries());
                     table.refresh(current);
                 });
                 table.create(ui, 1);
@@ -318,10 +324,13 @@ public final class ToeDemo {
                         }
                     }
                     case 1995 -> shot(prefix + "slotEditor");
-                    case 1996 -> table.shape(ToeSlots.Template.LEVEL_II);
+                    case 1996 -> table.choose(table.choice("Level II"));
                     case 1999 -> shot(prefix + "slotTemplate");
+                    // Then the Recon rule: what it asks for under its name, the slots kept as they were
+                    case 2000 -> table.choose(table.choice("Recon"));
+                    case 2003 -> shot(prefix + "slotRule");
                     // Closes the editor and clicks the vacant slot instead: the picker, then the first unit it offers
-                    case 2000 -> table.input().keyDown(Input.Keys.ESCAPE);
+                    case 2004 -> table.input().keyDown(Input.Keys.ESCAPE);
                     case 2005 -> {
                         Vacancy vacancy = slotted == null ? null : vacancyNear(slotted);
                         if (vacancy != null) {
@@ -563,8 +572,19 @@ public final class ToeDemo {
               Crew.NONE, false, false, 0));
         unassigned.add(card(VEHICLES[2], "vehicles/" + VEHICLES[2], Kind.VEHICLE, VEHICLE_TONS[2], 3, "",
               Condition.INOPERABLE, Work.REPAIR, Crew.NONE, false, false, 0));
-        return new ToeSnapshot("Ashfall Lancers", root, unassigned, List.of("Kestrel Station", "Corvin Yards"));
+        return new ToeSnapshot("Ashfall Lancers", root, unassigned, List.of("Kestrel Station", "Corvin Yards"),
+              KEPT, Map.of());
     }
+
+    /** The templates the demo's campaigns keep: a player's own mixed lance, and a recon lance meant to meet its rule. */
+    private static final List<FormationTemplate> KEPT = List.of(
+          new FormationTemplate("Ball of Death", List.of(new FormationSlot(FormationSlot.Kind.MEK,
+                FormationSlot.Weight.ASSAULT), new FormationSlot(FormationSlot.Kind.VEHICLE, FormationSlot.Weight.ANY),
+                new FormationSlot(FormationSlot.Kind.AEROSPACE, FormationSlot.Weight.ANY)), null),
+          new FormationTemplate("Scout Lance", List.of(new FormationSlot(FormationSlot.Kind.MEK,
+                FormationSlot.Weight.LIGHT), new FormationSlot(FormationSlot.Kind.MEK, FormationSlot.Weight.LIGHT),
+                new FormationSlot(FormationSlot.Kind.MEK, FormationSlot.Weight.MEDIUM),
+                new FormationSlot(FormationSlot.Kind.MEK, FormationSlot.Weight.MEDIUM)), "Recon"));
 
     /** A lone mercenary company: three lances, a lance short of pilots, and a pair of spare Meks. */
     static ToeSnapshot company(Random random) {
@@ -585,7 +605,7 @@ public final class ToeDemo {
                     false, false, 0),
               card(MEKS[16], "meks/" + MEKS[16], Kind.MEK, MEK_TONS[16], 0, "", Condition.SOUND, Work.MOTHBALLED,
                     Crew.NONE, false, false, 0));
-        return new ToeSnapshot("Voss's Raiders", root, unassigned, List.of());
+        return new ToeSnapshot("Voss's Raiders", root, unassigned, List.of(), KEPT, Map.of());
     }
 
     /** The slots {@code units} fill exactly, then {@code more}, left vacant. */
@@ -609,11 +629,12 @@ public final class ToeDemo {
         return Collections.nCopies(count, new FormationSlot(kind, FormationSlot.Weight.ANY));
     }
 
-    /** {@code group} and everything under it, formation {@code id} authorized {@code slots}. */
-    private static Group authorized(Group group, int id, List<FormationSlot> slots) {
-        List<Group> children = group.children().stream().map(child -> authorized(child, id, slots)).toList();
-        return new Group(group.id(), group.name(), group.icon(), children, group.units(), group.deployed(),
-              group.id() == id ? slots : group.slots(), group.echelon());
+    /** {@code group} and everything under it, the formation {@code shaping} is for shaped by it. */
+    private static Group authorized(Group group, ToeTable.Shaping shaping) {
+        List<Group> children = group.children().stream().map(child -> authorized(child, shaping)).toList();
+        Group under = group.with(children, group.units());
+        return group.id() == shaping.formation() ? under.shaped(shaping.slots(), shaping.template(), shaping.rule())
+              : under;
     }
 
     private static List<Card> meks(Random random, int count, int camo, int place, boolean deployed,

@@ -290,7 +290,7 @@ final class ToeMoves {
                 unassigned.addAll(carried);
             }
             Group root = rebuilt(snapshot.root(), moving, carried, move.into(), -1, UNASSIGNED, null);
-            return new ToeSnapshot(snapshot.force(), root, unassigned, snapshot.bases());
+            return snapshot.with(root, unassigned);
         }
         Group formation = new ToeMoves(snapshot).group(move.formation());
         if (formation == null) {
@@ -298,7 +298,7 @@ final class ToeMoves {
         }
         Group root = rebuilt(snapshot.root(), Set.of(), List.of(), UNASSIGNED, move.formation(), move.into(),
               formation);
-        return new ToeSnapshot(snapshot.force(), root, snapshot.unassigned(), snapshot.bases());
+        return snapshot.with(root, snapshot.unassigned());
     }
 
     /**
@@ -325,7 +325,6 @@ final class ToeMoves {
         if (group.id() == into) {
             units.addAll(carried);
         }
-        return new Group(group.id(), group.name(), group.icon(), children, units, group.deployed(), group.slots(),
-              group.echelon());
+        return group.with(children, units);
     }
 }

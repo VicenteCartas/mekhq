@@ -69,17 +69,6 @@ final class ToeSlots {
         MISFITS
     }
 
-    /** A formation's usual strength as the Inner Sphere, the Clans and ComStar count it. */
-    enum Template {
-        LANCE(FormationTemplate.LANCE), STAR(FormationTemplate.STAR), LEVEL_II(FormationTemplate.LEVEL_II);
-
-        final int size;
-
-        Template(FormationTemplate model) {
-            size = model.size();
-        }
-    }
-
     private ToeSlots() {
     }
 
@@ -88,11 +77,12 @@ final class ToeSlots {
      * lance of lights and mediums made a star keeps them, and any more are for whichever kind most of {@code slots}
      * are, else most of {@code units}, else Meks, of any weight.
      */
-    static List<FormationSlot> template(Template template, List<FormationSlot> slots, List<Card> units) {
-        List<FormationSlot> shaped = new ArrayList<>(slots.subList(0, Math.min(slots.size(), template.size)));
+    static List<FormationSlot> template(FormationTemplate template, List<FormationSlot> slots, List<Card> units) {
+        int size = template.size();
+        List<FormationSlot> shaped = new ArrayList<>(slots.subList(0, Math.min(slots.size(), size)));
         FormationSlot more = new FormationSlot(mostly(slots.isEmpty() ? units.stream().map(Card::fit).toList()
               : slots), FormationSlot.Weight.ANY);
-        while (shaped.size() < template.size) {
+        while (shaped.size() < size) {
             shaped.add(more);
         }
         return List.copyOf(shaped);
