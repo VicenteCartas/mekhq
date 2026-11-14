@@ -168,8 +168,8 @@ public final class ToeDemo {
                 switch (frames) {
                     case 20 -> shot(prefix + "rising");
                     case 150 -> shot(prefix + "overview");
-                    // Zooms in on the middle, the counters taking over from the tiles
-                    case 160 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, -9);
+                    // Steps in on the middle twice, from where it opened
+                    case 160 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, -1);
                     case 260 -> {
                         Slot slot = slotNear();
                         if (slot != null) {
@@ -178,7 +178,7 @@ public final class ToeDemo {
                         }
                     }
                     case 270 -> shot(prefix + "close");
-                    case 280 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, -6);
+                    case 280 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, -1);
                     case 380 -> shot(prefix + "closer");
                     case 390 -> table.input().keyDown(Input.Keys.HOME);
                     case 400 -> table.narrow(2);
@@ -190,18 +190,19 @@ public final class ToeDemo {
                     case 720 -> shot(prefix + "formationLabels");
                     case 725 -> table.input().keyDown(Input.Keys.L);
                     case 735 -> shot(prefix + "noLabels");
-                    // Zooms all the way in, then steps out, formations folding into cards a level at a time
+                    // Steps all the way out, then in a step at a time, each opening the next tier of formations
                     case 740 -> table.input().keyDown(Input.Keys.L);
-                    case 745 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, -10);
+                    case 745 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, 10);
                     case 860 -> shot(prefix + "fold0");
-                    case 865 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, 4);
+                    case 865 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, -1);
                     case 960 -> shot(prefix + "fold1");
-                    case 965 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, 4);
+                    case 965 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, -1);
                     case 1060 -> shot(prefix + "fold2");
-                    case 1065 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, 4);
+                    case 1065 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, -1);
                     case 1160 -> shot(prefix + "fold3");
-                    case 1165 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, 4);
-                    case 1260 -> shot(prefix + "fold4");
+                    // Back home, the force on its top formations' cards, and opens one
+                    case 1165 -> table.input().keyDown(Input.Keys.HOME);
+                    case 1260 -> shot(prefix + "home");
                     case 1265 -> {
                         pointed = cardNear();
                         if (pointed != null) {
@@ -218,9 +219,9 @@ public final class ToeDemo {
                         }
                     }
                     case 1380 -> shot(prefix + "cardOpened");
-                    // Zooms in until the units show, carries one over the formations it may go to and one it may
+                    // Steps in until the units show, carries one over the formations it may go to and one it may
                     // not, then drops it
-                    case 1385 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, -5);
+                    case 1385 -> zoom(Gdx.graphics.getWidth() / 2, Gdx.graphics.getHeight() / 2, -10);
                     case 1480 -> {
                         carried = slotNear();
                         if (carried != null) {
@@ -262,7 +263,7 @@ public final class ToeDemo {
                         Block lacking = shortNear();
                         if (lacking != null) {
                             slotted = table.onScreen(lacking);
-                            zoom(Math.round(slotted.x), Math.round(slotted.y), lacking.card() ? -7 : -4);
+                            zoom(Math.round(slotted.x), Math.round(slotted.y), -10);
                         }
                     }
                     case 1830 -> {

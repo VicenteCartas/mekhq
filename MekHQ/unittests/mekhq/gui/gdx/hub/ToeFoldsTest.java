@@ -32,7 +32,6 @@
  */
 package mekhq.gui.gdx.hub;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -41,50 +40,69 @@ import mekhq.gui.gdx.hub.ToeSnapshot.Group;
 import org.junit.jupiter.api.Test;
 
 class ToeFoldsTest {
-    private static final float EPSILON = 1e-4f;
-    private static final float COMPANY = ToeFolds.STEP * ToeFolds.UNITS_FOLD;
-    private static final float BATTALION = ToeFolds.STEP * COMPANY;
-
     @Test
-    void eachFormationFoldsAStepAfterTheLastOfWhatsUnderIt() {
+    void eachStepInOpensTheNextTierOfTheTree() {
         ToeSnapshot snapshot = ToeLayoutTest.regiment();
         ToeFolds folds = new ToeFolds(snapshot);
         Group battalion = snapshot.root().children().get(0);
         Group company = battalion.children().get(0);
         Group lance = company.children().get(0);
-        Group replacements = snapshot.root().children().get(2);
 
-        assertEquals(ToeFolds.UNITS_FOLD, folds.threshold(lance.id()), EPSILON);
-        assertEquals(COMPANY, folds.threshold(company.id()), EPSILON);
-        assertEquals(ToeFolds.UNITS_FOLD, folds.threshold(ToeFolds.attached(company.id())), EPSILON);
-        assertEquals(BATTALION, folds.threshold(battalion.id()), EPSILON);
-        assertEquals(ToeFolds.UNITS_FOLD, folds.threshold(replacements.id()), EPSILON);
-        assertEquals(ToeFolds.UNITS_FOLD, folds.threshold(ToeFolds.UNASSIGNED), EPSILON);
-        assertEquals(0, folds.threshold(snapshot.root().id()), "the force itself never folds");
+        assertEquals(5, folds.steps(), "battalions, companies, lances, then the units, then close in");
+        assertEquals(0, folds.step());
+        assertTrue(folds.folded(battalion.id()));
+        assertFalse(folds.folded(snapshot.root().id()), "the force itself never folds");
+
+        folds.step(1);
+        assertFalse(folds.folded(battalion.id()));
+        assertTrue(folds.folded(company.id()));
+
+        folds.step(2);
+        assertFalse(folds.folded(company.id()));
+        assertTrue(folds.folded(lance.id()));
+        assertTrue(folds.folded(ToeFolds.attached(company.id())));
+
+        folds.step(folds.unitsStep());
+        assertTrue(folds.units());
+        assertFalse(folds.folded(lance.id()));
+        assertFalse(folds.folded(ToeFolds.attached(company.id())));
+        assertFalse(folds.folded(ToeFolds.UNASSIGNED));
     }
 
     @Test
-    void theZoomMustGoWellPastAFoldToFoldOrOpen() {
+    void whatHoldsOnlyUnitsStaysACardUntilTheUnitsShow() {
         ToeSnapshot snapshot = ToeLayoutTest.regiment();
-        int lance = snapshot.root().children().get(0).children().get(0).children().get(0).id();
         ToeFolds folds = new ToeFolds(snapshot);
-        folds.reset(40);
+        Group replacements = snapshot.root().children().get(2);
+        folds.step(folds.unitsStep() - 1);
 
-        assertFalse(folds.update(ToeFolds.UNITS_FOLD - 1), "just under the fold");
-        assertFalse(folds.folded(lance));
-        assertTrue(folds.update(ToeFolds.UNITS_FOLD / ToeFolds.HYSTERESIS - 0.1f));
-        assertTrue(folds.folded(lance));
-        assertFalse(folds.update(ToeFolds.UNITS_FOLD + 1), "just over the fold");
-        assertTrue(folds.folded(lance));
-        assertTrue(folds.update(ToeFolds.UNITS_FOLD * ToeFolds.HYSTERESIS + 0.1f));
-        assertFalse(folds.folded(lance));
+        assertTrue(folds.folded(replacements.id()), "a formation with none under it, a tier up");
+        assertTrue(folds.folded(ToeFolds.UNASSIGNED));
+        assertEquals(folds.unitsStep(), folds.opening(replacements.id()));
+        assertEquals(folds.unitsStep(), folds.opening(ToeFolds.UNASSIGNED));
     }
 
     @Test
-    void stepsRunFromClosestInToFarthestOut() {
+    void aCardOpensAtTheStepOfItsTier() {
+        ToeSnapshot snapshot = ToeLayoutTest.regiment();
+        ToeFolds folds = new ToeFolds(snapshot);
+        Group battalion = snapshot.root().children().get(0);
+
+        assertEquals(1, folds.opening(battalion.id()));
+        assertEquals(2, folds.opening(battalion.children().get(0).id()));
+        assertEquals(0, folds.opening(12345), "off the table, it stays where it is");
+    }
+
+    @Test
+    void theStepsStopAtEitherEndAndSnapTheScale() {
         ToeFolds folds = new ToeFolds(ToeLayoutTest.regiment());
 
-        assertArrayEquals(new float[] { ToeFolds.UNITS_FOLD, COMPANY, BATTALION }, folds.steps(), EPSILON);
-        assertEquals(BATTALION, folds.lowest(), EPSILON);
+        assertFalse(folds.step(-1));
+        assertEquals(0, folds.step());
+        assertTrue(folds.step(99));
+        assertEquals(folds.steps() - 1, folds.step());
+        assertEquals(ToeFolds.CLOSE_PIXELS, folds.cellPixels());
+        assertEquals(ToeFolds.UNITS_PIXELS, folds.cellPixels(folds.unitsStep()));
+        assertEquals(ToeFolds.CARDS_PIXELS, folds.cellPixels(0));
     }
 }

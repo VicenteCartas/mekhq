@@ -36,47 +36,47 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
 
 import mekhq.gui.gdx.hub.ToeSnapshot.Group;
 
 /**
- * Which formations the TO&amp;E table folds into cards at a zoom. Zooming out, a formation's units grow too small to
- * read, so it folds into a card that sums them up; further out its parent folds in turn, and so on up the tree the
- * player built, whatever its formations are called. The force itself never folds.
+ * The TO&amp;E table's zoom steps, and what each folds into cards. The zoom snaps from step to step rather than
+ * gliding: farthest out, the force with the formations right under it folded into cards; each step in opens the next
+ * tier of the tree the player built, whatever its formations are called; then every unit on its counter; and last
+ * the same again, closer. Every formation as deep in the tree folds and opens together, so a step reads the same
+ * across the whole force.
  *
- * <p>Each formation folds below its own number of pixels to a cell: one holding only units below
- * {@link #UNITS_FOLD}, one over others a step below the last of them to fold, so its parts have all folded first.
- * It folds a little under that and opens a little over, so it doesn't flicker as the zoom eases in. A formation
- * with units of its own as well as others under it folds those units apart, into a card of their own
- * ({@link #attached}).</p>
+ * <p>A formation with none under it holds only units, so it stays a card until the units show, as do the units of a
+ * formation with others under it as well, folded apart into a card of their own ({@link #attached}), and the units
+ * in no formation. The force itself never folds.</p>
  *
- * <p>Plain Java, so it can be tested without GL.</p>
+ * <p>Each step has its own scale, so everything on the table is drawn at one size on screen there, whatever the
+ * force. Plain Java, so it can be tested without GL.</p>
  */
 final class ToeFolds {
-    /** How many pixels a cell takes on screen below which a formation holding only units folds. */
-    static final float UNITS_FOLD = 34;
-    /** How far below the first of its children to fold a formation folds. */
-    static final float STEP = 0.8f;
-    /** How far past its fold the zoom must go to fold or open a formation. */
-    static final float HYSTERESIS = 1.06f;
+    /** How many of the interface's pixels a cell takes at the steps with formations folded. */
+    static final float CARDS_PIXELS = 44;
+    /** How many of the interface's pixels a cell takes at the step with every unit out. */
+    static final float UNITS_PIXELS = 44;
+    /** How many of the interface's pixels a cell takes at the closest step. */
+    static final float CLOSE_PIXELS = 72;
     /** The key of the units in no formation. */
     static final int UNASSIGNED = -1;
 
-    private final Map<Integer, Float> thresholds = new HashMap<>();
-    private final Set<Integer> folded = new HashSet<>();
+    /** How deep in the tree what each key shows stands, the force 0. */
+    private final Map<Integer, Integer> depths = new HashMap<>();
+    /** The keys that hold only units, which stay cards until the units show. */
+    private final Set<Integer> leaves = new HashSet<>();
+    /** How many tiers of formations stand under the force. */
+    private int tiers;
+    private int step;
 
-    /** The folds for {@code snapshot}'s tree; nothing folded yet. */
+    /** The steps for {@code snapshot}'s tree, at the farthest out. */
     ToeFolds(ToeSnapshot snapshot) {
-        Group root = snapshot.root();
-        if (!root.units().isEmpty() && !root.children().isEmpty()) {
-            thresholds.put(attached(root.id()), UNITS_FOLD);
-        }
-        for (Group child : root.children()) {
-            threshold(child);
-        }
+        walk(snapshot.root(), 0);
         if (!snapshot.unassigned().isEmpty()) {
-            thresholds.put(UNASSIGNED, UNITS_FOLD);
+            depths.put(UNASSIGNED, 1);
+            leaves.add(UNASSIGNED);
         }
     }
 
@@ -85,70 +85,73 @@ final class ToeFolds {
         return -2 - id;
     }
 
-    private float threshold(Group group) {
-        float last = Float.MAX_VALUE;
-        if (!group.units().isEmpty() && !group.children().isEmpty()) {
-            thresholds.put(attached(group.id()), UNITS_FOLD);
-            last = UNITS_FOLD;
+    private void walk(Group group, int depth) {
+        depths.put(group.id(), depth);
+        tiers = Math.max(tiers, depth);
+        if (group.children().isEmpty()) {
+            if (depth > 0) {
+                leaves.add(group.id());
+            }
+            return;
+        }
+        if (!group.units().isEmpty()) {
+            depths.put(attached(group.id()), depth + 1);
+            leaves.add(attached(group.id()));
         }
         for (Group child : group.children()) {
-            last = Math.min(last, threshold(child));
+            walk(child, depth + 1);
         }
-        float threshold = group.children().isEmpty() ? UNITS_FOLD : STEP * last;
-        thresholds.put(group.id(), threshold);
-        return threshold;
     }
 
-    /** Whether the formation or card keyed {@code key} is folded. */
+    /** How many steps there are: one for each tier of formations, then the units, then close in. */
+    int steps() {
+        return tiers + 2;
+    }
+
+    /** The step it's at: 0 the farthest out, {@link #unitsStep} where the units show. */
+    int step() {
+        return step;
+    }
+
+    /** Goes to step {@code to}, kept within those there are; whether that's a different step. */
+    boolean step(int to) {
+        int was = step;
+        step = Math.max(0, Math.min(to, steps() - 1));
+        return step != was;
+    }
+
+    /** The first step every unit shows at, nothing folded. */
+    int unitsStep() {
+        return tiers;
+    }
+
+    /** Whether every unit shows, nothing folded. */
+    boolean units() {
+        return step >= tiers;
+    }
+
+    /** How many of the interface's pixels a cell takes at the step it's at. */
+    float cellPixels() {
+        return cellPixels(step);
+    }
+
+    /** How many of the interface's pixels a cell takes at step {@code at}. */
+    float cellPixels(int at) {
+        return at < tiers ? CARDS_PIXELS : at == tiers ? UNITS_PIXELS : CLOSE_PIXELS;
+    }
+
+    /** Whether the formation or card keyed {@code key} is folded at the step it's at. */
     boolean folded(int key) {
-        return folded.contains(key);
+        Integer depth = depths.get(key);
+        return depth != null && !units() && (leaves.contains(key) || depth > step);
     }
 
-    /** The pixels to a cell below which {@code key} folds; 0 if it never does. */
-    float threshold(int key) {
-        return thresholds.getOrDefault(key, 0f);
-    }
-
-    /** Folds exactly what folds at {@code cellPixels}, with no allowance either way. */
-    void reset(float cellPixels) {
-        folded.clear();
-        for (Map.Entry<Integer, Float> entry : thresholds.entrySet()) {
-            if (cellPixels < entry.getValue()) {
-                folded.add(entry.getKey());
-            }
+    /** The farthest-out step at which what's keyed {@code key} is open; the step it's at if it's not on the table. */
+    int opening(int key) {
+        Integer depth = depths.get(key);
+        if (depth == null) {
+            return step;
         }
-    }
-
-    /** Folds and opens what the zoom has gone well past at {@code cellPixels}; whether anything changed. */
-    boolean update(float cellPixels) {
-        boolean changed = false;
-        for (Map.Entry<Integer, Float> entry : thresholds.entrySet()) {
-            int key = entry.getKey();
-            float threshold = entry.getValue();
-            if (folded.contains(key) ? cellPixels > threshold * HYSTERESIS : cellPixels < threshold / HYSTERESIS) {
-                changed |= folded.contains(key) ? folded.remove(key) : folded.add(key);
-            }
-        }
-        return changed;
-    }
-
-    /** Every zoom something folds at, from the closest in to the farthest out. */
-    float[] steps() {
-        TreeSet<Float> distinct = new TreeSet<>(thresholds.values());
-        float[] steps = new float[distinct.size()];
-        int i = steps.length;
-        for (float threshold : distinct) {
-            steps[--i] = threshold;
-        }
-        return steps;
-    }
-
-    /** The farthest-out zoom anything folds at short of the force itself: where everything is folded. */
-    float lowest() {
-        float lowest = Float.MAX_VALUE;
-        for (float threshold : thresholds.values()) {
-            lowest = Math.min(lowest, threshold);
-        }
-        return lowest == Float.MAX_VALUE ? UNITS_FOLD : lowest;
+        return leaves.contains(key) ? tiers : depth;
     }
 }

@@ -199,6 +199,7 @@ final class ToeTable implements Disposable {
     private final List<Pin> pinned = new ArrayList<>();
     private final List<Ghost> ghosts = new ArrayList<>();
     private final List<Rectangle> placedLabels = new ArrayList<>();
+    private final Vector2 corner = new Vector2();
     private final Rectangle labelProbe = new Rectangle();
     private final Table root = new Table();
     private final Vector3 at = new Vector3();
@@ -261,6 +262,7 @@ final class ToeTable implements Disposable {
         this.ui = ui;
         this.scale = scale;
         view.create();
+        view.onZoom(this::zoomStep);
         stage = new Stage(new ScreenViewport());
         pins.setTouchable(Touchable.disabled);
         stage.addActor(pins);
@@ -274,7 +276,7 @@ final class ToeTable implements Disposable {
         Table top = new Table();
         top.add(header).top().left().expandX();
         UiButton home = ui.button("hud-utility", "locate", getText("Toe.home"), null);
-        UiKit.onChange(home, () -> frameShown(false, false));
+        UiKit.onChange(home, this::home);
         top.add(home).top().right().padRight(space("sm"));
         labelsButton = ui.button("hud-utility", "tag", labels.text(), null);
         UiKit.onChange(labelsButton, this::cycleLabels);
@@ -517,6 +519,7 @@ final class ToeTable implements Disposable {
 
     private void show(ToeSnapshot shown, boolean opening) {
         String previous = placeIndex < places.size() ? places.get(placeIndex).name() : null;
+        int step = folds == null ? 0 : folds.step();
         snapshot = shown;
         force.setText(shown.force());
         folds = new ToeFolds(shown);
@@ -543,11 +546,10 @@ final class ToeTable implements Disposable {
             tabs.add(segments);
         }
         view.filter(places.get(placeIndex).units());
-        farthest();
         if (opening) {
             frameShown(true, true);
         } else {
-            folds.reset(view.wantCellPixels());
+            folds.step(step);
             relayout(false);
         }
         strength(shown);
@@ -568,63 +570,64 @@ final class ToeTable implements Disposable {
         return ToeLayout.of(Objects.requireNonNull(snapshot), getText("Toe.unassigned"), folded);
     }
 
-    /** Lets the camera back off far enough to take everything in folded as far as it goes, and a little more. */
-    private void farthest() {
-        if (folds == null) {
-            return;
-        }
-        folds.reset(0);
-        float[] most = layoutOf(folds).bounds();
-        view.farthest(Math.max(12, Math.max(1.4f * view.fitDistance(most),
-              view.distanceFor(0.8f * folds.lowest()))));
-    }
-
     /**
-     * Frames what's lit, folded as little as lets it all in: from nothing folded to everything, the first way of
-     * folding it whose framing is close enough in for it to be folded so; jumps there {@code now}, or glides.
+     * Frames what's lit at the closest step it all fits on screen at, up to every unit out; at the farthest step if
+     * nothing does. Jumps there {@code now}, or glides.
      */
     private void frameShown(boolean now, boolean opening) {
         if (snapshot == null || folds == null) {
             return;
         }
-        Predicate<Card> lit = places.isEmpty() ? null : places.get(placeIndex).units();
-        float[] steps = folds.steps();
-        float upper = Float.MAX_VALUE;
-        float lower = 0;
-        float cell = 0;
         float[] framed = null;
-        for (int i = 0; i <= steps.length; i++) {
-            lower = i < steps.length ? steps[i] : 0;
-            folds.reset(lower);
-            ToeLayout folded = layoutOf(folds);
-            float[] bounds = lit == null ? null : folded.bounds(lit);
-            bounds = bounds == null ? folded.bounds() : bounds;
-            float fit = view.fitCellPixels(bounds);
-            if (fit >= lower) {
-                // Kept folded just past the next fold, short of where the hysteresis opens it
-                cell = Math.max(lower, Math.min(fit, upper * 1.04f));
-                framed = bounds;
+        for (int step = folds.unitsStep(); step >= 0; step--) {
+            folds.step(step);
+            framed = litBounds(layoutOf(folds));
+            if (view.fitCellPixels(framed) >= folds.cellPixels() * scale) {
                 break;
             }
-            upper = lower;
         }
-        folds.reset(lower);
         relayout(opening);
-        view.frame(Objects.requireNonNull(framed), cell, now);
+        view.frame(Objects.requireNonNull(framed), folds.cellPixels() * scale, now);
     }
 
-    /** Opens the folded formation {@code card} one level, gliding in on it as it opens. */
+    /** Glides back out to the farthest step, the whole force on its top formations' cards. */
+    private void home() {
+        if (snapshot == null || folds == null) {
+            return;
+        }
+        folds.step(0);
+        relayout(false);
+        view.frame(litBounds(Objects.requireNonNull(layout)), folds.cellPixels() * scale, false);
+    }
+
+    /** The extent of what's lit at the place looked at in {@code folded}, or of all of it if nothing is. */
+    private float[] litBounds(ToeLayout folded) {
+        Predicate<Card> lit = places.isEmpty() ? null : places.get(placeIndex).units();
+        float[] bounds = lit == null ? null : folded.bounds(lit);
+        return bounds == null ? folded.bounds() : bounds;
+    }
+
+    /** Zooms {@code out} steps out, or in when negative, as far as there are steps; see {@link ToeFolds}. */
+    private void zoomStep(int out) {
+        if (folds == null || !folds.step(folds.step() - out)) {
+            return;
+        }
+        relayout(false);
+        view.zoomTo(folds.cellPixels() * scale);
+    }
+
+    /** Opens the folded formation {@code card}, at the step it opens at, gliding in on it as it opens. */
     private void openCard(Block card) {
         if (folds == null || layout == null) {
             return;
         }
-        float cell = folds.threshold(card.key()) * 1.15f;
-        folds.reset(cell);
+        folds.step(folds.opening(card.key()));
         relayout(false);
         Block opened = layout.holder(card.key());
         float[] at = opened == null ? null : layout.reach(opened.key());
         view.frame(at != null ? at
-              : new float[] { card.x(), card.z(), card.x() + card.width(), card.z() + card.depth() }, cell, false);
+                    : new float[] { card.x(), card.z(), card.x() + card.width(), card.z() + card.depth() },
+              folds.cellPixels() * scale, false);
     }
 
     /** The places to narrow the table to: all of it, then, if the force is spread out, each place it's at. */
@@ -749,7 +752,7 @@ final class ToeTable implements Disposable {
             Color countTone = srgb(ToeView.readiness(lit.isEmpty() ? 1 : ready / (float) lit.size()));
             Pin pin;
             if (block.card()) {
-                Table plate = plate(LABEL_FORMATION);
+                Table plate = plate(LABEL_FORMATION, true);
                 Label name = ui.label(UiTheme.upper(block.name()), "hud-button", 12, LABEL_INK);
                 name.setEllipsis(true);
                 float nameWide = name.getPrefWidth();
@@ -763,7 +766,7 @@ final class ToeTable implements Disposable {
                 pins.addActor(compact);
                 pin = new Pin(plate, block, null, nameCell, nameWide, plate.getWidth() - nameWide, badges, compact);
             } else {
-                Table chip = pin(block.name(), LABEL_FORMATION, count, countTone);
+                Table chip = pin(block.name(), LABEL_FORMATION, count, countTone, true);
                 Label name = chip.findActor(PIN_NAME);
                 float nameWide = name.getPrefWidth();
                 pin = new Pin(chip, block, null, chip.getCell(name), nameWide, chip.getWidth() - nameWide, null, null);
@@ -776,7 +779,8 @@ final class ToeTable implements Disposable {
             pinned.add(pin);
         }
         for (Slot slot : layout.slots()) {
-            Pin pin = new Pin(pin(slot.card().name(), srgb(ToeView.state(slot.card())), null, null), null, slot);
+            Pin pin = new Pin(pin(slot.card().name(), srgb(ToeView.state(slot.card())), null, null, false), null,
+                  slot);
             pin.actor().getColor().a = slotFade.getOrDefault(slot.card().id(), 0f);
             pinned.add(pin);
         }
@@ -877,21 +881,26 @@ final class ToeTable implements Disposable {
         };
     }
 
-    /** An opaque plate so a pin reads over the table, its edge bar in {@code tone}. */
-    private Table plate(Color tone) {
+    /**
+     * A plate for a pin, its edge bar in {@code tone}: opaque so it reads over the table, or {@code bare}, the text
+     * alone, for a formation's name on its head strip.
+     */
+    private Table plate(Color tone, boolean bare) {
         Table chip = new Table();
-        chip.setBackground(ui.skin.newDrawable("white", LABEL_PLATE));
-        chip.add(new Image(ui.skin.newDrawable("white", tone))).width(3).growY();
+        if (!bare) {
+            chip.setBackground(ui.skin.newDrawable("white", LABEL_PLATE));
+            chip.add(new Image(ui.skin.newDrawable("white", tone))).width(3).growY();
+        }
         chip.setVisible(false);
         return chip;
     }
 
     /**
-     * A pin: an opaque plate so it reads over the table, its edge bar in {@code tone}, its text in upper case, and
-     * after it {@code count}, if any, in {@code countTone}.
+     * A pin: a plate ({@link #plate}), its text in upper case, and after it {@code count}, if any, in
+     * {@code countTone}.
      */
-    private Table pin(String text, Color tone, @Nullable String count, @Nullable Color countTone) {
-        Table chip = plate(tone);
+    private Table pin(String text, Color tone, @Nullable String count, @Nullable Color countTone, boolean bare) {
+        Table chip = plate(tone, bare);
         Label name = ui.label(UiTheme.upper(text), "hud-button", 12, LABEL_INK);
         name.setEllipsis(true);
         name.setName(PIN_NAME);
@@ -1301,9 +1310,15 @@ final class ToeTable implements Disposable {
                         undo();
                     }
                     case Input.Keys.L -> cycleLabels();
-                    case Input.Keys.HOME -> frameShown(false, false);
-                    case Input.Keys.EQUALS, Input.Keys.PLUS -> view.zoom(-3);
-                    case Input.Keys.MINUS -> view.zoom(3);
+                    case Input.Keys.HOME -> home();
+                    case Input.Keys.EQUALS, Input.Keys.PLUS -> {
+                        view.centreZoom();
+                        zoomStep(-1);
+                    }
+                    case Input.Keys.MINUS -> {
+                        view.centreZoom();
+                        zoomStep(1);
+                    }
                     case Input.Keys.LEFT_BRACKET -> narrow((placeIndex + places.size() - 1) % places.size());
                     case Input.Keys.RIGHT_BRACKET -> narrow((placeIndex + 1) % places.size());
                     default -> {
@@ -1388,9 +1403,6 @@ final class ToeTable implements Disposable {
         if (!shown || stage == null) {
             return;
         }
-        if (folds != null && folds.update(view.wantCellPixels())) {
-            relayout(false);
-        }
         view.render();
         placePins();
         placeHoverCard();
@@ -1413,7 +1425,7 @@ final class ToeTable implements Disposable {
         float fade = Gdx.graphics.getDeltaTime() * 4;
         Slot hovered = view.hovered();
         Slot selected = view.selected();
-        int taken = 0;
+        int taken = keepClear();
         for (Pin pin : pinned) {
             Actor actor = pin.actor();
             if (pin.block() != null && pin.block().card()) {
@@ -1422,23 +1434,18 @@ final class ToeTable implements Disposable {
             }
             boolean show;
             float anchor;
-            boolean above = false;
             if (pin.block() != null) {
                 Block block = view.posed(pin.block());
-                // Zoomed out, a head is too short for its label, which would cover the units under it
-                boolean cramped = cell * block.head() < actor.getHeight() * 0.6f;
                 float left = ToeView.iconInset(block) + block.head() * 0.9f;
                 float nameRoom = Math.min(pin.nameWide(),
                       (block.width() - left - ToeView.iconInset(block)) * cell - pin.rest());
                 show = labels != Labels.NONE && nameRoom >= NAME_LEAST
-                      && (block.units().isEmpty() || blockLit(block)) && (!cramped || block.level() == 0);
+                      && (block.units().isEmpty() || blockLit(block));
                 if (show) {
                     fit(pin, nameRoom);
                 }
-                at.set(block.x() + left, view.top(block.level()),
-                      cramped ? block.z() : block.z() + block.head() / 2);
+                at.set(block.x() + left, view.top(block.level()), block.z() + block.head() / 2);
                 anchor = 0;
-                above = cramped;
             } else {
                 Slot slot = view.posed(pin.slot());
                 boolean pointed = pin.slot() == hovered || pin.slot() == selected;
@@ -1459,7 +1466,7 @@ final class ToeTable implements Disposable {
             actor.setVisible(true);
             actor.getColor().a = Math.min(1, actor.getColor().a + fade);
             float x = at.x / scale - actor.getWidth() * anchor;
-            float y = at.y / scale - (above ? -4 : anchor == 0 ? actor.getHeight() / 2 : actor.getHeight());
+            float y = at.y / scale - (anchor == 0 ? actor.getHeight() / 2 : actor.getHeight());
             if (pin.block() != null && crowded(x, y, actor.getWidth(), actor.getHeight(), taken)) {
                 actor.setVisible(false);
                 actor.getColor().a = 0;
@@ -1485,6 +1492,26 @@ final class ToeTable implements Disposable {
             place(ghost.icon(), show, size / 2, size / 2, fade);
             ghost.icon().getColor().a = Math.min(ghost.icon().getColor().a, 0.75f);
         }
+    }
+
+    /**
+     * Records where the header and the tabs under it stand as placed labels, so no formation's label is put over
+     * them; how many that is.
+     */
+    private int keepClear() {
+        int count = 0;
+        for (Actor actor : new Actor[] { header, tabs }) {
+            if (actor == null || !actor.isVisible() || actor.getWidth() <= 0) {
+                continue;
+            }
+            Vector2 corner = actor.localToStageCoordinates(this.corner.setZero());
+            if (count == placedLabels.size()) {
+                placedLabels.add(new Rectangle());
+            }
+            placedLabels.get(count).set(corner.x, corner.y, actor.getWidth(), actor.getHeight());
+            count++;
+        }
+        return count;
     }
 
     /**

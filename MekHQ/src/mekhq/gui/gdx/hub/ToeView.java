@@ -46,6 +46,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 
 import com.badlogic.gdx.Gdx;
@@ -108,9 +109,6 @@ final class ToeView implements Disposable {
     /** How near the screen's edge, as a share of it, a drag scrolls the table, and how fast, pixels a second. */
     private static final float EDGE_BAND = 0.06f;
     private static final float EDGE_SPEED = 700;
-    private static final float CLOSEST = 2.2f;
-    /** Framing a few units stops here, so they show at a readable size instead of filling the screen. */
-    private static final float CLOSEST_FIT = 7;
     /** How tall a slab stands, and how much higher each level down the tree. */
     private static final float SLAB = 0.06f;
     private static final float TERRACE = 0.05f;
@@ -261,13 +259,17 @@ final class ToeView implements Disposable {
     private final Vector3 eye = new Vector3();
     /** Whether the last zoom was the wheel's, toward the pointer, rather than the middle of the screen. */
     private boolean pointerZoom;
+    /** The wheel's scrolling short of a whole notch, and who's told of each step it's turned in or out. */
+    private float wheel;
+    private @Nullable IntConsumer zoomed;
+    /** How far the last fold moved the camera to keep the point under the pointer on what it was on. */
+    private final Vector3 anchored = new Vector3();
     /** Whether the force is at more than one place, so each counter shows where it is. */
     private boolean spread;
     private float time;
     private float clock;
     private float distance = 10;
     private float wantDistance = 10;
-    private float farthest = 40;
     private final Vector3 focus = new Vector3();
     private final Vector3 wantFocus = new Vector3();
     private int pressX;
@@ -382,8 +384,16 @@ final class ToeView implements Disposable {
 
         @Override
         public boolean scrolled(float amountX, float amountY) {
-            pointerZoom = true;
-            zoom(amountY, onTable(pointerX, pointerY, 0, new Vector3()));
+            // A wheel's notch is a step; a touchpad's little scrolls add up to one
+            wheel += amountY;
+            int notches = (int) wheel;
+            if (notches != 0) {
+                wheel -= notches;
+                pointerZoom = true;
+                if (zoomed != null) {
+                    zoomed.accept(notches);
+                }
+            }
             return true;
         }
     };
@@ -537,20 +547,37 @@ final class ToeView implements Disposable {
         return input;
     }
 
-    /** Zooms out by {@code steps} wheel notches, or in when negative, toward the table under the pointer if given. */
-    private void zoom(float steps, @Nullable Vector3 under) {
+    /**
+     * Tells {@code steps} of each turn of the wheel, in whole steps, out positive, toward the pointer: the zoom snaps
+     * from step to step ({@link ToeFolds}), so the table picks the step and {@link #zoomTo}s it.
+     */
+    void onZoom(IntConsumer steps) {
+        zoomed = steps;
+    }
+
+    /**
+     * Glides to where a cell takes {@code cellPixels} on screen: about the point under the pointer if the wheel turned,
+     * where the last fold took it, or the middle of the screen.
+     */
+    void zoomTo(float cellPixels) {
         float before = wantDistance;
-        wantDistance = MathUtils.clamp(before * (1 + steps * 0.1f), CLOSEST, farthest);
+        wantDistance = distanceFor(cellPixels);
+        Vector3 under = pointerZoom ? onTable(pointerX, pointerY, 0, new Vector3()) : null;
         if (under != null) {
-            wantFocus.lerp(under, 1 - wantDistance / before);
+            under.add(anchored);
+            wantFocus.sub(under).scl(wantDistance / before).add(under);
             keepOnTable(wantFocus);
+        }
+        anchored.setZero();
+        if (still) {
+            distance = wantDistance;
+            focus.set(wantFocus);
         }
     }
 
-    /** Zooms by {@code steps} notches toward the middle of the screen, for the keyboard. */
-    void zoom(float steps) {
+    /** Zooms toward the middle of the screen from here on, for the keyboard. */
+    void centreZoom() {
         pointerZoom = false;
-        zoom(steps, null);
     }
 
     /**
@@ -722,7 +749,8 @@ final class ToeView implements Disposable {
 
     /**
      * Keeps the camera on what it was looking at: the point under the pointer for the wheel, the middle of the
-     * screen otherwise. Where the innermost formation about it goes, the camera goes, easing there as the table does.
+     * screen otherwise. Where the formation at or nearest it goes, the camera goes, easing there as the table does, so
+     * what was by the pointer stays by it.
      */
     private void anchor(List<Block> oldBlocks, Map<Integer, float[]> were, ToeLayout next) {
         float lag = 1 - ease();
@@ -731,25 +759,40 @@ final class ToeView implements Disposable {
         Vector3 moved = new Vector3();
         if (point != null) {
             Block inner = null;
+            float nearest = Float.MAX_VALUE;
             for (Block block : oldBlocks) {
-                float[] reach = were.get(block.key());
-                if (reach != null && point.x >= reach[0] && point.x <= reach[0] + reach[2] && point.z >= reach[1]
-                      && point.z <= reach[1] + reach[3] && (inner == null || block.level() > inner.level())) {
+                float dx = Math.max(0, Math.max(block.x() - point.x, point.x - block.x() - block.width()));
+                float dz = Math.max(0, Math.max(block.z() - point.z, point.z - block.z() - block.depth()));
+                float off = dx * dx + dz * dz;
+                if (off < nearest - 1e-6f || off <= nearest + 1e-6f && inner != null && block.level() > inner.level()) {
+                    nearest = off;
                     inner = block;
                 }
             }
-            Block now = inner == null ? null : next.block(inner.key());
-            if (now == null && inner != null) {
-                now = next.holder(inner.key());
+            float[] from = null;
+            float[] to = null;
+            if (inner != null) {
+                Block now = next.block(inner.key());
+                if (now != null) {
+                    from = rect(inner);
+                    to = inner.card() && !now.card() ? reach(next, now) : rect(now);
+                } else {
+                    now = next.holder(inner.key());
+                    from = now == null ? null : were.get(now.key());
+                    to = now == null ? null : rect(now);
+                }
             }
-            if (now != null) {
-                float[] at = mapPoint(point.x, point.z, were.get(inner.key()), reach(next, now));
-                moved.set(at[0] - point.x, 0, at[1] - point.z);
+            if (from != null && to != null) {
+                float x = MathUtils.clamp(point.x, from[0], from[0] + from[2]);
+                float z = MathUtils.clamp(point.z, from[1], from[1] + from[3]);
+                float[] at = mapPoint(x, z, from, to);
+                moved.set(at[0] - x, 0, at[1] - z);
             }
         }
         slide.scl(lag).add(moved);
         focus.add(moved);
         wantFocus.add(moved);
+        anchored.set(moved);
     }
 
     private static float[] rect(Block block) {
@@ -865,19 +908,15 @@ final class ToeView implements Disposable {
         shown = filter;
     }
 
-    /** The farthest out the camera goes. */
-    void farthest(float far) {
-        farthest = Math.max(CLOSEST_FIT, far);
-    }
-
     /**
      * Glides, or jumps {@code now}, onto the middle of {@code bounds} from where a cell takes {@code cellPixels} on
      * screen.
      */
     void frame(float[] bounds, float cellPixels, boolean now) {
         pointerZoom = false;
+        anchored.setZero();
         wantFocus.set((bounds[0] + bounds[2]) / 2, 0, (bounds[1] + bounds[3]) / 2);
-        wantDistance = MathUtils.clamp(distanceFor(cellPixels), CLOSEST, farthest);
+        wantDistance = distanceFor(cellPixels);
         if (now || still) {
             distance = wantDistance;
             focus.set(wantFocus);
@@ -887,12 +926,7 @@ final class ToeView implements Disposable {
 
     /** How many pixels a cell takes on screen with all of {@code bounds} framed under the header, as {@link #frame}. */
     float fitCellPixels(float[] bounds) {
-        return cellPixelsAt(MathUtils.clamp(fitDistance(bounds, new Vector3()), CLOSEST_FIT, farthest));
-    }
-
-    /** How far off the camera takes all of {@code bounds} in, past any limit. */
-    float fitDistance(float[] bounds) {
-        return fitDistance(bounds, new Vector3());
+        return cellPixelsAt(fitDistance(bounds, new Vector3()));
     }
 
     /** How far off the camera stands for a cell to take {@code cellPixels} on screen. */
@@ -902,11 +936,6 @@ final class ToeView implements Disposable {
 
     private float cellPixelsAt(float far) {
         return Gdx.graphics.getHeight() / (2 * far * MathUtils.tanDeg(FIELD_OF_VIEW / 2));
-    }
-
-    /** How many pixels a cell takes on screen where the camera's headed. */
-    float wantCellPixels() {
-        return cellPixelsAt(wantDistance);
     }
 
     /** Without motion, the table opens and the camera moves at once. */
@@ -1212,7 +1241,7 @@ final class ToeView implements Disposable {
 
     /** How far in from its left edge a block's icon stands, on its head strip. */
     static float iconInset(Block block) {
-        return block.card() ? block.head() * 0.2f : ToeLayout.PAD * 0.6f;
+        return block.head() * 0.25f;
     }
 
     private boolean blockLit(Block block) {

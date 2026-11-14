@@ -268,11 +268,11 @@ class ToeLayoutTest {
     void foldedLancesBecomeCardsHoldingTheirUnits() {
         ToeSnapshot snapshot = regiment();
         ToeFolds folds = new ToeFolds(snapshot);
-        folds.reset(30);
+        folds.step(2);
 
         ToeLayout layout = ToeLayout.of(snapshot, "Unassigned", folds);
 
-        assertTrue(layout.slots().isEmpty(), "every lance, attached and unassigned unit is folded at 30");
+        assertTrue(layout.slots().isEmpty(), "every lance, attached and unassigned unit is folded a step out");
         Group lance = snapshot.root().children().get(0).children().get(0).children().get(0);
         Block card = layout.block(lance.id());
         assertNotNull(card);
@@ -300,7 +300,7 @@ class ToeLayoutTest {
     void aFoldedCompanyHoldsTheLancesFoldedIntoIt() {
         ToeSnapshot snapshot = regiment();
         ToeFolds folds = new ToeFolds(snapshot);
-        folds.reset(25);
+        folds.step(1);
 
         ToeLayout layout = ToeLayout.of(snapshot, "Unassigned", folds);
 
@@ -323,29 +323,34 @@ class ToeLayoutTest {
     }
 
     @Test
-    void aCardHoldingMoreTiersIsBiggerOnScreenWhereItFolds() {
+    void headingsAndCardsKeepTheirSizeOnScreenAtEveryStep() {
         ToeSnapshot snapshot = regiment();
         ToeFolds folds = new ToeFolds(snapshot);
         Group company = snapshot.root().children().get(0).children().get(0);
         Group lance = company.children().get(0);
-        folds.reset(30);
-        Block lanceCard = ToeLayout.of(snapshot, "Unassigned", folds).block(lance.id());
-        folds.reset(25);
-        Block companyCard = ToeLayout.of(snapshot, "Unassigned", folds).block(company.id());
+        folds.step(2);
+        ToeLayout lances = ToeLayout.of(snapshot, "Unassigned", folds);
+        float lanceCell = folds.cellPixels();
+        folds.step(1);
+        ToeLayout companies = ToeLayout.of(snapshot, "Unassigned", folds);
+        float companyCell = folds.cellPixels();
+        Block lanceCard = lances.block(lance.id());
+        Block companyCard = companies.block(company.id());
+        Block root = companies.block(snapshot.root().id());
 
         assertNotNull(lanceCard);
         assertNotNull(companyCard);
-        assertTrue(companyCard.width() * folds.threshold(company.id())
-              > lanceCard.width() * folds.threshold(lance.id()));
-        assertTrue(companyCard.depth() * folds.threshold(company.id())
-              > lanceCard.depth() * folds.threshold(lance.id()));
+        assertNotNull(root);
+        assertEquals(lanceCard.depth() * lanceCell, companyCard.depth() * companyCell, EPSILON);
+        assertEquals(ToeLayout.HEAD_PIXELS, root.head() * companyCell, EPSILON);
+        assertEquals(ToeLayout.HEAD_PIXELS, companyCard.head() * companyCell, EPSILON);
     }
 
     @Test
     void boundsOfAPickTakeInTheCardsItsUnitsAreFoldedInto() {
         ToeSnapshot snapshot = regiment();
         ToeFolds folds = new ToeFolds(snapshot);
-        folds.reset(30);
+        folds.step(2);
         ToeLayout layout = ToeLayout.of(snapshot, "Unassigned", folds);
 
         float[] box = layout.bounds(card -> card.place() == 1);
