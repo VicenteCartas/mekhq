@@ -33,6 +33,7 @@
 package mekhq.gui.gdx.hub;
 
 import java.util.function.BiConsumer;
+import java.util.function.Predicate;
 
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.g2d.Batch;
@@ -43,6 +44,7 @@ import com.badlogic.gdx.scenes.scene2d.InputListener;
 import com.badlogic.gdx.scenes.scene2d.Touchable;
 import jakarta.annotation.Nullable;
 import mekhq.gui.gdx.hub.ToeLayout.Block;
+import mekhq.gui.gdx.hub.ToeSnapshot.Card;
 
 /**
  * The whole TO&amp;E in a corner, small, with the part of it on screen outlined: for a force too big to see all at
@@ -59,6 +61,8 @@ final class ToeMinimap extends Actor {
     private static final Color CARD = new Color(0.45f, 0.72f, 0.95f, 0.8f);
     private static final Color SEEN = new Color(0.93f, 0.95f, 0.97f, 0.95f);
     private static final Color SEEN_FILL = new Color(0.93f, 0.95f, 0.97f, 0.12f);
+    /** How much of itself a formation with none of the lit units shows. */
+    private static final float DIMMED = 0.25f;
 
     private final TextureRegion white;
     private final BiConsumer<Float, Float> jump;
@@ -66,6 +70,7 @@ final class ToeMinimap extends Actor {
     private @Nullable ToeLayout layout;
     private float[] bounds = new float[4];
     private @Nullable float[] seen;
+    private @Nullable Predicate<Card> lit;
     /** Interface pixels to a cell of the table. */
     private float shrink = 1;
 
@@ -101,6 +106,16 @@ final class ToeMinimap extends Actor {
         setSize(wide * shrink + INSET * 2, deep * shrink + INSET * 2);
     }
 
+    /** Dims the formations with none of the units {@code filter} picks; null lights them all. */
+    void filter(@Nullable Predicate<Card> filter) {
+        lit = filter;
+    }
+
+    private boolean lit(Block block) {
+        Predicate<Card> filter = lit;
+        return filter == null || block.units().stream().anyMatch(filter);
+    }
+
     /**
      * Outlines {@code on}, the part of the table on screen, as {@link ToeLayout#bounds}; whether that's short of all of
      * it, so the map has something to show.
@@ -134,11 +149,12 @@ final class ToeMinimap extends Actor {
         outline(batch, EDGE, alpha, getX(), getY(), getWidth(), getHeight());
         for (Block block : shown.blocks()) {
             float[] rect = rect(block.x(), block.z(), block.x() + block.width(), block.z() + block.depth());
+            float shade = lit(block) ? alpha : alpha * DIMMED;
             if (block.card()) {
-                fill(batch, CARD, alpha, rect[0], rect[1], rect[2], rect[3]);
+                fill(batch, CARD, shade, rect[0], rect[1], rect[2], rect[3]);
             } else {
-                fill(batch, NODE, alpha, rect[0], rect[1], rect[2], rect[3]);
-                outline(batch, EDGE, alpha, rect[0], rect[1], rect[2], rect[3]);
+                fill(batch, NODE, shade, rect[0], rect[1], rect[2], rect[3]);
+                outline(batch, EDGE, shade, rect[0], rect[1], rect[2], rect[3]);
             }
         }
         float[] on = seen;

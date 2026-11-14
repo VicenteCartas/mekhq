@@ -129,8 +129,8 @@ final class ToeTable implements Disposable {
     private static final float EDITOR_WIDTH = 460;
     private static final float PICKER_WIDTH = 620;
     private static final float PICKER_HEIGHT = 340;
-    /** How many troubles a folded formation's card names before it only counts the rest. */
-    private static final int BADGES = 3;
+    /** How wide a folded formation's badges may run: its card, less the margin either side. */
+    private static final float BADGE_ROOM = ToeLayout.CARD_WIDE_PIXELS - ToeLayout.HEAD_PIXELS / 2 - 4;
     /** How many pixels a cell must take on screen before units' pins show. */
     private static final float UNIT_PINS_FROM = 110;
     /** The fewest pixels a formation's name is cut to before its label hides instead. */
@@ -160,6 +160,45 @@ final class ToeTable implements Disposable {
 
     /** A place the table can be narrowed to: its tab's name and which units are there. */
     record Place(String name, @Nullable Predicate<Card> units) {
+    }
+
+    /**
+     * A count in the header, and the units it counts, which a click on it lights alone: its words' key, its mark and
+     * colour, and whether it shows when there are none. All of them lights the lot.
+     */
+    enum Status {
+        ALL("Toe.count.units", "unit", LABEL_INK, true, card -> true),
+        READY("Toe.count.ready", "check-circle", ALL_READY, true, Card::ready),
+        DAMAGED("Toe.count.damaged", "warn", ISSUE_WARN, false,
+              card -> card.condition().fights() && card.condition() != Condition.SOUND),
+        WRECKED("Toe.count.wrecked", "dangerous", ISSUE_BAD, false, card -> !card.condition().fights()),
+        REPAIR("Toe.count.repair", "build", ISSUE_WARN, false,
+              card -> card.work() == Work.REPAIR || card.work() == Work.REFIT),
+        LAID_UP("Toe.count.laidUp", "inventory", ISSUE_LAID_UP, false,
+              card -> card.work() == Work.MOTHBALLED || card.work() == Work.MOTHBALLING
+                    || card.work() == Work.ACTIVATING),
+        DEPLOYED("Toe.count.deployed", "flag", ISSUE_AWAY, false, Card::deployed),
+        TRANSIT("Toe.count.transit", "rocket", ISSUE_AWAY, false, Card::transit),
+        NO_CREW("Toe.count.noCrew", "person-off", ISSUE_CREW, false, card -> card.crew() == Crew.NONE),
+        FATIGUED("Toe.count.fatigued", "bedtime", ISSUE_TIRED, false, Card::fatigued);
+
+        private final String key;
+        private final String icon;
+        private final Color tone;
+        private final boolean always;
+        private final Predicate<Card> test;
+
+        Status(String key, String icon, Color tone, boolean always, Predicate<Card> test) {
+            this.key = key;
+            this.icon = icon;
+            this.tone = tone;
+            this.always = always;
+            this.test = test;
+        }
+
+        boolean test(Card card) {
+            return test.test(card);
+        }
     }
 
     /**
@@ -253,6 +292,8 @@ final class ToeTable implements Disposable {
     private Labels labels = Labels.ALL;
     private List<Place> places = List.of();
     private int placeIndex;
+    /** The count in the header whose units alone are lit, with the place's. */
+    private Status status = Status.ALL;
     private @Nullable ToeSnapshot snapshot;
     private @Nullable ToeLayout layout;
     private @Nullable ToeFolds folds;
@@ -551,6 +592,9 @@ final class ToeTable implements Disposable {
         folds = new ToeFolds(shown);
         places = places(shown);
         placeIndex = 0;
+        if (opening) {
+            status = Status.ALL;
+        }
         for (int i = 0; i < places.size() && !opening; i++) {
             if (places.get(i).name().equals(previous)) {
                 placeIndex = i;
@@ -571,7 +615,8 @@ final class ToeTable implements Disposable {
             segments.select(placeIndex);
             tabs.add(segments);
         }
-        view.filter(places.get(placeIndex).units());
+        view.filter(lit());
+        minimap.filter(lit());
         if (opening || was == null) {
             frameShown(true, true);
         } else {
@@ -714,65 +759,87 @@ final class ToeTable implements Disposable {
         if (segments != null) {
             segments.select(index);
         }
-        view.filter(places.get(index).units());
+        view.filter(lit());
+        minimap.filter(lit());
         if (snapshot != null) {
             frameShown(false, false);
             strength(snapshot);
         }
     }
 
-    /** What's at the place looked at: how many, how many ready, and what keeps the rest out of the field. */
-    private void strength(ToeSnapshot shown) {
-        strength.clearChildren();
-        int units = 0;
-        int ready = 0;
-        int damaged = 0;
-        int wrecked = 0;
-        int repair = 0;
-        int laidUp = 0;
-        int deployed = 0;
-        int transit = 0;
-        int noCrew = 0;
-        int fatigued = 0;
-        for (Card card : shown.allUnits()) {
-            if (!view.lit(card)) {
-                continue;
-            }
-            units++;
-            ready += card.ready() ? 1 : 0;
-            Condition condition = card.condition();
-            wrecked += condition.fights() ? 0 : 1;
-            damaged += condition.fights() && condition != Condition.SOUND ? 1 : 0;
-            repair += card.work() == Work.REPAIR || card.work() == Work.REFIT ? 1 : 0;
-            laidUp += card.work() == Work.MOTHBALLED || card.work() == Work.MOTHBALLING
-                  || card.work() == Work.ACTIVATING ? 1 : 0;
-            deployed += card.deployed() ? 1 : 0;
-            transit += card.transit() ? 1 : 0;
-            noCrew += card.crew() == Crew.NONE ? 1 : 0;
-            fatigued += card.fatigued() ? 1 : 0;
+    /**
+     * Lights only the units {@code picked} counts at the place looked at, or all of them again if it's already the
+     * one lit; the table stays where it is.
+     */
+    void showOnly(Status picked) {
+        status = picked == status ? Status.ALL : picked;
+        view.filter(lit());
+        minimap.filter(lit());
+        if (snapshot != null) {
+            relayout(false);
+            strength(snapshot);
         }
-        chip("Toe.count.units", "unit", LABEL_INK, units, true);
-        chip("Toe.count.ready", "check-circle", ALL_READY, ready, true);
-        chip("Toe.count.damaged", "warn", ISSUE_WARN, damaged, false);
-        chip("Toe.count.wrecked", "dangerous", ISSUE_BAD, wrecked, false);
-        chip("Toe.count.repair", "build", ISSUE_WARN, repair, false);
-        chip("Toe.count.laidUp", "inventory", ISSUE_LAID_UP, laidUp, false);
-        chip("Toe.count.deployed", "flag", ISSUE_AWAY, deployed, false);
-        chip("Toe.count.transit", "rocket", ISSUE_AWAY, transit, false);
-        chip("Toe.count.noCrew", "person-off", ISSUE_CREW, noCrew, false);
-        chip("Toe.count.fatigued", "bedtime", ISSUE_TIRED, fatigued, false);
     }
 
-    /** A count in the header: its mark and number, what it counts in words when pointed at. */
-    private void chip(String key, String icon, Color tone, int count, boolean always) {
-        if (count > 0 || always) {
-            Table chip = new Table();
-            chip.setTouchable(Touchable.enabled);
-            chip.add(ui.icon(icon, 16, tone)).size(16);
-            chip.add(ui.label(Integer.toString(count), "hud-button", 14, tone)).padLeft(4);
-            ui.tip(chip, true).getActor().setText(getFormattedText(key, count));
-            strength.add(chip).padRight(space("md"));
+    /** Which units are lit: those at the place looked at that the status picked counts; null for all of them. */
+    private @Nullable Predicate<Card> lit() {
+        Predicate<Card> place = places.isEmpty() ? null : places.get(placeIndex).units();
+        if (status == Status.ALL) {
+            return place;
         }
+        Status picked = status;
+        return place == null ? picked::test : place.and(picked::test);
+    }
+
+    /**
+     * What's at the place looked at: how many, how many ready, and what keeps the rest out of the field; each a chip
+     * that lights its units alone, the one lit marked.
+     */
+    private void strength(ToeSnapshot shown) {
+        strength.clearChildren();
+        Predicate<Card> place = places.isEmpty() ? null : places.get(placeIndex).units();
+        int[] counts = new int[Status.values().length];
+        for (Card card : shown.allUnits()) {
+            if (place != null && !place.test(card)) {
+                continue;
+            }
+            for (Status counted : Status.values()) {
+                counts[counted.ordinal()] += counted.test(card) ? 1 : 0;
+            }
+        }
+        for (Status counted : Status.values()) {
+            chip(counted, counts[counted.ordinal()]);
+        }
+    }
+
+    /**
+     * A count in the header: its mark and number, what it counts in words when pointed at; a click lights its units
+     * alone. While one's lit, it's marked and the rest are dimmed.
+     */
+    private void chip(Status counted, int count) {
+        if (count == 0 && !counted.always && counted != status) {
+            return;
+        }
+        Table chip = new Table();
+        chip.setTouchable(Touchable.enabled);
+        chip.add(ui.icon(counted.icon, 16, counted.tone)).size(16);
+        chip.add(ui.label(Integer.toString(count), "hud-button", 14, counted.tone)).padLeft(4);
+        chip.pad(2, 5, 2, 5);
+        if (status != Status.ALL && counted == status) {
+            chip.setBackground(ui.skin.newDrawable("white", new Color(counted.tone).mul(1, 1, 1, 0.18f)));
+        } else if (status != Status.ALL) {
+            chip.getColor().a = 0.5f;
+        }
+        String says = getFormattedText(counted.key, count) + "\n"
+              + getText(counted == Status.ALL ? "Toe.count.showAll" : "Toe.count.showOnly");
+        ui.tip(chip, true).getActor().setText(says);
+        chip.addListener(new ClickListener() {
+            @Override
+            public void clicked(InputEvent event, float x, float y) {
+                showOnly(counted);
+            }
+        });
+        strength.add(chip).padRight(space("xs"));
     }
 
     private void pinAll(ToeLayout layout) {
@@ -831,7 +898,7 @@ final class ToeTable implements Disposable {
                 float nameWide = name.getPrefWidth();
                 Cell<Label> nameCell = plate.getCell(name);
                 int[] slots = slotTally(block);
-                Actor badges = badges(lit, BADGES, slots);
+                Actor badges = fittedBadges(lit, BADGE_ROOM, slots);
                 Actor compact = badges(lit, 1, null);
                 pins.addActor(badges);
                 pins.addActor(compact);
@@ -871,11 +938,26 @@ final class ToeTable implements Disposable {
     }
 
     /**
-     * A folded formation's state in a row: what's keeping its units out of the field, the worst first: each trouble's
-     * mark and how many have it, past {@code most} how many more troubles there are; a check if they're all fit to
-     * fight; then, if {@code slots} are given, how many slots are vacant and how many units fit none.
+     * A folded formation's state in a row as wide as {@code room} allows: what's keeping its units out of the field,
+     * the worst first, each trouble's mark and how many have it, and if they don't all fit how many more troubles
+     * there are; a check if they're all fit to fight; then, if {@code slots} are given, how many slots are vacant and
+     * how many units fit none.
      */
-    private Actor badges(List<Card> units, int most, @Nullable int[] slots) {
+    private Actor fittedBadges(List<Card> units, float room, @Nullable int[] slots) {
+        int troubles = 0;
+        for (int count : Issue.tally(units)) {
+            troubles += count > 0 ? 1 : 0;
+        }
+        for (int most = troubles; ; most--) {
+            Table row = badges(units, most, slots);
+            if (most <= 1 || row.getPrefWidth() <= room) {
+                return row;
+            }
+        }
+    }
+
+    /** A folded formation's state in a row, as {@link #fittedBadges}, the first {@code most} troubles. */
+    private Table badges(List<Card> units, int most, @Nullable int[] slots) {
         Table row = new Table();
         int[] counts = Issue.tally(units);
         int shown = 0;
@@ -891,18 +973,18 @@ final class ToeTable implements Disposable {
             }
             Color tone = issueTone(issue);
             row.add(ui.icon(issueIcon(issue), 13, tone)).size(13);
-            row.add(ui.label(Integer.toString(count), "hud-button", 12, tone)).padLeft(2).padRight(7);
+            row.add(ui.label(Integer.toString(count), "hud-button", 12, tone)).padLeft(2).padRight(6);
             shown++;
         }
         if (more > 0) {
-            row.add(ui.label("+" + more, "hud-button", 12, LABEL_INK));
+            row.add(ui.label("+" + more, "hud-button", 12, LABEL_INK)).padRight(6);
         }
         if (shown == 0 && !units.isEmpty()) {
-            row.add(ui.icon("check-circle", 13, ALL_READY)).size(13).padRight(7);
+            row.add(ui.icon("check-circle", 13, ALL_READY)).size(13).padRight(6);
         }
         if (slots != null && slots[0] > 0) {
             row.add(ui.icon("radio-unchecked", 13, SLOT_VACANT)).size(13);
-            row.add(ui.label(Integer.toString(slots[0]), "hud-button", 12, SLOT_VACANT)).padLeft(2).padRight(7);
+            row.add(ui.label(Integer.toString(slots[0]), "hud-button", 12, SLOT_VACANT)).padLeft(2).padRight(6);
         }
         if (slots != null && slots[1] > 0) {
             row.add(ui.icon("rules", 13, SLOT_MISFIT)).size(13);

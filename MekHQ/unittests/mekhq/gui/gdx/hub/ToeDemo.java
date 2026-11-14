@@ -337,8 +337,12 @@ public final class ToeDemo {
                             table.fillWith(picker.candidates().get(0));
                         }
                     }
-                    case 2090 -> {
-                        shot(prefix + "filled");
+                    case 2090 -> shot(prefix + "filled");
+                    // Back home, lighting only the damaged from the header's count of them
+                    case 2095 -> table.input().keyDown(Input.Keys.HOME);
+                    case 2190 -> table.showOnly(ToeTable.Status.DAMAGED);
+                    case 2290 -> {
+                        shot(prefix + "statusFilter");
                         Gdx.app.exit();
                     }
                     default -> {

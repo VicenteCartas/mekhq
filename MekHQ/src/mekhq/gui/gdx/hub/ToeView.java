@@ -190,6 +190,9 @@ final class ToeView implements Disposable {
                                                    WRECKED };
     /** The most units a card's readiness strip parts one from the next for. */
     private static final int STRIP_PARTED_MOST = 12;
+    /** A node's panel and the strip at its head, as the screen shows them, 0-255: a step up from the dark table. */
+    private static final float[] PLATE_SRGB = { 20, 25, 33 };
+    private static final float[] HEAD_SRGB = { 30, 38, 50 };
 
     /** Something leaving the table as a formation folds: where it showed, and where it goes as it sinks away. */
     private record Leaving(@Nullable Block block, @Nullable Slot slot, float[] from, float[] to) {
@@ -1298,25 +1301,26 @@ final class ToeView implements Disposable {
         propShader.bind();
         lights(propShader);
         set(propShader, "u_textured", 0f);
-        set(propShader, "u_flat", 0f);
+        // Flat, as the screen's own colours: lit and tone mapped, a panel this dark sinks into the table
+        set(propShader, "u_flat", 1f);
         set(propShader, "u_shine", 0.05f);
         set(propShader, "u_saturation", 1f);
         set(propShader, "u_ghost", 0f);
+        set(propShader, "u_emissive", 0, 0, 0);
         for (int i = 0; i < posedBlocks.size(); i++) {
             Block block = posedBlocks.get(i);
-            float bright = blockLit(block) ? 1 : 0.45f;
+            set(propShader, "u_dim", blockLit(block) ? 1 : 0.45f);
             // A box stands out from the table as a panel of its own, a card a shade lighter than a formation laid
             // open, so it reads as a thing in itself
-            float shade = 0.062f + block.level() * 0.008f + (block.card() ? 0.014f : 0);
+            float lift = Math.min(block.level(), 4) * 1.5f + (block.card() ? 3 : 0);
             float top = top(block.level()) * blockRise.get(i);
-            set(propShader, "u_dim", bright);
-            set(propShader, "u_emissive", 0, 0, 0);
-            drawBox(block.x(), 0, block.z(), block.width(), top, block.depth(), shade, shade * 1.2f, shade * 1.45f);
+            drawPanel(block.x(), 0, block.z(), block.width(), top, block.depth(), PLATE_SRGB, lift);
             // The head strip, a shade lighter, carries the formation's name and icon
             float inset = Math.min(0.04f, block.depth() * 0.04f);
-            drawBox(block.x() + inset, top, block.z() + inset, block.width() - inset * 2, 0.006f,
-                  block.head() - inset * 2, shade * 1.45f, shade * 1.65f, shade * 1.95f);
+            drawPanel(block.x() + inset, top, block.z() + inset, block.width() - inset * 2, 0.006f,
+                  block.head() - inset * 2, HEAD_SRGB, lift);
         }
+        set(propShader, "u_flat", 0f);
         set(propShader, "u_textured", 1f);
         set(propShader, "u_alpha", 1f);
         set(propShader, "u_base", 0);
@@ -1354,6 +1358,16 @@ final class ToeView implements Disposable {
             }
         }
         return false;
+    }
+
+    /** A box in {@code srgb}, the screen's 0-255 colour, {@code lift} lighter, drawn flat. */
+    private void drawPanel(float x, float y, float z, float width, float tall, float depth, float[] srgb, float lift) {
+        drawBox(x, y, z, width, tall, depth, linear(srgb[0] + lift), linear(srgb[1] + lift),
+              linear(srgb[2] + lift * 1.3f));
+    }
+
+    private static float linear(float srgb) {
+        return (float) Math.pow(srgb / 255, 2.2);
     }
 
     private void drawBox(float x, float y, float z, float width, float tall, float depth, float r, float g, float b) {
@@ -1617,14 +1631,16 @@ final class ToeView implements Disposable {
         }
         float speed = deployed ? 0.6f : 0;
         float half = Math.max(0.02f, LINE_HALF_PIXELS * pixel);
+        // The cores meet at the corners: across and down run on half a core's width past them, no further
+        float meet = half * 0.25f;
         float x0 = block.x();
         float z0 = block.z();
         float x1 = block.x() + block.width();
         float z1 = block.z() + block.depth();
-        line(holo, x0 - half, z0, x1 + half, z0, y, half, colour, strength, speed);
-        line(holo, x1, z0 + half, x1, z1 - half, y, half, colour, strength, speed);
-        line(holo, x1 + half, z1, x0 - half, z1, y, half, colour, strength, speed);
-        line(holo, x0, z1 - half, x0, z0 + half, y, half, colour, strength, speed);
+        line(holo, x0 - meet, z0, x1 + meet, z0, y, half, colour, strength, speed);
+        line(holo, x1, z0 + meet, x1, z1 - meet, y, half, colour, strength, speed);
+        line(holo, x1 + meet, z1, x0 - meet, z1, y, half, colour, strength, speed);
+        line(holo, x0, z1 - meet, x0, z0 + meet, y, half, colour, strength, speed);
     }
 
     /**
