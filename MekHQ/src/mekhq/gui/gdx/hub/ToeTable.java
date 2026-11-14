@@ -38,6 +38,7 @@ import static mekhq.utilities.MHQInternationalization.getText;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -76,6 +77,7 @@ import com.badlogic.gdx.utils.Align;
 import com.badlogic.gdx.utils.Disposable;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
 import jakarta.annotation.Nullable;
+import megamek.client.ratgenerator.FormationQualification;
 import megamek.client.ui.clientGUI.GUIPreferences;
 import megamek.client.ui.design.DesignTokens;
 import megamek.client.ui.gdx.UiButton;
@@ -124,6 +126,10 @@ final class ToeTable implements Disposable {
     private static final Color ISSUE_AWAY = new Color(0.75f, 0.92f, 1.0f, 1);
     private static final Color SLOT_VACANT = new Color(0.66f, 0.74f, 0.84f, 1);
     private static final Color SLOT_MISFIT = new Color(0.9f, 0.74f, 1.0f, 1);
+    /** A formation's rule mark when its units' roles aren't known, so whether they meet it can't be told. */
+    private static final Color RULE_UNVERIFIED = new Color(0.62f, 0.66f, 0.72f, 1);
+    /** account_tree: a formation, the mark of how one stands against the formation rule it's meant to meet. */
+    private static final String RULE_ICON = "account-tree";
     private static final Color SCRIM = new Color(0, 0, 0, 0.45f);
     /** How many pixels a cell must take on screen before vacant slots show the kind of unit they call for. */
     private static final float GHOST_ICONS_FROM = 56;
@@ -285,6 +291,13 @@ final class ToeTable implements Disposable {
     private Label hoverName;
     private Label hoverCrew;
     private Label hoverDetail;
+    private Label hoverRule;
+    private Cell<Label> hoverRuleCell;
+    /**
+     * How each formation judged so far stands against its rule, null for one with none, by the formation as the table
+     * shows it now: a move makes new ones, and showing the force anew forgets them all.
+     */
+    private final Map<ToeSnapshot.Group, FormationQualification> judged = new IdentityHashMap<>();
     /** The slot editor's dimmed layer over the table, and the formation it edits and the slots it has so far. */
     private Table editorLayer;
     private @Nullable ToeSnapshot.Group editing;
@@ -565,6 +578,9 @@ final class ToeTable implements Disposable {
         hoverCard.add(hoverName).row();
         hoverCard.add(hoverCrew).padTop(space("xxs")).row();
         hoverCard.add(hoverDetail).padTop(space("xxs")).row();
+        hoverRule = ui.label("", "hud-body", 13, Color.WHITE);
+        hoverRuleCell = hoverCard.add(hoverRule).padTop(space("xs"));
+        hoverCard.row();
         hoverCard.setVisible(false);
         return hoverCard;
     }
@@ -605,6 +621,7 @@ final class ToeTable implements Disposable {
         String previous = placeIndex < places.size() ? places.get(placeIndex).name() : null;
         ToeFolds was = folds;
         snapshot = shown;
+        judged.clear();
         force.setText(shown.force());
         groups.clear();
         parents.clear();
@@ -919,13 +936,19 @@ final class ToeTable implements Disposable {
                 float nameWide = name.getPrefWidth();
                 Cell<Label> nameCell = plate.getCell(name);
                 int[] slots = slotTally(block);
-                Actor badges = fittedBadges(lit, BADGE_ROOM, slots);
-                Actor compact = badges(lit, 1, null);
+                FormationQualification.Verdict verdict = verdict(block);
+                Actor badges = fittedBadges(lit, BADGE_ROOM, slots, verdict);
+                Actor compact = badges(lit, 1, null, verdict == FormationQualification.Verdict.FAILS ? verdict : null);
                 pins.addActor(badges);
                 pins.addActor(compact);
                 pin = new Pin(plate, block, null, nameCell, nameWide, plate.getWidth() - nameWide, badges, compact);
             } else {
                 Table chip = pin(block.name(), LABEL_FORMATION, count, countTone, true);
+                FormationQualification.Verdict verdict = verdict(block);
+                if (verdict != null) {
+                    chip.add(ui.icon(RULE_ICON, 13, ruleTone(verdict))).size(13).padRight(8);
+                    chip.pack();
+                }
                 Label name = chip.findActor(PIN_NAME);
                 float nameWide = name.getPrefWidth();
                 pin = new Pin(chip, block, null, chip.getCell(name), nameWide, chip.getWidth() - nameWide, null, null);
@@ -958,19 +981,63 @@ final class ToeTable implements Disposable {
         return group == null ? new int[2] : ToeSlots.own(group);
     }
 
+    /** How the formation whose head {@code block} is stands against its rule; null if it has none or no units yet. */
+    private @Nullable FormationQualification.Verdict verdict(Block block) {
+        FormationQualification qualification = judge(block.group());
+        return qualification == null ? null : qualification.verdict();
+    }
+
+    /** How {@code group}'s own units stand against its rule, judged once each time it changes; null for none. */
+    private @Nullable FormationQualification judge(@Nullable ToeSnapshot.Group group) {
+        if (group == null || group.rule() == null || snapshot == null) {
+            return null;
+        }
+        if (!judged.containsKey(group)) {
+            judged.put(group, ToeRules.qualify(group, snapshot.summaries()));
+        }
+        return judged.get(group);
+    }
+
+    private static Color ruleTone(FormationQualification.Verdict verdict) {
+        return switch (verdict) {
+            case QUALIFIES -> ALL_READY;
+            case FAILS -> ISSUE_WARN;
+            case UNVERIFIED -> RULE_UNVERIFIED;
+        };
+    }
+
+    /**
+     * How a formation stands against its rule in words: whether it meets it, and if it doesn't, each requirement its
+     * units fall short of, with how many meet it and how many it needs.
+     */
+    private static String ruleText(FormationQualification qualification) {
+        FormationQualification.Verdict verdict = qualification.verdict();
+        StringBuilder text = new StringBuilder(getFormattedText("Toe.rule." + verdict.name(),
+              qualification.formation(), qualification.unknownRoles().size()));
+        if (verdict != FormationQualification.Verdict.QUALIFIES) {
+            for (FormationQualification.Requirement requirement : qualification.unmet()) {
+                text.append('\n').append(getFormattedText(requirement.orPrevious() ? "Toe.rule.alternative"
+                            : "Toe.rule.requirement", requirement.description(), requirement.matching().size(),
+                      requirement.needed()));
+            }
+        }
+        return text.toString();
+    }
+
     /**
      * A folded formation's state in a row as wide as {@code room} allows: what's keeping its units out of the field,
      * the worst first, each trouble's mark and how many have it, and if they don't all fit how many more troubles
      * there are; a check if they're all fit to fight; then, if {@code slots} are given, how many slots are vacant and
-     * how many units fit none.
+     * how many units fit none; and last, if {@code verdict} is given, how the formation stands against its rule.
      */
-    private Actor fittedBadges(List<Card> units, float room, @Nullable int[] slots) {
+    private Actor fittedBadges(List<Card> units, float room, @Nullable int[] slots,
+          @Nullable FormationQualification.Verdict verdict) {
         int troubles = 0;
         for (int count : Issue.tally(units)) {
             troubles += count > 0 ? 1 : 0;
         }
         for (int most = troubles; ; most--) {
-            Table row = badges(units, most, slots);
+            Table row = badges(units, most, slots, verdict);
             if (most <= 1 || row.getPrefWidth() <= room) {
                 return row;
             }
@@ -978,7 +1045,8 @@ final class ToeTable implements Disposable {
     }
 
     /** A folded formation's state in a row, as {@link #fittedBadges}, the first {@code most} troubles. */
-    private Table badges(List<Card> units, int most, @Nullable int[] slots) {
+    private Table badges(List<Card> units, int most, @Nullable int[] slots,
+          @Nullable FormationQualification.Verdict verdict) {
         Table row = new Table();
         int[] counts = Issue.tally(units);
         int shown = 0;
@@ -1009,7 +1077,10 @@ final class ToeTable implements Disposable {
         }
         if (slots != null && slots[1] > 0) {
             row.add(ui.icon("rules", 13, SLOT_MISFIT)).size(13);
-            row.add(ui.label(Integer.toString(slots[1]), "hud-button", 12, SLOT_MISFIT)).padLeft(2);
+            row.add(ui.label(Integer.toString(slots[1]), "hud-button", 12, SLOT_MISFIT)).padLeft(2).padRight(6);
+        }
+        if (verdict != null) {
+            row.add(ui.icon(RULE_ICON, 13, ruleTone(verdict))).size(13);
         }
         row.pack();
         row.setVisible(false);
@@ -1244,6 +1315,14 @@ final class ToeTable implements Disposable {
                 description.setWrap(true);
                 fields.add(description).colspan(2).growX().row();
             }
+            FormationQualification now = editing == null || snapshot == null ? null
+                  : ToeRules.qualify(rule, editing.units(), snapshot.summaries());
+            if (now != null) {
+                Label standing = ui.label(ruleText(now), "hud-body", 12, Color.WHITE);
+                standing.setColor(ruleTone(now.verdict()));
+                standing.setWrap(true);
+                fields.add(standing).colspan(2).growX().padTop(space("xs")).row();
+            }
         }
         UiKit.Checkbox keeper = ui.checkbox(getText("Toe.template.keep"), keep, true);
         UiKit.onChange(keeper, () -> keep = keeper.isTicked());
@@ -1455,6 +1534,12 @@ final class ToeTable implements Disposable {
         title.add(ui.label(card.name(), "hud-body", 14, UiTheme.tokenColor("text.primary")));
         title.add(ui.label(crewText(card), "hud-body", 12, UiTheme.tokenColor("text.secondary")))
               .padLeft(space("sm"));
+        String rule = filling == null ? null : filling.group().rule();
+        if (candidate.completes() && rule != null) {
+            title.add(ui.icon(RULE_ICON, 13, ALL_READY)).size(13).padLeft(space("md"));
+            title.add(ui.label(getFormattedText("Toe.rule.completes", rule), "hud-body", 12, ALL_READY))
+                  .padLeft(space("xxs"));
+        }
         about.add(title).row();
         about.add(ui.label(detail(card, shown), "hud-body", 12, UiTheme.tokenColor("text.secondary"))).row();
         Table from = new Table();
@@ -2010,6 +2095,7 @@ final class ToeTable implements Disposable {
             return;
         }
         Card stripUnit = view.hoveredUnit();
+        FormationQualification ruled = null;
         if (vacancy != null) {
             hoverName.setText(getFormattedText("Toe.slot.vacant", slotName(vacancy.slot())));
             hoverCrew.setText(vacancy.block().name());
@@ -2031,12 +2117,20 @@ final class ToeTable implements Disposable {
                 troubles += "  \u00b7  " + getFormattedText("Toe.slot.misfitCount", slots[1]);
             }
             hoverDetail.setText(troubles);
+            ruled = judge(card.group());
         } else {
             Card unit = slot.card();
             hoverName.setText(unit.name());
             hoverCrew.setText(crewText(unit));
             String detail = detail(unit, snapshot);
             hoverDetail.setText(view.misfit(unit) ? detail + "  \u00b7  " + getText("Toe.slot.misfit") : detail);
+        }
+        if (ruled == null) {
+            hoverRuleCell.setActor(null);
+        } else {
+            hoverRule.setText(ruleText(ruled));
+            hoverRule.setColor(ruleTone(ruled.verdict()));
+            hoverRuleCell.setActor(hoverRule);
         }
         hoverCard.pack();
         float x = pointerX / scale + 18;

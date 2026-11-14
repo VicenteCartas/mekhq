@@ -331,14 +331,12 @@ record ToeSnapshot(String force, Group root, List<Card> unassigned, List<String>
     }
 
     /**
-     * The designs of the units {@code ids} as the unit cache has them, for those it has; none until the cache is
-     * loaded, which this never waits for.
+     * The designs of the units {@code ids}: as the unit cache has them, or read from the unit itself for a design it
+     * lacks or while it is still loading, which this never waits for.
      */
     private static Map<UUID, MekSummary> summaries(Campaign campaign, Set<UUID> ids) {
         MekSummaryCache cache = MekSummaryCache.getInstance();
-        if (!cache.isInitialized()) {
-            return Map.of();
-        }
+        boolean cached = cache.isInitialized();
         Map<UUID, MekSummary> summaries = new HashMap<>();
         for (UUID id : ids) {
             Unit unit = campaign.getUnit(id);
@@ -346,15 +344,31 @@ record ToeSnapshot(String force, Group root, List<Card> unassigned, List<String>
             if (entity == null) {
                 continue;
             }
-            MekSummary summary = cache.getMek(entity.getShortNameRaw());
-            if (summary == null) {
+            MekSummary summary = cached ? cache.getMek(entity.getShortNameRaw()) : null;
+            if (summary == null && cached) {
                 summary = cache.getMek(entity.getShortName());
             }
-            if (summary != null) {
-                summaries.put(id, summary);
-            }
+            summaries.put(id, summary == null ? design(entity) : summary);
         }
         return Map.copyOf(summaries);
+    }
+
+    /** What the formation rules ask of {@code entity}'s design, read from the unit itself. */
+    private static MekSummary design(Entity entity) {
+        MekSummary design = new MekSummary();
+        design.setName(entity.getShortNameRaw());
+        design.setChassis(entity.getChassis());
+        design.setModel(entity.getModel());
+        design.setUnitType(UnitType.getTypeName(entity.getUnitType()));
+        design.setTons(entity.getWeight());
+        design.setWeightClass(entity.getWeightClass());
+        design.setWalkMp(entity.getWalkMP());
+        design.setRunMp(entity.getRunMP());
+        design.setJumpMp(entity.getAnyTypeMaxJumpMP());
+        design.setTotalArmor(entity.getTotalArmor());
+        design.setEquipment(entity.getEquipment());
+        design.setUnitRole(entity.getRole());
+        return design;
     }
 
     private static void addUnassigned(Campaign campaign, Unit unit, Map<UUID, Integer> places, Set<UUID> placed,

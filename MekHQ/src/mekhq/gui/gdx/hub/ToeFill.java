@@ -51,23 +51,26 @@ import mekhq.gui.gdx.hub.ToeSnapshot.Group;
 final class ToeFill {
     /**
      * A unit the slot admits: the formation it's in now (null if in none), whether taking it leaves a slot vacant
-     * there, and whether it's somewhere other than where the formation is.
+     * there, whether it's somewhere other than where the formation is, and whether with it the formation meets the
+     * formation rule it's meant to and doesn't yet.
      */
-    record Candidate(Card card, @Nullable Group from, boolean leavesVacancy, boolean elsewhere) {
+    record Candidate(Card card, @Nullable Group from, boolean leavesVacancy, boolean elsewhere, boolean completes) {
     }
 
     private ToeFill() {
     }
 
     /**
-     * The units that could fill {@code slot} in {@code target}: neither out on a deployment nor in it already. The
-     * unassigned come first, then those that leave no slot vacant behind them, those at the formation's place before
-     * those elsewhere, sound and fit before ailing, then by name.
+     * The units that could fill {@code slot} in {@code target}: neither out on a deployment nor in it already. Those
+     * that make the formation meet its rule come first, then the unassigned, then those that leave no slot vacant
+     * behind them, those at the formation's place before those elsewhere, sound and fit before ailing, then by name.
+     * Judges the rule through MegaMek, so call it on one thread only.
      */
     static List<Candidate> candidates(ToeSnapshot shown, Group target, FormationSlot slot) {
         Map<UUID, Group> homes = new HashMap<>();
         index(shown.root(), homes);
         int place = place(shown, target);
+        boolean unmet = target.rule() != null && !ToeRules.meets(target, shown.summaries());
         List<Candidate> candidates = new ArrayList<>();
         for (Card card : shown.allUnits()) {
             Group from = homes.get(card.id());
@@ -75,9 +78,11 @@ final class ToeFill {
                 continue;
             }
             boolean leaves = from != null && vacatedBy(from, card);
-            candidates.add(new Candidate(card, from, leaves, card.place() != place));
+            boolean completes = unmet && ToeRules.meetsWith(target, card, shown.summaries());
+            candidates.add(new Candidate(card, from, leaves, card.place() != place, completes));
         }
-        candidates.sort(Comparator.comparing((Candidate candidate) -> candidate.from() != null)
+        candidates.sort(Comparator.comparing((Candidate candidate) -> !candidate.completes())
+              .thenComparing(candidate -> candidate.from() != null)
               .thenComparing(Candidate::leavesVacancy)
               .thenComparing(Candidate::elsewhere)
               .thenComparing(candidate -> ToeSnapshot.Issue.first(candidate.card()) != null)

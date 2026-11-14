@@ -40,9 +40,11 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.UUID;
 import javax.imageio.ImageIO;
 
@@ -58,6 +60,8 @@ import jakarta.annotation.Nullable;
 import megamek.client.ui.gdx.UiKit;
 import megamek.client.ui.gdx.UiTheme;
 import megamek.common.Configuration;
+import megamek.common.loaders.MekSummary;
+import megamek.common.units.UnitRole;
 import mekhq.campaign.force.FormationSlot;
 import mekhq.campaign.force.FormationTemplate;
 import mekhq.gui.gdx.hub.ToeLayout.Block;
@@ -292,6 +296,16 @@ public final class ToeDemo {
                             zoom(Math.round(slotted.x), Math.round(slotted.y), -10);
                         }
                     }
+                    // Its head pointed at: how it stands against its rule, and what it falls short of
+                    case 1924 -> {
+                        Block lacking = shortNear();
+                        if (lacking != null) {
+                            Vector2 at = table.onScreen(lacking, 0.3f,
+                                  lacking.card() ? 0.5f : lacking.head() / 2 / lacking.depth());
+                            table.input().mouseMoved(Math.round(at.x), Math.round(at.y));
+                        }
+                    }
+                    case 1928 -> shot(prefix + "ruleHover");
                     case 1930 -> {
                         Vacancy vacancy = slotted == null ? null : vacancyNear(slotted);
                         if (vacancy != null) {
@@ -513,6 +527,8 @@ public final class ToeDemo {
     /** A regiment of three BattleMek battalions and its support, at its main force and two bases. */
     static ToeSnapshot regiment(Random random) {
         Ids ids = new Ids();
+        Set<UUID> unknown = new HashSet<>();
+        Map<UUID, UnitRole> roles = new HashMap<>();
         List<Group> arms = new ArrayList<>();
         String[] battalions = { "1st Battalion", "2nd Battalion", "3rd Battalion" };
         for (int b = 0; b < battalions.length; b++) {
@@ -529,7 +545,7 @@ public final class ToeDemo {
                           ? matched(units, new FormationSlot(FormationSlot.Kind.MEK, FormationSlot.Weight.MEDIUM))
                           : b == 0 && c == 0 && l == 2 ? misplaced(units, 1) : matched(units);
                     lances.add(new Group(ids.next(), LANCES[l], icon("BattleMek (Line)", "(04) Lance"), List.of(),
-                          units, deployed, slots));
+                          units, deployed, slots, -1, null, b == 0 && c == 0 && l == 0 ? "Command" : null));
                 }
                 companies.add(new Group(ids.next(), COMPANIES[c], icon("BattleMek (Center)", "(05) Company"),
                       lances, List.of(), false, List.of()));
@@ -537,10 +553,18 @@ public final class ToeDemo {
             arms.add(new Group(ids.next(), battalions[b], icon("BattleMek (Center)", "(06) Battalion"), companies,
                   meks(random, 4, b, place, false, false), false, List.of()));
         }
+        // The first armour lance's designs MegaMek doesn't know; the last is one Scout or Striker short of its rule
         List<Group> armour = new ArrayList<>();
         for (int l = 0; l < 3; l++) {
+            List<Card> units = vehicles(random, 4, 3, 0);
+            if (l == 0) {
+                units.forEach(card -> unknown.add(card.id()));
+            } else if (l == 2) {
+                shortOfScouts(units, roles);
+            }
             armour.add(new Group(ids.next(), "Armor Lance " + (l + 1), icon("Assault", "(04) Lance"), List.of(),
-                  vehicles(random, 4, 3, 0), false, open(FormationSlot.Kind.VEHICLE, 4)));
+                  units, false, open(FormationSlot.Kind.VEHICLE, 4), -1, null,
+                  l == 0 ? "Fire" : l == 2 ? "Security" : null));
         }
         arms.add(new Group(ids.next(), "Armored Company", icon("Assault", "(05) Company"), armour, List.of(), false, List.of()));
         List<Group> wing = new ArrayList<>();
@@ -573,7 +597,7 @@ public final class ToeDemo {
         unassigned.add(card(VEHICLES[2], "vehicles/" + VEHICLES[2], Kind.VEHICLE, VEHICLE_TONS[2], 3, "",
               Condition.INOPERABLE, Work.REPAIR, Crew.NONE, false, false, 0));
         return new ToeSnapshot("Ashfall Lancers", root, unassigned, List.of("Kestrel Station", "Corvin Yards"),
-              KEPT, Map.of());
+              KEPT, designs(root, unassigned, unknown, roles));
     }
 
     /** The templates the demo's campaigns keep: a player's own mixed lance, and a recon lance meant to meet its rule. */
@@ -586,17 +610,24 @@ public final class ToeDemo {
                 new FormationSlot(FormationSlot.Kind.MEK, FormationSlot.Weight.MEDIUM),
                 new FormationSlot(FormationSlot.Kind.MEK, FormationSlot.Weight.MEDIUM)), "Recon"));
 
-    /** A lone mercenary company: three lances, a lance short of pilots, and a pair of spare Meks. */
+    /**
+     * A lone mercenary company: three lances, a lance short of pilots, and a pair of spare Meks; its command lance a
+     * Scout or Striker short of its rule, its last lance meant to meet the Command rule.
+     */
     static ToeSnapshot company(Random random) {
         Ids ids = new Ids();
+        Map<UUID, UnitRole> roles = new HashMap<>();
         List<Group> lances = new ArrayList<>();
         for (int l = 0; l < 3; l++) {
             List<Card> units = meks(random, 4, 0, 0, false, false);
             List<FormationSlot> slots = l == 0
                   ? matched(units, new FormationSlot(FormationSlot.Kind.MEK, FormationSlot.Weight.LIGHT))
                   : l == 1 ? misplaced(units, 0) : List.of();
+            if (l == 0) {
+                shortOfScouts(units, roles);
+            }
             lances.add(new Group(ids.next(), LANCES[l], icon("BattleMek (Line)", "(04) Lance"), List.of(), units,
-                  false, slots));
+                  false, slots, -1, null, l == 0 ? "Security" : l == 2 ? "Command" : null));
         }
         Group root = new Group(ids.next(), "Voss's Raiders", icon("BattleMek (Center)", "(05) Company"), lances,
               List.of(), false, List.of());
@@ -605,7 +636,63 @@ public final class ToeDemo {
                     false, false, 0),
               card(MEKS[16], "meks/" + MEKS[16], Kind.MEK, MEK_TONS[16], 0, "", Condition.SOUND, Work.MOTHBALLED,
                     Crew.NONE, false, false, 0));
-        return new ToeSnapshot("Voss's Raiders", root, unassigned, List.of(), KEPT, Map.of());
+        return new ToeSnapshot("Voss's Raiders", root, unassigned, List.of(), KEPT,
+              designs(root, unassigned, Set.of(), roles));
+    }
+
+    /** The roles a unit of each weight class mostly has, the lightest first. */
+    private static final UnitRole[][] ROLES = {
+          { UnitRole.SCOUT, UnitRole.STRIKER },
+          { UnitRole.SKIRMISHER, UnitRole.STRIKER, UnitRole.BRAWLER, UnitRole.SNIPER },
+          { UnitRole.BRAWLER, UnitRole.SNIPER, UnitRole.MISSILE_BOAT, UnitRole.SKIRMISHER },
+          { UnitRole.JUGGERNAUT, UnitRole.SNIPER, UnitRole.MISSILE_BOAT, UnitRole.BRAWLER } };
+
+    /**
+     * What MegaMek knows of the force's designs: every Mek's and vehicle's but {@code unknown}'s, of the role in
+     * {@code roles}, or else one its weight suits, and as fast as its weight allows.
+     */
+    private static Map<UUID, MekSummary> designs(Group root, List<Card> unassigned, Set<UUID> unknown,
+          Map<UUID, UnitRole> roles) {
+        List<Card> all = new ArrayList<>(root.allUnits());
+        all.addAll(unassigned);
+        Map<UUID, MekSummary> designs = new HashMap<>();
+        int index = 0;
+        for (Card card : all) {
+            if (unknown.contains(card.id()) || card.kind() != Kind.MEK && card.kind() != Kind.VEHICLE) {
+                continue;
+            }
+            UnitRole[] suited = ROLES[0];
+            int walk = 6;
+            switch (card.fit().weight()) {
+                case ULTRA_LIGHT, LIGHT -> {
+                }
+                case MEDIUM -> {
+                    suited = ROLES[1];
+                    walk = 5;
+                }
+                case HEAVY -> {
+                    suited = ROLES[2];
+                    walk = 4;
+                }
+                default -> {
+                    suited = ROLES[3];
+                    walk = 3;
+                }
+            }
+            MekSummary design = ToeRules.standIn(card);
+            design.setUnitRole(roles.getOrDefault(card.id(), suited[index++ % suited.length]));
+            design.setWalkMp(walk);
+            designs.put(card.id(), design);
+        }
+        return designs;
+    }
+
+    /** Gives {@code units} roles that leave them one Scout or Striker short of the Security rule. */
+    private static void shortOfScouts(List<Card> units, Map<UUID, UnitRole> roles) {
+        UnitRole[] fire = { UnitRole.SNIPER, UnitRole.MISSILE_BOAT, UnitRole.BRAWLER, UnitRole.JUGGERNAUT };
+        for (int i = 0; i < units.size(); i++) {
+            roles.put(units.get(i).id(), fire[i % fire.length]);
+        }
     }
 
     /** The slots {@code units} fill exactly, then {@code more}, left vacant. */

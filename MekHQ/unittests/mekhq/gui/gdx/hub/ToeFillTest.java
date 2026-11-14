@@ -35,8 +35,12 @@ package mekhq.gui.gdx.hub;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
+import megamek.common.loaders.MekSummary;
+import megamek.common.units.EntityWeightClass;
+import megamek.common.units.UnitRole;
 import mekhq.campaign.force.FormationSlot;
 import mekhq.gui.gdx.hub.ToeFill.Candidate;
 import mekhq.gui.gdx.hub.ToeSnapshot.Card;
@@ -88,6 +92,35 @@ class ToeFillTest {
         List<Candidate> candidates = ToeFill.candidates(shown, empty, LIGHT);
         assertEquals(List.of("Here", "There"), candidates.stream().map(c -> c.card().name()).toList());
         assertEquals(List.of(false, true), candidates.stream().map(Candidate::elsewhere).toList());
+    }
+
+    @Test
+    void offersFirstTheUnitsThatWouldMakeTheFormationMeetItsRule() {
+        // Light Fire: half of them Missile Boats or Snipers; the lance has a Scout and needs one
+        Card scout = card("Scout", LIGHT, 0, false);
+        Card free = card("Free", LIGHT, 0, false);
+        Card sniper = card("Sniper", LIGHT, 0, false);
+        Group lance = new Group(1, "Lance", null, List.of(), List.of(scout), false, List.of(LIGHT, LIGHT), 1, null,
+              "Light Fire");
+        Group strict = group(2, List.of(sniper), List.of(LIGHT));
+        Group root = new Group(0, "Force", null, List.of(lance, strict), List.of(), false, List.of());
+        ToeSnapshot shown = new ToeSnapshot("Force", root, List.of(free), List.of(), List.of(),
+              Map.of(scout.id(), design(UnitRole.SCOUT), free.id(), design(UnitRole.STRIKER), sniper.id(),
+                    design(UnitRole.SNIPER)));
+
+        List<Candidate> candidates = ToeFill.candidates(shown, lance, LIGHT);
+
+        assertEquals(List.of("Sniper", "Free"), candidates.stream().map(c -> c.card().name()).toList());
+        assertEquals(List.of(true, false), candidates.stream().map(Candidate::completes).toList());
+    }
+
+    private static MekSummary design(UnitRole role) {
+        MekSummary summary = new MekSummary();
+        summary.setName(role.name());
+        summary.setUnitType("Mek");
+        summary.setWeightClass(EntityWeightClass.WEIGHT_LIGHT);
+        summary.setUnitRole(role);
+        return summary;
     }
 
     private static Group group(int id, List<Card> units, List<FormationSlot> slots) {
