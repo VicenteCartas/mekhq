@@ -141,6 +141,21 @@ class ToeSnapshotTest {
         return snapshot.allUnits().stream().filter(place.units()).toList();
     }
 
+    @Test
+    void aFormationWhoseEchelonIsNotKnownStandsOneUpFromTheBiggestUnderIt() {
+        Group team = new Group(1, "Team", null, List.of(), List.of(), false, List.of(), 0);
+        Group lance = new Group(2, "Lance", null, List.of(), List.of(), false, List.of());
+        Group company = new Group(3, "Company", null, List.of(team, lance), List.of(), false, List.of());
+        Group battalion = new Group(4, "Battalion", null, List.of(company), List.of(), false, List.of(), 3);
+
+        assertEquals(0, team.reckonedEchelon());
+        assertEquals(1, lance.reckonedEchelon(), "one with none under it, a lance");
+        assertEquals(2, company.reckonedEchelon());
+        assertEquals(3, battalion.reckonedEchelon(), "the echelon it's given wins");
+        assertEquals(4, new Group(5, "Regiment", null, List.of(battalion), List.of(), false, List.of())
+              .reckonedEchelon());
+    }
+
     private static ToeSnapshot snapshot(List<String> bases, Card... units) {
         Group lance = new Group(2, "Lance", null, List.of(), List.of(units), false, List.of());
         Group root = new Group(1, "Force", null, List.of(lance), List.of(), false, List.of());

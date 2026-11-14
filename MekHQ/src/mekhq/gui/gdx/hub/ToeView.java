@@ -950,7 +950,7 @@ final class ToeView implements Disposable {
         Vector3 along = new Vector3();
         Vector3 down = new Vector3();
         Vector3 middle = new Vector3();
-        // The camera looks down at a slant, so a few goes bring it on screen
+        // The blocks stand a little off the table, so a few goes bring them on screen
         for (int pass = 0; pass < 4; pass++) {
             aim(probe, wantFocus, wantDistance);
             float left = Float.MAX_VALUE;
@@ -986,6 +986,32 @@ final class ToeView implements Disposable {
         if (still) {
             focus.set(wantFocus);
         }
+    }
+
+    /** Glides, or jumps if motion is reduced, to look at the point {@code x, z} on the table, as near as it is. */
+    void lookAt(float x, float z) {
+        pointerZoom = false;
+        anchored.setZero();
+        wantFocus.set(x, 0, z);
+        keepOnTable(wantFocus);
+        if (still) {
+            focus.set(wantFocus);
+        }
+    }
+
+    /** The point on the table the camera's going to look at, settled. */
+    Vector3 looking() {
+        return new Vector3(wantFocus);
+    }
+
+    /** What of the table is on screen now, as {@link ToeLayout#bounds}; null before the table's first drawn. */
+    @Nullable
+    float[] seen() {
+        Vector3 low = onTable(0, Gdx.graphics.getHeight(), 0, new Vector3());
+        Vector3 high = onTable(Gdx.graphics.getWidth(), 0, 0, new Vector3());
+        return low == null || high == null ? null
+              : new float[] { Math.min(low.x, high.x), Math.min(low.z, high.z), Math.max(low.x, high.x),
+                              Math.max(low.z, high.z) };
     }
 
     /** How many pixels a cell takes on screen with all of {@code bounds} framed under the header, as {@link #frame}. */

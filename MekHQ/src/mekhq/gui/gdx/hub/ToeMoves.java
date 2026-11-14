@@ -325,6 +325,7 @@ final class ToeMoves {
         if (group.id() == into) {
             units.addAll(carried);
         }
-        return new Group(group.id(), group.name(), group.icon(), children, units, group.deployed(), group.slots());
+        return new Group(group.id(), group.name(), group.icon(), children, units, group.deployed(), group.slots(),
+              group.echelon());
     }
 }

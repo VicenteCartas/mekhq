@@ -71,6 +71,7 @@ import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
 import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
+import com.badlogic.gdx.scenes.scene2d.utils.ClickListener;
 import com.badlogic.gdx.utils.Align;
 import com.badlogic.gdx.utils.Disposable;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
@@ -109,6 +110,8 @@ final class ToeTable implements Disposable {
     private static final Color LABEL_PLATE = new Color(0.035f, 0.047f, 0.06f, 0.9f);
     private static final Color LABEL_INK = new Color(0.93f, 0.95f, 0.97f, 1);
     private static final Color LABEL_FORMATION = new Color(0.45f, 0.72f, 0.95f, 1);
+    /** An echelon mark's plate, as dark as the table, so the line it's on ends at it. */
+    private static final Color MARK_PLATE = new Color(0.035f, 0.047f, 0.06f, 1);
     private static final Color ALL_READY = new Color(0.45f, 0.9f, 0.55f, 1);
     private static final Color ISSUE_BAD = new Color(1.0f, 0.42f, 0.36f, 1);
     private static final Color ISSUE_WARN = new Color(1.0f, 0.78f, 0.36f, 1);
@@ -171,6 +174,10 @@ final class ToeTable implements Disposable {
         }
     }
 
+    /** A formation's echelon mark, over the middle of its top edge. */
+    private record Mark(Actor actor, Block block) {
+    }
+
     /** A vacant slot's mark of the kind of unit it calls for, over its ring. */
     private record Ghost(Actor icon, Vacancy vacancy) {
     }
@@ -199,6 +206,14 @@ final class ToeTable implements Disposable {
     private final Group pins = new Group();
     private final List<Pin> pinned = new ArrayList<>();
     private final List<Ghost> ghosts = new ArrayList<>();
+    private final List<Mark> marks = new ArrayList<>();
+    /** Each formation by its id, and the one it's under. */
+    private final Map<Integer, ToeSnapshot.Group> groups = new HashMap<>();
+    private final Map<Integer, ToeSnapshot.Group> parents = new HashMap<>();
+    private ToeMinimap minimap;
+    /** The way down the tree to the formation looked at, under the header, and its formations' ids. */
+    private Table crumbs;
+    private List<Integer> crumbed = List.of();
     private final List<Rectangle> placedLabels = new ArrayList<>();
     private final Vector2 corner = new Vector2();
     private final Rectangle labelProbe = new Rectangle();
@@ -287,6 +302,10 @@ final class ToeTable implements Disposable {
         UiKit.onChange(back, leave::run);
         top.add(back).top().right();
         root.add(top).growX().row();
+        crumbs = new Table();
+        crumbs.setBackground(ui.skin.newDrawable("white", LABEL_PLATE));
+        crumbs.setVisible(false);
+        root.add(crumbs).left().padTop(space("sm")).row();
         root.add().grow();
         empty = ui.label(getText("Toe.none"), "hud-body", 16, UiTheme.tokenColor("text.secondary"));
         empty.setVisible(false);
@@ -302,6 +321,9 @@ final class ToeTable implements Disposable {
         hint = ui.label(getText("Toe.hint"), "hud-body", 12, UiTheme.tokenColor("text.secondary"));
         hintLayer.add(hint);
         stage.addActor(hintLayer);
+        minimap = new ToeMinimap(ui.skin.getRegion("white"), view::lookAt);
+        minimap.setVisible(false);
+        stage.addActor(minimap);
         stage.addActor(hoverCard());
         stage.addActor(noticeLayer());
         stage.addActor(plate());
@@ -522,6 +544,10 @@ final class ToeTable implements Disposable {
         ToeFolds was = folds;
         snapshot = shown;
         force.setText(shown.force());
+        groups.clear();
+        parents.clear();
+        index(shown.root(), null);
+        crumbed = List.of();
         folds = new ToeFolds(shown);
         places = places(shown);
         placeIndex = 0;
@@ -556,6 +582,17 @@ final class ToeTable implements Disposable {
         empty.setVisible(shown.allUnits().isEmpty() && shown.root().children().isEmpty());
     }
 
+    /** Files {@code group} and everything under it by id, each with the formation it's under, {@code parent}. */
+    private void index(ToeSnapshot.Group group, @Nullable ToeSnapshot.Group parent) {
+        groups.put(group.id(), group);
+        if (parent != null) {
+            parents.put(group.id(), parent);
+        }
+        for (ToeSnapshot.Group child : group.children()) {
+            index(child, group);
+        }
+    }
+
     /** Lays the force out folded as {@link #folds} has it now, and shows it, the change morphing unless it opens. */
     private void relayout(boolean opening) {
         if (snapshot == null || folds == null) {
@@ -564,6 +601,7 @@ final class ToeTable implements Disposable {
         layout = layoutOf(folds);
         view.show(snapshot, layout, opening);
         pinAll(layout);
+        minimap.show(layout);
     }
 
     private ToeLayout layoutOf(ToeFolds folded) {
@@ -748,9 +786,27 @@ final class ToeTable implements Disposable {
                 slotFade.put(pin.slot().card().id(), pin.actor().getColor().a);
             }
         }
+        Map<Integer, Float> markFade = new HashMap<>();
+        for (Mark mark : marks) {
+            markFade.put(mark.block().key(), mark.actor().getColor().a);
+        }
         pins.clearChildren();
         pinned.clear();
         ghosts.clear();
+        marks.clear();
+        for (Block block : layout.blocks()) {
+            String glyph = block.group() == null ? null : echelonMark(block.group().reckonedEchelon());
+            if (glyph != null) {
+                Table tag = new Table();
+                tag.setBackground(ui.skin.newDrawable("white", MARK_PLATE));
+                tag.add(ui.label(glyph, "hud-button", 11, LABEL_FORMATION)).padLeft(5).padRight(5);
+                tag.pack();
+                tag.setVisible(false);
+                tag.getColor().a = markFade.getOrDefault(block.key(), 0f);
+                pins.addActor(tag);
+                marks.add(new Mark(tag, block));
+            }
+        }
         for (Vacancy vacancy : layout.vacancies()) {
             if (vacancy.slot().kind() != Kind.ANY) {
                 Actor icon = ui.icon(kindIcon(vacancy.slot().kind()), 24, SLOT_VACANT);
@@ -1416,6 +1472,8 @@ final class ToeTable implements Disposable {
         }
         view.render();
         placePins();
+        placeMinimap();
+        placeCrumbs();
         placeHoverCard();
         placePlate();
         stage.getViewport().apply(true);
@@ -1489,6 +1547,128 @@ final class ToeTable implements Disposable {
             actor.setPosition(x, y, Align.bottomLeft);
         }
         placeGhosts(cell, fade);
+        placeMarks(cell, fade);
+    }
+
+    /**
+     * Puts each formation's echelon mark over the middle of its top edge, where the line from the formation over it
+     * comes in, while it's wide enough on screen for it; dim if none of its units are lit.
+     */
+    private void placeMarks(float cell, float fade) {
+        for (Mark mark : marks) {
+            Block block = view.posed(mark.block());
+            Actor tag = mark.actor();
+            at.set(block.x() + block.width() / 2, view.top(block.level()), block.z());
+            place(tag, block.width() * cell >= tag.getWidth() * 3, tag.getWidth() / 2, tag.getHeight() / 2, fade);
+            if (!block.units().isEmpty() && !blockLit(block)) {
+                tag.getColor().a = Math.min(tag.getColor().a, 0.35f);
+            }
+        }
+    }
+
+    /**
+     * The APP-6 mark of how big a formation is, by {@link ToeSnapshot.Group#echelon}: a team, a lance as a platoon,
+     * then a company, a battalion and a regiment by their strokes, and on up by crosses; null for one not known.
+     */
+    static @Nullable String echelonMark(int echelon) {
+        return switch (echelon) {
+            case 0 -> "\u00d8";
+            case 1 -> "\u2022\u2022\u2022";
+            case 2 -> "I";
+            case 3 -> "II";
+            case 4 -> "III";
+            default -> echelon < 0 ? null : "X".repeat(Math.min(echelon - 4, 5));
+        };
+    }
+
+    /** Shows the whole force small in the corner while it isn't all on screen, the part that is outlined. */
+    private void placeMinimap() {
+        boolean show = layout != null && !modal() && minimap.seen(view.seen());
+        if (!show) {
+            minimap.setVisible(false);
+            minimap.getColor().a = 0;
+            return;
+        }
+        minimap.setVisible(true);
+        minimap.getColor().a = Math.min(1, minimap.getColor().a + Gdx.graphics.getDeltaTime() * 4);
+        minimap.setPosition(stage.getWidth() - minimap.getWidth() - space("xl"),
+              space("md") + hint.getHeight() + space("sm"));
+    }
+
+    /**
+     * Shows the way down the tree to the formation looked at under the header, while the force isn't all on screen;
+     * a click on any of the formations on it goes to that one.
+     */
+    private void placeCrumbs() {
+        List<ToeSnapshot.Group> path = minimap.isVisible() ? pathLookedAt() : List.of();
+        List<Integer> ids = path.size() < 2 ? List.of() : path.stream().map(ToeSnapshot.Group::id).toList();
+        if (ids.equals(crumbed)) {
+            return;
+        }
+        crumbed = ids;
+        crumbs.clearChildren();
+        crumbs.setVisible(!ids.isEmpty());
+        for (int i = 0; i < ids.size(); i++) {
+            ToeSnapshot.Group group = path.get(i);
+            if (i > 0) {
+                crumbs.add(ui.icon("chevron-right", 12, UiTheme.tokenColor("text.secondary"))).size(12);
+            }
+            Label crumb = ui.label(UiTheme.upper(group.name()), "hud-button", 12,
+                  i == ids.size() - 1 ? LABEL_INK : LABEL_FORMATION);
+            crumb.setTouchable(Touchable.enabled);
+            crumb.addListener(new ClickListener() {
+                @Override
+                public void clicked(InputEvent event, float x, float y) {
+                    goTo(group.id());
+                }
+            });
+            crumbs.add(crumb).padLeft(i == 0 ? 10 : 5).padRight(i == ids.size() - 1 ? 10 : 5).padTop(4)
+                  .padBottom(4);
+        }
+    }
+
+    /** The formations from the force down to the one at the middle of the screen, or nearest it; none if none is. */
+    private List<ToeSnapshot.Group> pathLookedAt() {
+        if (layout == null) {
+            return List.of();
+        }
+        Vector3 point = view.looking();
+        Block inner = null;
+        float nearest = Float.MAX_VALUE;
+        for (Block block : layout.blocks()) {
+            float dx = Math.max(0, Math.max(block.x() - point.x, point.x - block.x() - block.width()));
+            float dz = Math.max(0, Math.max(block.z() - point.z, point.z - block.z() - block.depth()));
+            float off = dx * dx + dz * dz;
+            if (off < nearest - 1e-6f || off <= nearest + 1e-6f && inner != null && block.level() > inner.level()) {
+                nearest = off;
+                inner = block;
+            }
+        }
+        if (inner == null) {
+            return List.of();
+        }
+        // A formation's own units folded apart stand for that formation
+        ToeSnapshot.Group group = inner.group() != null ? inner.group()
+              : inner.attached() ? groups.get(-2 - inner.key()) : null;
+        List<ToeSnapshot.Group> path = new ArrayList<>();
+        for (ToeSnapshot.Group at = group; at != null; at = parents.get(at.id())) {
+            path.add(0, at);
+        }
+        return path;
+    }
+
+    /** Glides over to formation {@code id}, or the card it's folded into, as near as the camera is. */
+    private void goTo(int id) {
+        if (layout == null) {
+            return;
+        }
+        Block block = layout.block(id);
+        if (block == null) {
+            block = layout.holder(id);
+        }
+        if (block != null) {
+            view.lookAt(block.x() + block.width() / 2, block.z() + block.depth() / 2);
+        }
     }
 
     /** Puts each vacant slot's mark of the kind it calls for over its ring, while cells are big enough for it. */
@@ -1511,7 +1691,7 @@ final class ToeTable implements Disposable {
      */
     private int keepClear() {
         int count = 0;
-        for (Actor actor : new Actor[] { header, tabs }) {
+        for (Actor actor : new Actor[] { header, tabs, crumbs }) {
             if (actor == null || !actor.isVisible() || actor.getWidth() <= 0) {
                 continue;
             }

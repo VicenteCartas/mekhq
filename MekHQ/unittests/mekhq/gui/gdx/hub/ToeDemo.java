@@ -533,14 +533,14 @@ public final class ToeDemo {
         List<Group> wing = new ArrayList<>();
         for (int f = 0; f < 3; f++) {
             wing.add(new Group(ids.next(), "Flight " + (f + 1), icon("Aerospace", "(03) Team"), List.of(),
-                  defaults(random, "asf", Kind.AEROSPACE, 50, 2, f == 2 ? 2 : 0), false, List.of()));
+                  defaults(random, "asf", Kind.AEROSPACE, 50, 2, f == 2 ? 2 : 0), false, List.of(), 0));
         }
         arms.add(new Group(ids.next(), "Aerospace Wing", icon("Aerospace", "(04) Lance"), wing, List.of(), false, List.of()));
         List<Group> foot = List.of(
               new Group(ids.next(), "Jump Platoon", icon("Battle Armor", "(04) Lance"), List.of(),
                     defaults(random, "default_infantry", Kind.INFANTRY, 3, 2, 0), false, List.of()),
               new Group(ids.next(), "Elemental Point", icon("Battle Armor", "(03) Team"), List.of(),
-                    defaults(random, "default_ba", Kind.BATTLE_ARMOR, 5, 2, 0), false, List.of()));
+                    defaults(random, "default_ba", Kind.BATTLE_ARMOR, 5, 2, 0), false, List.of(), 0));
         arms.add(new Group(ids.next(), "Infantry Detachment", icon("Battle Armor", "(05) Company"), foot, List.of(),
               false, List.of()));
         arms.add(new Group(ids.next(), "Transport Squadron", icon("DropShip", "(04) Lance"), List.of(),
@@ -609,7 +609,7 @@ public final class ToeDemo {
     private static Group authorized(Group group, int id, List<FormationSlot> slots) {
         List<Group> children = group.children().stream().map(child -> authorized(child, id, slots)).toList();
         return new Group(group.id(), group.name(), group.icon(), children, group.units(), group.deployed(),
-              group.id() == id ? slots : group.slots());
+              group.id() == id ? slots : group.slots(), group.echelon());
     }
 
     private static List<Card> meks(Random random, int count, int camo, int place, boolean deployed,

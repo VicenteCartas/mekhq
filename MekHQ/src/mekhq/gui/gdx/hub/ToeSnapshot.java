@@ -53,6 +53,7 @@ import mekhq.campaign.Campaign;
 import mekhq.campaign.base.PlayerBase;
 import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.force.Formation;
+import mekhq.campaign.force.FormationLevel;
 import mekhq.campaign.force.FormationSlot;
 import mekhq.campaign.location.LocationUtils;
 import mekhq.campaign.personnel.Person;
@@ -84,10 +85,33 @@ record ToeSnapshot(String force, Group root, List<Card> unassigned, List<String>
     /**
      * A formation: its own units and its sub-formations, in the TO&amp;E's order; {@code deployed} whether it's out on
      * a scenario or a StratCon track, so it can't be reorganized until it's back; {@code slots} the places it's
-     * authorized, none if it authorizes nothing.
+     * authorized, none if it authorizes nothing; {@code echelon} how big a formation it stands for, as
+     * {@link FormationLevel#getDepth}: 0 a team, 1 a lance, star or Level II, 2 a company, 3 a battalion and on up, -1
+     * if it's not known.
      */
     record Group(int id, String name, @Nullable BufferedImage icon, List<Group> children, List<Card> units,
-          boolean deployed, List<FormationSlot> slots) {
+          boolean deployed, List<FormationSlot> slots, int echelon) {
+        /** A formation whose echelon isn't known. */
+        Group(int id, String name, @Nullable BufferedImage icon, List<Group> children, List<Card> units,
+              boolean deployed, List<FormationSlot> slots) {
+            this(id, name, icon, children, units, deployed, slots, -1);
+        }
+
+        /**
+         * How big a formation it stands for, as {@link #echelon}; if that's not known, one up from the biggest under
+         * it, a lance for one with none.
+         */
+        int reckonedEchelon() {
+            if (echelon >= 0) {
+                return echelon;
+            }
+            int below = 0;
+            for (Group child : children) {
+                below = Math.max(below, child.reckonedEchelon());
+            }
+            return below + 1;
+        }
+
         /** Every unit in the formation and under it. */
         List<Card> allUnits() {
             List<Card> all = new ArrayList<>();
@@ -299,7 +323,8 @@ record ToeSnapshot(String force, Group root, List<Card> unassigned, List<String>
         BufferedImage icon = formation.getFormationIcon() == null ? null
               : WarTableSnapshot.icon(formation.getFormationIcon().getBaseImage());
         return new Group(formation.getId(), formation.getName(), icon, children, units,
-              StaticChecks.isFormationLockedByDeployment(campaign, formation), formation.getSlots());
+              StaticChecks.isFormationLockedByDeployment(campaign, formation), formation.getSlots(),
+              formation.getFormationLevel() == null ? -1 : formation.getFormationLevel().getDepth());
     }
 
     private static @Nullable Card card(Campaign campaign, Unit unit, Map<UUID, Integer> places) {
