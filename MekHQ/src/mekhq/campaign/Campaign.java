@@ -4143,6 +4143,7 @@ public class Campaign implements ITechManager {
         MHQXMLUtility.writeSimpleXMLOpenTag(writer, indent++, "formations");
         getPlayerForce().getFormations().writeToXML(writer, indent);
         MHQXMLUtility.writeSimpleXMLCloseTag(writer, --indent, "formations");
+        getPlayerForce().getFormationTemplates().writeToXML(writer, indent);
         getPlayerForce().getFinances().writeToXML(writer, indent);
         getPlayerForce().getDetachmentLocationManager().writeToXML(writer, indent);
         locationManager.writeToXML(this, writer, indent);

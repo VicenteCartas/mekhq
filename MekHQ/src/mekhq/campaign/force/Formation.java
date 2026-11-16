@@ -112,6 +112,12 @@ public class Formation {
     private Formation parentFormation;
     private final Vector<Formation> subFormations;
     private final Vector<UUID> units;
+    /** The places the formation is authorized, in the order the player set them; none authorizes nothing. */
+    private final List<FormationSlot> slots = new ArrayList<>();
+    /** The name of the template the formation was last shaped by, null when none was. */
+    private @Nullable String templateName;
+    /** The MegaMek formation rule ({@code FormationType} name) it's meant to meet, null for none. */
+    private @Nullable String formationRule;
     private int scenarioId;
     private UUID formationCommanderID;
     private UUID overrideFormationCommanderID;
@@ -553,6 +559,36 @@ public class Formation {
         return units;
     }
 
+    /** The places the formation is authorized, in order; empty when it authorizes nothing. */
+    public List<FormationSlot> getSlots() {
+        return List.copyOf(slots);
+    }
+
+    public void setSlots(List<FormationSlot> slots) {
+        this.slots.clear();
+        this.slots.addAll(slots);
+    }
+
+    /** The name of the template the formation was last shaped by, null when none was. */
+    public @Nullable String getTemplateName() {
+        return templateName;
+    }
+
+    /** The MegaMek formation rule ({@code FormationType} name) the formation is meant to meet, null for none. */
+    public @Nullable String getFormationRule() {
+        return formationRule;
+    }
+
+    /**
+     * Shapes the formation by {@code template}: it takes a copy of the template's slots, name and rule, and keeps them
+     * however the template changes afterwards. A null template clears all three.
+     */
+    public void applyTemplate(@Nullable FormationTemplate template) {
+        setSlots(template == null ? List.of() : template.slots());
+        templateName = template == null ? null : template.name();
+        formationRule = template == null ? null : template.rule();
+    }
+
     /**
      * @param standardFormationsOnly to only include combat formations or to also include support formations
      *
@@ -786,6 +822,12 @@ public class Formation {
                     formation.formationCommanderID = UUID.fromString(wn2.getTextContent());
                 } else if (wn2.getNodeName().equalsIgnoreCase("units")) {
                     processUnitNodes(formation, wn2, version);
+                } else if (wn2.getNodeName().equalsIgnoreCase("slots")) {
+                    formation.slots.addAll(FormationSlot.parseAll(wn2));
+                } else if (wn2.getNodeName().equalsIgnoreCase("templateName")) {
+                    formation.templateName = FormationTemplate.text(wn2.getTextContent());
+                } else if (wn2.getNodeName().equalsIgnoreCase("formationRule")) {
+                    formation.formationRule = FormationTemplate.text(wn2.getTextContent());
                 } else if (wn2.getNodeName().equalsIgnoreCase("subFormations") || wn2.getNodeName().equalsIgnoreCase(
                       "subForces")) {
                     NodeList nl2 = wn2.getChildNodes();
@@ -988,6 +1030,13 @@ public class Formation {
                 pw1.println(MHQXMLUtility.indentStr(indent) + "<unit id=\"" + uid + "\"/>");
             }
             MHQXMLUtility.writeSimpleXMLCloseTag(pw1, --indent, "units");
+        }
+        FormationSlot.writeToXML(pw1, indent, slots);
+        if (templateName != null) {
+            MHQXMLUtility.writeSimpleXMLTag(pw1, indent, "templateName", templateName);
+        }
+        if (formationRule != null) {
+            MHQXMLUtility.writeSimpleXMLTag(pw1, indent, "formationRule", formationRule);
         }
 
         if (!subFormations.isEmpty()) {

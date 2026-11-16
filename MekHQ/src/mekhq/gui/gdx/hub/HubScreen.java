@@ -47,6 +47,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 
 import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
@@ -192,6 +193,29 @@ final class HubScreen extends ApplicationAdapter {
         /** Recalls force {@code force} off sector {@code sector} of contract {@code contract}'s operation, likewise. */
         void recall(UUID contract, int sector, int force);
 
+        /** Reads the campaign's forces for the TO&amp;E, which come back through {@link HubScreen#toe}. */
+        void toe();
+
+        /**
+         * The TO&amp;E opened or closed: while it's open, a change to the forces, their units or their people
+         * comes back through {@link HubScreen#toeRefresh}.
+         */
+        void toeShown(boolean shown);
+
+        /**
+         * Makes {@code moves} on the TO&amp;E, each checked again against the campaign as it now is, the forces as they
+         * then are coming back through {@link HubScreen#toeRefresh} and any warning through
+         * {@link HubScreen#toeNotice}.
+         */
+        void reorganize(List<ToeMoves.Move> moves);
+
+        /**
+         * Shapes a formation as its editor applies it: the places in it for units of a kind and weight class, none for
+         * anything goes, the template it's shaped by and the formation rule it's to meet, and keeps the template if
+         * asked; the forces as they then are coming back through {@link HubScreen#toeRefresh}.
+         */
+        void authorize(ToeTable.Shaping shaping);
+
         /** The screen's listener is being disposed. */
         void disposed();
     }
@@ -305,6 +329,7 @@ final class HubScreen extends ApplicationAdapter {
             hub.recall(contract, sector, force);
         }
     });
+    private final ToeTable toe = new ToeTable(this::closeToe, this::reorganize, this::authorize);
     /** What the campaign has at systems by their ids, as its star map marks them. */
     private Map<String, Integer> marks = Map.of();
     private final FrameMeter meter = new FrameMeter();
@@ -336,7 +361,7 @@ final class HubScreen extends ApplicationAdapter {
      */
     HubScreen(Path glb, @Nullable StarChart chart, String campaignName, float scale, Hub hub,
           BorderHistory history) {
-        holo = new HoloTableView(glb, chart, () -> showMap(true), () -> openWarTable(null));
+        holo = new HoloTableView(glb, chart, () -> showMap(true), () -> openWarTable(null), this::openToe);
         map = new StarMapView(new StarMapView.Listener() {
             @Override
             public void hovered(@Nullable StarMap.Star star) {
@@ -478,6 +503,7 @@ final class HubScreen extends ApplicationAdapter {
         stage.addActor(paletteLayer());
         transmissions.create(theme, ui, scale);
         warTable.create(theme, ui, scale);
+        toe.create(ui, scale);
         drop.create();
         meter.create(theme, scale);
         InputAdapter keys = new InputAdapter() {
@@ -487,7 +513,7 @@ final class HubScreen extends ApplicationAdapter {
             }
         };
         Gdx.input.setInputProcessor(new InputMultiplexer(blocker(), dropping(), meter.input(), transmissions.input(),
-              table(), stage, keys, view()));
+              overlay(warTable.input(), warTable::shown), overlay(toe.input(), toe::shown), stage, keys, view()));
         resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
     }
 
@@ -1995,88 +2021,130 @@ final class HubScreen extends ApplicationAdapter {
         dropped = false;
     }
 
-    /** The war table's input, all of it while the table is up. */
-    private InputProcessor table() {
-        InputProcessor table = warTable.input();
+    /** Takes the player to the TO&amp;E, once the campaign's forces are read. */
+    private void openToe() {
+        if (flyout.isVisible()) {
+            flyout.cancel();
+        }
+        if (mapMenu.isVisible()) {
+            mapMenu.cancel();
+        }
+        hub.toe();
+    }
+
+    /** The campaign's forces came: the TO&amp;E rises over them. */
+    void toe(ToeSnapshot shown) {
+        toe.open(shown);
+        hub.toeShown(true);
+        hoverCard.setVisible(false);
+        Gdx.graphics.setSystemCursor(Cursor.SystemCursor.Arrow);
+        handCursor = false;
+    }
+
+    /** The forces changed while the TO&amp;E is up: it shows them as they now are. */
+    void toeRefresh(ToeSnapshot shown) {
+        toe.refresh(shown);
+    }
+
+    /** Something the campaign warned of as the TO&amp;E was reorganized, for the table to show. */
+    void toeNotice(String text) {
+        toe.notice(text);
+    }
+
+    private void reorganize(List<ToeMoves.Move> moves) {
+        hub.reorganize(moves);
+    }
+
+    private void authorize(ToeTable.Shaping shaping) {
+        hub.authorize(shaping);
+    }
+
+    private void closeToe() {
+        toe.close();
+        hub.toeShown(false);
+    }
+
+    /** An overlay's input, {@code inner}'s, all of it while {@code up} says the overlay is up. */
+    private static InputProcessor overlay(InputProcessor inner, BooleanSupplier up) {
         return new InputProcessor() {
             @Override
             public boolean keyDown(int keycode) {
-                if (!warTable.shown()) {
+                if (!up.getAsBoolean()) {
                     return false;
                 }
-                table.keyDown(keycode);
+                inner.keyDown(keycode);
                 return true;
             }
 
             @Override
             public boolean keyUp(int keycode) {
-                if (!warTable.shown()) {
+                if (!up.getAsBoolean()) {
                     return false;
                 }
-                table.keyUp(keycode);
+                inner.keyUp(keycode);
                 return true;
             }
 
             @Override
             public boolean keyTyped(char character) {
-                if (!warTable.shown()) {
+                if (!up.getAsBoolean()) {
                     return false;
                 }
-                table.keyTyped(character);
+                inner.keyTyped(character);
                 return true;
             }
 
             @Override
             public boolean touchDown(int screenX, int screenY, int pointer, int button) {
-                if (!warTable.shown()) {
+                if (!up.getAsBoolean()) {
                     return false;
                 }
-                table.touchDown(screenX, screenY, pointer, button);
+                inner.touchDown(screenX, screenY, pointer, button);
                 return true;
             }
 
             @Override
             public boolean touchUp(int screenX, int screenY, int pointer, int button) {
-                if (!warTable.shown()) {
+                if (!up.getAsBoolean()) {
                     return false;
                 }
-                table.touchUp(screenX, screenY, pointer, button);
+                inner.touchUp(screenX, screenY, pointer, button);
                 return true;
             }
 
             @Override
             public boolean touchCancelled(int screenX, int screenY, int pointer, int button) {
-                if (!warTable.shown()) {
+                if (!up.getAsBoolean()) {
                     return false;
                 }
-                table.touchCancelled(screenX, screenY, pointer, button);
+                inner.touchCancelled(screenX, screenY, pointer, button);
                 return true;
             }
 
             @Override
             public boolean touchDragged(int screenX, int screenY, int pointer) {
-                if (!warTable.shown()) {
+                if (!up.getAsBoolean()) {
                     return false;
                 }
-                table.touchDragged(screenX, screenY, pointer);
+                inner.touchDragged(screenX, screenY, pointer);
                 return true;
             }
 
             @Override
             public boolean mouseMoved(int screenX, int screenY) {
-                if (!warTable.shown()) {
+                if (!up.getAsBoolean()) {
                     return false;
                 }
-                table.mouseMoved(screenX, screenY);
+                inner.mouseMoved(screenX, screenY);
                 return true;
             }
 
             @Override
             public boolean scrolled(float amountX, float amountY) {
-                if (!warTable.shown()) {
+                if (!up.getAsBoolean()) {
                     return false;
                 }
-                table.scrolled(amountX, amountY);
+                inner.scrolled(amountX, amountY);
                 return true;
             }
         };
@@ -2187,7 +2255,7 @@ final class HubScreen extends ApplicationAdapter {
         if (flyout.isVisible()) {
             flyout.cancel();
         }
-        if (tabs.size() == 1) {
+        if (tabs.size() == 1 && !tabs.contains(MHQTabType.TOE)) {
             hub.go(new PaletteEntry.Screen(tabs.get(0)));
         } else if (!tabs.isEmpty() && !wasOpen) {
             flyoutList.clearChildren();
@@ -2196,6 +2264,10 @@ final class HubScreen extends ApplicationAdapter {
                 if (tab == MHQTabType.STRAT_CON) {
                     UiButton table = flyoutList.item(getText("HqHub.warTable"), null, null, false, true,
                           () -> openWarTable(null));
+                    first = first == null ? table : first;
+                } else if (tab == MHQTabType.TOE) {
+                    UiButton table = flyoutList.item(getText("HqHub.toe"), null, null, false, true,
+                          this::openToe);
                     first = first == null ? table : first;
                 }
                 UiButton row = flyoutList.item(tab.toString(), null, null, false, true, () -> {
@@ -2330,6 +2402,7 @@ final class HubScreen extends ApplicationAdapter {
         }
         transmissions.resize(width, height);
         warTable.resize(width, height);
+        toe.resize(width, height);
         drop.resize(width, height);
         meter.resize(width, height);
     }
@@ -2350,6 +2423,12 @@ final class HubScreen extends ApplicationAdapter {
         if (warTable.shown() && drop.tableShows()) {
             warTable.render(delta);
             drop.render();
+            transmissions.render(delta);
+            meter.end(Gdx.graphics.getDeltaTime());
+            return;
+        }
+        if (toe.shown()) {
+            toe.render(delta);
             transmissions.render(delta);
             meter.end(Gdx.graphics.getDeltaTime());
             return;
@@ -2398,6 +2477,7 @@ final class HubScreen extends ApplicationAdapter {
     public void dispose() {
         transmissions.dispose();
         warTable.dispose();
+        toe.dispose();
         drop.dispose();
         meter.dispose();
         hub.disposed();

@@ -83,9 +83,9 @@ final class HoloShaders {
           uniform float u_glowPulse;
           uniform float u_floor;
           uniform float u_tableRadius;
-          uniform vec3 u_pointLight[2];
-          uniform vec3 u_pointColor[2];
-          uniform vec4 u_blockers[2];
+          uniform vec3 u_pointLight[3];
+          uniform vec3 u_pointColor[3];
+          uniform vec4 u_blockers[3];
           out vec4 fragColor;
 
           const float PI = 3.14159265;
@@ -159,7 +159,7 @@ final class HoloShaders {
                   float centre = length(v_world.xz);
                   occlusion = mix(0.35, 1.0, smoothstep(u_tableRadius * 0.35, u_tableRadius * 1.25, centre));
                   holoShadow = smoothstep(u_tableRadius * 0.75, u_tableRadius * 1.6, centre);
-                  for (int i = 0; i < 2; i++) {
+                  for (int i = 0; i < 3; i++) {
                       vec4 b = u_blockers[i];
                       float apart = length(v_world.xz - b.xy);
                       occlusion *= mix(1.0 - b.w, 1.0, smoothstep(b.z * 0.3, b.z * 1.15, apart));
@@ -175,7 +175,7 @@ final class HoloShaders {
               holoShadow *= smoothstep(0.09, 0.2, length(v_world.xz - u_holoLight.xz));
               vec3 holo = u_holoColor / (holoDistance * holoDistance + 0.35) * holoShadow;
               colour += brdf(toHolo / holoDistance, holo, n, v, albedo, metal, rough);
-              for (int i = 0; i < 2; i++) {
+              for (int i = 0; i < 3; i++) {
                   vec3 toLight = u_pointLight[i] - v_world;
                   float apart = length(toLight);
                   colour += brdf(toLight / apart, u_pointColor[i] / (apart * apart + 0.25), n, v, albedo, metal, rough);
@@ -260,7 +260,9 @@ final class HoloShaders {
      * hologram (uv the plate's metres, {@code u_half} its half size), its hexes and objectives on the first and a contour
      * of its relief on each above; 3 a screen {@code u_layer} of the comms console (uv 0 to 1, v down), a trace of the
      * traffic or, at {@code u_alert}, a blinking call; 4 a status board (uv 0 to 1, {@code u_half} its half size) with
-     * the text in {@code u_text}.
+     * the text in {@code u_text}; 5 a layer {@code u_layer} of the forces table's TO&amp;E (uv as for 2): its
+     * battalions' frames, their companies' over them, and their units' pips on top, a damaged one now and then in
+     * {@code u_accent}.
      */
     static final String HOLO_FRAGMENT = """
           #version 330 core
@@ -404,6 +406,42 @@ final class HoloShaders {
                   float roll = exp(-pow((fract(v_uv.y + u_time * 0.07) - 0.5) * 10.0, 2.0)) * 0.05;
                   light = (text * 1.3 + frame(p, pixel) * 0.6 + divider * 0.4 + 0.03 + roll) * scan;
                   rgb = u_colour * light;
+              } else if (u_mode == 5) {
+                  vec2 p = v_uv;
+                  vec2 edge = u_half - abs(p);
+                  float inside = step(0.0, min(edge.x, edge.y));
+                  float pixel = length(fwidth(p));
+                  float sweepZ = mix(-u_half.y, u_half.y, fract(u_time * 0.1));
+                  float sweep = exp(-pow((p.y - sweepZ) * 50.0, 2.0));
+                  float battalion = clamp(floor((p.x + u_half.x) / (u_half.x * 2.0) * 3.0), 0.0, 2.0);
+                  vec2 inBattalion = p - vec2(-u_half.x * 2.0 / 3.0 + battalion * u_half.x * 2.0 / 3.0, 0.0);
+                  float company = clamp(floor((p.y + u_half.y) / (u_half.y * 2.0) * 3.0), 0.0, 2.0);
+                  vec2 inCompany = inBattalion - vec2(0.0, -u_half.y * 2.0 / 3.0 + company * u_half.y * 2.0 / 3.0);
+                  vec2 companyHalf = vec2(u_half.x / 3.0 - 0.04, u_half.y / 3.0 - 0.03);
+                  if (u_layer < 0.5) {
+                      vec2 rim = vec2(u_half.x / 3.0 - 0.015, u_half.y - 0.015) - abs(inBattalion);
+                      float outline = 1.0 - smoothstep(0.0, pixel * 1.5, abs(min(rim.x, rim.y)));
+                      light = frame(p, pixel) + outline * 0.45 + 0.035 + sweep * 0.12;
+                      rgb = u_colour * light;
+                  } else if (u_layer < 1.5) {
+                      vec2 rim = companyHalf - abs(inCompany);
+                      float outline = 1.0 - smoothstep(0.0, pixel * 1.5, abs(min(rim.x, rim.y)));
+                      float head = step(0.0, min(rim.x, rim.y)) * step(companyHalf.y - 0.03, inCompany.y);
+                      rgb = u_colour * (outline * 0.5 + head * 0.12) * (1.0 + sweep * 0.8);
+                  } else {
+                      // Each company's units: two lances of four pips, one now and then in the accent, damaged
+                      vec2 cell = vec2(companyHalf.x * 2.0 / 4.0, companyHalf.y * 2.0 / 2.4);
+                      vec2 grid = (inCompany + vec2(companyHalf.x, companyHalf.y - 0.03)) / cell;
+                      vec2 id = floor(grid);
+                      vec2 q = abs(fract(grid) - 0.5) * cell;
+                      float within = step(0.0, id.x) * step(id.x, 3.0) * step(0.0, id.y) * step(id.y, 1.0);
+                      float d = q.x + q.y;
+                      float pip = (1.0 - smoothstep(0.012, 0.012 + pixel, d)) * within;
+                      float seed = random(id + vec2(battalion * 7.0, company * 3.0));
+                      vec3 tone = mix(u_colour, u_accent, step(0.84, seed));
+                      rgb = tone * pip * (0.9 + sweep * 0.8);
+                  }
+                  rgb *= inside;
               }
               if (u_mode >= 2) {
                   rgb *= exp(-u_haze * length(u_camera - v_world));

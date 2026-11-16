@@ -305,6 +305,22 @@ public final class StarMapSnapshots {
         }
 
         @Override
+        public void toe() {
+        }
+
+        @Override
+        public void toeShown(boolean shown) {
+        }
+
+        @Override
+        public void reorganize(List<ToeMoves.Move> moves) {
+        }
+
+        @Override
+        public void authorize(ToeTable.Shaping shaping) {
+        }
+
+        @Override
         public void disposed() {
         }
     }

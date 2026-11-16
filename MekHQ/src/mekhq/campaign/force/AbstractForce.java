@@ -52,6 +52,7 @@ import java.util.Objects;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.Vector;
+import java.util.function.Consumer;
 import javax.swing.JOptionPane;
 
 import jakarta.annotation.Nullable;
@@ -150,6 +151,7 @@ public abstract class AbstractForce {
     private int repairBaysRented = 0;
     // Table of Organisation & Equipment (TO&E) and StratCon combat teams
     private Formation formations;
+    private final FormationTemplates formationTemplates = new FormationTemplates();
     private int lastFormationId;
     /**
      * Id of the Support Command formation built by {@code SupportPersonnelToTOE}, or {@link Formation#FORMATION_NONE}
@@ -579,6 +581,11 @@ public abstract class AbstractForce {
         return temporaryPrisonerCapacity;
     }
 
+    /** The formation templates the force keeps besides the standard ones. */
+    public FormationTemplates getFormationTemplates() {
+        return formationTemplates;
+    }
+
     public void setTemporaryPrisonerCapacity(int temporaryPrisonerCapacity) {
         this.temporaryPrisonerCapacity = max(MINIMUM_TEMPORARY_CAPACITY, temporaryPrisonerCapacity);
     }
@@ -896,6 +903,15 @@ public abstract class AbstractForce {
      * Add unit to an existing formation. This method will also assign that formation's id to the unit.
      */
     public void addUnitToFormation(@Nullable Unit unit, int id, Campaign campaign) {
+        addUnitToFormation(unit, id, campaign,
+              warning -> JOptionPane.showMessageDialog(null, warning, "Warning", JOptionPane.WARNING_MESSAGE));
+    }
+
+    /**
+     * Add unit to an existing formation, as {@link #addUnitToFormation(Unit, int, Campaign)} does, handing
+     * {@code warn} the warning to show if the formation's tech can't maintain the unit.
+     */
+    public void addUnitToFormation(@Nullable Unit unit, int id, Campaign campaign, Consumer<String> warn) {
         if (unit == null) {
             return;
         }
@@ -941,7 +957,7 @@ public abstract class AbstractForce {
                                             unit.getName() +
                                             '\n' +
                                             "You will need to assign a tech manually.";
-                    JOptionPane.showMessageDialog(null, cantTech, "Warning", JOptionPane.WARNING_MESSAGE);
+                    warn.accept(cantTech);
                 }
             }
             formation.addUnit(campaign, unit.getId(), useTransfers, prevFormation);
